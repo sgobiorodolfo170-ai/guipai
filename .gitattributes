@@ -1,0 +1,2 @@
+dolphindb-server/dolphindb.exe filter=lfs diff=lfs merge=lfs -text
+dolphindb-server/libDolphinDB.dll filter=lfs diff=lfs merge=lfs -text

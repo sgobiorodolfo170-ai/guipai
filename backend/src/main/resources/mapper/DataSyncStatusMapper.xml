@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.gsxi.trading.tradeinsight.mapper.DataSyncStatusMapper">
+
+    <insert id="insert" parameterType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        INSERT INTO data_sync_status (
+            data_type, trade_date, status, success_count,
+            fail_count, message, sync_time
+        ) VALUES (
+                     #{dataType}, #{tradeDate}, #{status}, #{successCount},
+                     #{failCount}, #{message}, #{syncTime}
+                 )
+    </insert>
+
+    <update id="update" parameterType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        UPDATE data_sync_status
+        SET status = #{status},
+            success_count = #{successCount},
+            fail_count = #{failCount},
+            message = #{message},
+            sync_time = #{syncTime}
+        WHERE id = #{id}
+    </update>
+
+    <select id="selectByTradeDate" resultType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        SELECT * FROM data_sync_status
+        WHERE trade_date = #{tradeDate}
+        ORDER BY data_type
+    </select>
+
+    <select id="selectByDataTypeAndDate" resultType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        SELECT * FROM data_sync_status
+        WHERE data_type = #{dataType} AND trade_date = #{tradeDate}
+            LIMIT 1
+    </select>
+
+    <insert id="batchInsertOrUpdate">
+        INSERT INTO data_sync_status (
+        data_type, trade_date, status, success_count,
+        fail_count, message, sync_time
+        ) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (
+            #{item.dataType}, #{item.tradeDate}, #{item.status}, #{item.successCount},
+            #{item.failCount}, #{item.message}, #{item.syncTime}
+            )
+        </foreach>
+        ON DUPLICATE KEY UPDATE
+        status = VALUES(status),
+        success_count = VALUES(success_count),
+        fail_count = VALUES(fail_count),
+        message = VALUES(message),
+        sync_time = VALUES(sync_time)
+    </insert>
+
+    <!-- ========== 新增的查询方法 ========== -->
+
+    <select id="selectAllOrderBySyncTimeDesc" resultType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        SELECT * FROM data_sync_status
+        ORDER BY sync_time DESC, trade_date DESC, data_type
+    </select>
+
+    <select id="selectByDateRangeOrderBySyncTimeDesc" resultType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        SELECT * FROM data_sync_status
+        WHERE trade_date BETWEEN #{startDate} AND #{endDate}
+        ORDER BY sync_time DESC, trade_date DESC, data_type
+    </select>
+
+    <select id="selectByDataTypeAndDateRange" resultType="com.gsxi.trading.tradeinsight.entity.DataSyncStatus">
+        SELECT * FROM data_sync_status
+        WHERE data_type = #{dataType}
+          AND trade_date BETWEEN #{startDate} AND #{endDate}
+        ORDER BY sync_time DESC, trade_date DESC
+    </select>
+
+    <delete id="deleteById">
+        DELETE FROM data_sync_status WHERE id = #{id}
+    </delete>
+</mapper>

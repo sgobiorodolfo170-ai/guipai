@@ -1,0 +1,37 @@
+appId: com.guipai.app
+productName: 龟派
+copyright: Copyright © 2026 龟派
+directories:
+  output: release
+  buildResources: build
+files:
+  - electron/**/*
+  - frontend/dist/**/*
+  - package.json
+  - "!**/node_modules/**/*"
+extraResources: []
+asar: true
+asarUnpack:
+  - "**/sql.js/dist/**/*"
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: Guipai-Setup-${version}.${ext}
+  icon: build/icon.ico
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: 龟派
+  displayLanguageSelector: false
+  language: 2052
+  deleteAppDataOnUninstall: true
+mac:
+  target:
+    - dmg
+  icon: build/icon.icns
+  category: public.app-category.finance

@@ -1,0 +1,99 @@
+server:
+  port: 8080
+
+spring:
+  profiles:
+    active: dev  # 激活开发环境，对应加载 application-dev.yml
+  main:
+    #后定义的bean会覆盖先定义的
+    allow-bean-definition-overriding: true
+
+# DolphinDB 时序数据库连接配置（行情数据：日K/指数/板块/涨跌停池）
+# 关系型元数据（用户/同步状态/模拟训练）仍由各 profile 的 spring.datasource 提供
+dolphindb:
+  host: ${DOLPHINDB_HOST:localhost}
+  port: ${DOLPHINDB_PORT:8848}
+  username: ${DOLPHINDB_USERNAME:admin}
+  password: ${DOLPHINDB_PASSWORD:123456}
+  # DFS 分布式数据库路径
+  database: ${DOLPHINDB_DB:dfs://tradeinsight}
+  # 是否在启动时自动创建库表（首次运行需为 true）
+  auto-create-schema: ${DOLPHINDB_AUTO_CREATE:true}
+  # 连接池
+  pool:
+    initial-size: 2
+    min-idle: 2
+    max-active: 10
+    max-wait: 60000
+
+mybatis-plus:
+  configuration:
+    #在映射实体或者属性时，将数据库中表名和字段名中的下划线去掉，按照驼峰命名法映射 address_book ---> AddressBook
+    map-underscore-to-camel-case: true
+    #日志输出
+#    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+
+logging:
+  level:
+    org.springframework.beans.factory.support.DefaultListableBeanFactory: WARN
+
+# Swagger/OpenAPI 配置
+springdoc:
+  api-docs:
+    # 是否启用 OpenAPI 文档
+    enabled: true
+    # OpenAPI 文档路径
+    path: /v3/api-docs
+  swagger-ui:
+    # 是否启用 Swagger UI
+    enabled: true
+    # Swagger UI 路径
+    path: /swagger-ui.html
+    # 是否尝试验证
+    try-it-out-enabled: true
+    # 操作排序
+    operations-sorter: alpha
+    # 标签排序
+    tags-sorter: alpha
+    # 显示请求持续时间
+    display-request-duration: true
+    # 显示操作 ID
+    display-operation-id: false
+  # 包扫描路径
+  packages-to-scan: com.gsxi.trading.tradeinsight.controller
+  # 路径匹配
+  paths-to-match: /api/**
+
+
+# TradeInsight 性能监控配置
+tradeinsight:
+  performance:
+    monitor:
+      # 是否启用性能监控
+      enabled: true
+      # 慢查询阈值（毫秒）
+      slow-query-threshold: 1000
+      # 慢服务调用阈值（毫秒）
+      slow-service-threshold: 2000
+      # 缓存命中率低阈值
+      low-cache-hit-rate-threshold: 0.7
+      # 是否启用查询性能监控
+      query-monitor-enabled: true
+      # 是否启用缓存命中率监控
+      cache-monitor-enabled: true
+      # 是否启用服务性能监控
+      service-monitor-enabled: true
+      # 性能统计数据保留时间（小时）
+      stats-retention-hours: 24
+      # 是否启用性能告警
+      alert-enabled: false
+      # 告警邮件接收者
+      alert-email-recipients: admin@tradeinsight.com
+      # 性能监控日志级别
+      log-level: DEBUG
+      # 是否启用详细的性能日志
+      detailed-logging-enabled: false
+      # 统计数据清理间隔（小时）
+      cleanup-interval-hours: 6
+      # 最大统计条目数
+      max-stats-entries: 1000

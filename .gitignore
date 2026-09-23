@@ -1,0 +1,26 @@
+# 依赖
+node_modules/
+frontend/node_modules/
+backend/target/
+
+# Electron 构建产物
+release/
+dist/
+
+# 打包资源（构建时生成，不入库）
+resources/backend/
+resources/redis/
+
+# 日志与本地数据
+*.log
+data/
+*.db
+*.mv.db
+*.trace.db
+
+# 系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
