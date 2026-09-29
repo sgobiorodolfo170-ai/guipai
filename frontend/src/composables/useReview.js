@@ -9,6 +9,7 @@ import {
     getStockSpot
 } from '@/services/aktools.service'
 import StockDateUtil from "@/utils/StockDateUtil.js";
+import cacheStorage from "@/utils/cacheStorage.js";
 
 
 export function useReview() {
@@ -370,20 +371,62 @@ export function useReview() {
         ]) ;
     }
 
-    //获取上证指数数据
+    //获取指数数据（上证系列指数 + 深证系列指数，合并后覆盖上证指数/深证成指/创业板指）
     const getIndexData = async () => {
         try {
-            const response = await getStockIndexSpot('上证系列指数')
-
-            if (response.code === 200 && response.data) {
-                indexData.value = response.data
-                return response.data
-            }
-            return []
+            const [shResponse, szResponse] = await Promise.all([
+                getStockIndexSpot('上证系列指数'),
+                getStockIndexSpot('深证系列指数')
+            ])
+            const shData = shResponse.code === 200 && shResponse.data ? shResponse.data : []
+            const szData = szResponse.code === 200 && szResponse.data ? szResponse.data : []
+            indexData.value = [...shData, ...szData]
+            return indexData.value
         } catch (error) {
             console.error('获取市场数据失败:', error)
             return []
         }
+    }
+
+    // ---- 复盘数据本地缓存（持久化，由用户点击刷新按钮手动更新）----
+    // 复盘页所需指数代码：上证指数000001 / 深证成指399001 / 创业板指399006
+    const REVIEW_CACHE_KEY = 'review:data'
+    const REVIEW_INDEX_CODES = ['000001', '399001', '399006']
+
+    /**
+     * 从本地缓存载入复盘数据（不触发网络请求）
+     * @returns {null|{tradingDay:string}} 命中返回 { tradingDay }，未命中返回 null
+     */
+    const loadCachedReview = () => {
+        const cached = cacheStorage.get(REVIEW_CACHE_KEY)
+        if (!cached) return null
+        indexData.value = cached.indexData || []
+        limitUpData.value = cached.limitUpData || []
+        limitDownData.value = cached.limitDownData || []
+        yesterdayLimit.value = cached.yesterdayLimit || []
+        return { tradingDay: cached.tradingDay || null }
+    }
+
+    /**
+     * 拉取全部复盘数据并写入本地缓存（刷新按钮调用）
+     * 仅缓存实际使用的 3 个指数，避免 localStorage 膨胀
+     * @returns {Promise<boolean>} 是否成功
+     */
+    const fetchAndCacheReview = async () => {
+        await Promise.all([
+            getIndexData(),
+            fetchLimitUpData(),
+            fetchLimitDownData(),
+            fetchYesterdayLimitUpData(),
+        ])
+        cacheStorage.set(REVIEW_CACHE_KEY, {
+            indexData: indexData.value.filter(item => REVIEW_INDEX_CODES.includes(item.代码)),
+            limitUpData: limitUpData.value,
+            limitDownData: limitDownData.value,
+            yesterdayLimit: yesterdayLimit.value,
+            tradingDay: StockDateUtil.getRecentTradingDay(),
+        })
+        return true
     }
 
     return {
@@ -418,5 +461,7 @@ export function useReview() {
         yesterdayTransformLimitUpData,
         getIndexData,
         getYearMonthDay,
+        loadCachedReview,
+        fetchAndCacheReview,
     }
 }

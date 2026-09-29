@@ -38,15 +38,25 @@
             </div>
           </div>
           <div class="core-item">
-            <div class="core-label">xxxxx</div>
-            <div class="core-value up">{{ limitUpCount }}只</div>
+            <div class="core-label">深证指数</div>
+            <div class="core-value-group">
+              <span class="core-value">{{ shenzhenIndexValue }}</span>
+              <span class="core-change" :class="{ up: shenzhenIndexChange > 0, down: shenzhenIndexChange < 0 }">
+              {{ shenzhenIndexChange > 0 ? '+' : '' }}{{ shenzhenIndexChange }}%
+            </span>
+            </div>
           </div>
           <div class="core-item">
-            <div class="core-label">xxxxx</div>
-            <div class="core-value down">{{ limitDownCount }}只</div>
+            <div class="core-label">创业板指数</div>
+            <div class="core-value-group">
+              <span class="core-value">{{ chinextIndexValue }}</span>
+              <span class="core-change" :class="{ up: chinextIndexChange > 0, down: chinextIndexChange < 0 }">
+              {{ chinextIndexChange > 0 ? '+' : '' }}{{ chinextIndexChange }}%
+            </span>
+            </div>
           </div>
           <div class="core-item">
-            <div class="core-label">xxxxx</div>
+            <div class="core-label">最高板</div>
             <div class="core-value">{{ maxLimitUpLevel }}板</div>
           </div>
         </div>
@@ -292,15 +302,13 @@ const {
   highFlagStock,
   limitUpData,
   limitDownData,
-  fetchLimitUpData,
-  fetchLimitDownData,
   formatAmount,
   getTradeDates,
   transformKlineData,
-  fetchYesterdayLimitUpData,
   yesterdayStockCategories,
-  getIndexData,
   getYearMonthDay,
+  loadCachedReview,
+  fetchAndCacheReview,
 } = useReview()
 
 //刷新按钮相关
@@ -331,6 +339,10 @@ const oneWordLimitUpCount = ref('--')
 const breakAndRecoverCount = ref('--')
 const indexValue = ref('--')
 const indexChange = ref('')
+const shenzhenIndexValue = ref('--')
+const shenzhenIndexChange = ref('')
+const chinextIndexValue = ref('--')
+const chinextIndexChange = ref('')
 const yesterdayLimitUpAvgChange = ref('--')
 
 
@@ -361,12 +373,20 @@ const selectedMarket2 = ref('day');
 
 // 计算连板转换数据
 const calculateBoardTransition = (limitUpData) => {
-  //计算上证指数
-  //查找indexData.value数组里某项的index
+  //计算上证指数、深证成指、创业板指
+  //查找indexData.value数组里各项指数
   indexData.value.map(item => {
     if (item.代码 === '000001') {
       indexValue.value = item.今开
       indexChange.value = item.涨跌幅
+    }
+    if (item.代码 === '399001') {
+      shenzhenIndexValue.value = item.今开
+      shenzhenIndexChange.value = item.涨跌幅
+    }
+    if (item.代码 === '399006') {
+      chinextIndexValue.value = item.今开
+      chinextIndexChange.value = item.涨跌幅
     }
   })
   // 总涨停数
@@ -593,14 +613,24 @@ const toggleKline = async (stock) => {
 //   })
 // }
 
-//刷新
+// 处理已载入内存的数据（缓存或网络均可）：渲染分类、计算指标、应用市场筛选
+const applyLoadedData = async () => {
+  chooseStockCategories.value = stockCategories.value
+  // 计算连板转换数据（同时提取三大指数值、最高板等指标）
+  if (limitUpData.value.length > 0) {
+    calculateBoardTransition(limitUpData.value)
+  }
+  await handleMarketChange()
+}
+
+// 刷新（刷新按钮调用）：强制拉取最新数据并写入本地缓存
 const refreshData = () => {
   if (!isButtonEnabled.value) return;
 
   // 禁用按钮
   isButtonEnabled.value = false;
   countdown.value = 3;
-  initializeData()
+  refreshReview()
   // 设置倒计时
   const interval = setInterval(() => {
     countdown.value -= 1;
@@ -611,24 +641,32 @@ const refreshData = () => {
   }, 1000);
 }
 
-// 初始化数据
+// 刷新数据（强制网络拉取 + 更新缓存）
+const refreshReview = async () => {
+  setCurrentDate()
+  yesterdayLimitUpData.value = null
+  tradeDates.value = getTradeDates(kTradeDates)
+  await fetchAndCacheReview()
+  recentTradingDay.value = StockDateUtil.getRecentTradingDay()
+  await applyLoadedData()
+}
+
+// 初始化数据（挂载时调用）：优先本地缓存直出，缓存未命中才拉取并落盘
 const initializeData = async () => {
   setCurrentDate()
   yesterdayLimitUpData.value = null
-  await Promise.all([
-    getIndexData(),
-    fetchLimitUpData(),
-    fetchLimitDownData(),
-    fetchYesterdayLimitUpData(),
-    tradeDates.value = getTradeDates(kTradeDates),
-  ])
-  chooseStockCategories.value = stockCategories.value
-  // 计算连板转换数据
-  if (limitUpData.value.length > 0) {
-    calculateBoardTransition(limitUpData.value)
+  tradeDates.value = getTradeDates(kTradeDates)
+  // 优先从本地缓存载入，避免每次打开都拉取实时数据
+  const cached = loadCachedReview()
+  if (cached) {
+    recentTradingDay.value = cached.tradingDay || StockDateUtil.getRecentTradingDay()
+    await applyLoadedData()
+    return
   }
+  // 缓存未命中（首次打开）：拉取并写入缓存
+  await fetchAndCacheReview()
   recentTradingDay.value = StockDateUtil.getRecentTradingDay()
-  await handleMarketChange()
+  await applyLoadedData()
 }
 
 
