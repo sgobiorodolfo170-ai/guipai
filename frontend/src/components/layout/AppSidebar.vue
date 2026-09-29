@@ -92,6 +92,11 @@ const menuItems = [
       }
     ]
   },
+  {
+    index: '/settings',
+    title: '设置',
+    icon: 'Tools'
+  },
 ]
 
 

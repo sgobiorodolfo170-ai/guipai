@@ -3,6 +3,7 @@
 const express = require('express')
 const aktools = require('../aktools')
 const cache = require('../cache')
+const klineRepo = require('../../dolphindb/kline-repository')
 
 const router = express.Router()
 
@@ -96,11 +97,34 @@ router.get('/:code', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// K线数据
+// K线数据（DolphinDB first → 东财/Tushare 兜底 → 异步回填 DolphinDB）
 router.get('/:code/kline', async (req, res) => {
   try {
     const { code } = req.params
     const { period = 'daily', startDate, endDate, adjust = 'qfq' } = req.query
+
+    // 1. DolphinDB first（daily 直接查；weekly/monthly/quarterly/yearly 从 daily_k 聚合）
+    try {
+      let ddbData
+      if (period === 'daily') {
+        ddbData = await klineRepo.getDailyK(code, startDate, endDate)
+      } else {
+        ddbData = await klineRepo.getKlineAggregated(code, startDate, endDate, period)
+      }
+      if (ddbData && ddbData.length > 0) {
+        const kline = ddbData.map(m => ({
+          date: m['日期'], open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
+          high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
+          volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
+          turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
+        }))
+        return ok(res, kline)
+      }
+    } catch (e) {
+      console.error('[stock] DolphinDB kline query failed, fallback to 东财:', e.message)
+    }
+
+    // 2. DolphinDB miss → 东财/Tushare（aktools 内含 Tushare 兜底）
     const raw = await aktools.getStockHistory({ symbol: code, period, adjust, start_date: startDate, end_date: endDate })
     const kline = (raw || []).map(m => ({
       date: m['日期'], open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
@@ -108,6 +132,12 @@ router.get('/:code/kline', async (req, res) => {
       volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
       turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
     }))
+
+    // 3. 异步回填 DolphinDB（仅 daily，非阻塞——用户无感知地积累数据）
+    if (period === 'daily' && raw && raw.length > 0) {
+      klineRepo.insertDailyK(raw).catch(e => console.error('[stock] daily_k backfill failed:', e.message))
+    }
+
     ok(res, kline)
   } catch (e) { errMsg(res, e.message) }
 })

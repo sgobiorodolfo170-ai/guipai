@@ -50,7 +50,7 @@ async function waitForVite(timeoutMs = 60000) {
     vite = spawn(
       process.platform === 'win32' ? 'npm.cmd' : 'npm',
       ['run', 'dev'],
-      { cwd: FRONTEND, stdio: 'inherit', shell: false }
+      { cwd: FRONTEND, stdio: 'inherit', shell: true }
     )
     vite.on('exit', (code) => {
       console.log(`[dev] vite exited code=${code}`)
@@ -73,7 +73,7 @@ async function waitForVite(timeoutMs = 60000) {
       cwd: ROOT,
       stdio: 'inherit',
       env: { ...process.env, NODE_ENV: 'development', VITE_DEV_SERVER_URL: `http://localhost:${VITE_PORT}` },
-      shell: false
+      shell: true
     }
   )
   electron.on('exit', (code) => {

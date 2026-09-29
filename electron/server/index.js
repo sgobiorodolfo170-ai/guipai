@@ -5,6 +5,7 @@ const cors = require('cors')
 const path = require('path')
 const fs = require('fs')
 const { initDb, closeDb } = require('./db')
+const settings = require('./settings')
 const aktoolsRoutes = require('./routes/aktools')
 const statisticsRoutes = require('./routes/statistics')
 const syncRoutes = require('./routes/sync')
@@ -17,6 +18,7 @@ let server = null
 
 function startServer(port = 8080, dataDir) {
   return initDb(dataDir).then(() => {
+  settings.init(dataDir)
   const logDir = path.join(path.dirname(dataDir), 'logs')
 
   const app = express()
@@ -44,6 +46,16 @@ function startServer(port = 8080, dataDir) {
       if (fs.existsSync(logFile)) fs.writeFileSync(logFile, '')
       res.json({ code: 200, msg: '已清空' })
     } catch (e) { res.json({ code: 500, msg: e.message }) }
+  })
+
+  // ---- 设置（Tushare token 等） ----
+  app.get('/api/settings/tushare', (req, res) => {
+    res.json({ code: 200, data: { configured: settings.isTushareConfigured() } })
+  })
+  app.post('/api/settings/tushare', (req, res) => {
+    const token = req.body && req.body.token
+    settings.setTushareToken(token)
+    res.json({ code: 200, msg: settings.isTushareConfigured() ? 'Tushare token 已保存' : 'token 已清除' })
   })
 
   app.use('/api/aktools', aktoolsRoutes)

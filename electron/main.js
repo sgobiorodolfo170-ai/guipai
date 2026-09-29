@@ -1,9 +1,10 @@
 'use strict'
 
-const { app, BrowserWindow, Menu, shell, dialog } = require('electron')
+const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const { startServer, stopServer } = require('./server')
+const ddb = require('./dolphindb/client')
 
 process.on('uncaughtException', (err) => {
   const logDir = path.join(app.getPath('userData'), 'logs')
@@ -71,12 +72,35 @@ const template = [
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 
+  // ===== DolphinDB 通信桥（渲染进程通过 ipcMain 调用 dolphindb npm 包）=====
+  // 架构：渲染进程 ──ipc──> 主进程 ──WebSocket──> 独立 DolphinDB 进程
+  ipcMain.handle('ddb:status', async () => ({ connected: ddb.isConnected() }))
+  ipcMain.handle('ddb:execute', async (_e, script) => {
+    try {
+      return { ok: true, data: await ddb.execute(script) }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  })
+  ipcMain.handle('ddb:invoke', async (_e, func, args) => {
+    try {
+      return { ok: true, data: await ddb.invoke(func, args) }
+    } catch (e) {
+      return { ok: false, error: e.message }
+    }
+  })
+
   const dataDir = path.join(app.getPath('userData'), 'data')
   try {
     await startServer(SERVER_PORT, dataDir)
   } catch (e) {
     dialog.showErrorBox('龟派', '本地服务启动失败: ' + e.message)
   }
+
+  // 连接 DolphinDB（best-effort：不可达不阻断启动，行情功能会在调用时报错）
+  ddb.connect().catch((e) => {
+    dialog.showErrorBox('龟派', 'DolphinDB 连接失败: ' + e.message + '\n行情/因子功能将不可用，其余功能不受影响。')
+  })
 
   createWindow()
 
@@ -91,4 +115,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopServer()
+  ddb.disconnect()
 })

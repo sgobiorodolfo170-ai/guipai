@@ -1,6 +1,9 @@
 appId: com.guipai.app
 productName: 龟派
 copyright: Copyright © 2026 龟派
+# 跳过原生模块重编译：dolphindb 纯 JS、sql.js 为 WASM，无生产原生插件需为 Electron ABI 重编译；
+# 且 dolphindb 传递依赖的 @parcel/watcher（经 xshell→sass）无 VS C++ 时重编译失败，但它运行时无人使用。
+npmRebuild: false
 directories:
   output: release
   buildResources: build
@@ -8,9 +11,13 @@ files:
   - electron/**/*
   - frontend/dist/**/*
   - package.json
-  - "!**/node_modules/**/*"
+# 不排除 node_modules：electron-builder 默认只纳入 package.json 的 dependencies（生产依赖），
+# 排除 devDependencies。原 `!**/node_modules/**/*` 会连 express/cors/sql.js/dolphindb 一起丢掉，
+# 导致安装包运行时 require/import 失败。
 extraResources: []
-asar: true
+# asar 关闭：dolphindb 为 ESM 包，经动态 import() 从 asar 内加载在 Electron 中不可靠；
+# 落盘可保证 CommonJS(require) 与 ESM(import) 均按开发态正常解析。
+asar: false
 asarUnpack:
   - "**/sql.js/dist/**/*"
 win:

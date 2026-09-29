@@ -11,6 +11,7 @@ const NoteDetail = () => import('@/views/note/NoteDetail.vue')
 const TemplateList = () => import('@/views/template/TemplateList.vue')
 const TemplateEdit = () => import('@/views/template/TemplateEdit.vue')
 const Profile = () => import('@/views/user/Profile.vue')
+const Settings = () => import('@/views/settings/Settings.vue')
 const ApiTest = () => import('@/views/test/ApiTest.vue')
 const Review = () => import('@/views/review/Review.vue')
 const KTest = () => import('@/views/test/KTest.vue')
@@ -250,6 +251,15 @@ const routes = [
         meta: {
             title: '个人中心',
             icon: 'User'
+        }
+    },
+    {
+        path: '/settings',
+        name: 'Settings',
+        component: Settings,
+        meta: {
+            title: '设置',
+            icon: 'Setting'
         }
     },
     {
