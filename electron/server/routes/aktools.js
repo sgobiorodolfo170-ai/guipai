@@ -6,13 +6,14 @@ const cache = require('../cache')
 
 const router = express.Router()
 
-function withCache(key, ttl, fetcher) {
+function withCache(key, ttl, fetcher, { cacheEmpty = true } = {}) {
   return async (req, res) => {
     const cached = cache.get(key)
     if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
     try {
       const data = await fetcher(req)
-      cache.set(key, data, ttl)
+      // 空数组默认也缓存；对上游易抖动的接口（cacheEmpty:false）跳过，避免空包被固化成 TTL 内"无数据"
+      if (cacheEmpty || !Array.isArray(data) || data.length > 0) cache.set(key, data, ttl)
       res.json({ code: 200, msg: '成功', data })
     } catch (e) {
       res.json({ code: 500, msg: e.message })
@@ -68,7 +69,8 @@ router.get('/stock/indexSpot', (req, res) => {
   const { symbol } = req.query
   const valid = ['沪深重要指数', '上证系列指数', '深证系列指数', '指数成份', '中证系列指数']
   if (!valid.includes(symbol)) return res.json({ code: 400, msg: '参数错误' })
-  withCache(`aktools:stock:indexSpot:${symbol}`, 60, () => aktools.getStockIndexSpot(symbol))(req, res)
+  // 指数接口上游限流/被拦时可能返回空数组，不落缓存以便下次请求直接重试
+  withCache(`aktools:stock:indexSpot:${symbol}`, 60, () => aktools.getStockIndexSpot(symbol), { cacheEmpty: false })(req, res)
 })
 
 module.exports = router

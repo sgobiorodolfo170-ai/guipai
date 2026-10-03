@@ -10,8 +10,16 @@
  *   - getStockSpot / getStockIndexSpot                           → 82/33/48.push2 clist（全市场/指数 spot）
  *   - getStockInfo                                               → push2 stock/get
  *   - getStockHolding                                           → datacenter-web
- *   - getStockIndustry                                          → 17.push2 clist（行业板块，替代同花顺反爬）
- *   已真机验证：涨停池/跌停池/指数日K/昨日涨停/股东。其余与已验证函数同构（push2his/clist 限流期待补测）。
+ *   - getStockIndustry                                          → 17.push2 clist（行业板块）
+ *   已真机验证：涨停池/跌停池/指数日K/昨日涨停/股东/指数 spot。
+ *
+ * 跨厂商兜底（本机网络下东财 push2/push2his 的 /api/qt/* 被 WAF 直接 RST，ECONNRESET）：
+ *   - 指数 spot      → 腾讯 qt.gtimg.cn（GBK，见 getStockIndexSpot 三源竞速）
+ *   - K 线/分时      → 腾讯 web.ifzq.gtimg.cn（fqkline / mkline / day·minute query）
+ *   - 全市场 spot    → 腾讯 proxy.finance.qq.com getBoardRankList(board_code=aStock)
+ *   - 行业板块       → 同花顺 q.10jqka.com.cn/thshy（GBK 静态页）
+ *   触发时机：主源抛错（网络拦截）或返回空（spot/industry）时降级；命中后 console.warn 留痕。
+ *   返回键与东财口径保持一致（单位折算见各兜底函数注释），converter/前端无需改动。
  *
  * 已移植函数返回"中文键对象数组"（与 akshare 输出一致），故 converter.js 无需改动。
  * 字段映射依据 akshare 1.18.97 源码 + 东财真实返回字段键（c/m/n/p/zdp/amount/ltsz/tshare/hs/lbc/fbt/lbt/fund/zbc/hybk/zttj 等）。
@@ -27,9 +35,9 @@ const UT = '7eea3edcaed734bea9cbfc24409ed989' // 东财 kline/涨停池 公开 t
 const UT_SPOT = 'bd1d9ddb04089700cf9c27f6f7426281' // 东财 clist（spot/指数spot）公开 token（akshare 同款）
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
-/** 通用 HTTP GET 取 JSON（支持 http/https，用 Node 核心 http/https 模块，不依赖 undici）。
+/** 通用 HTTP GET 取字节流（Node 核心 http/https 模块，不依赖 undici）。
  *  含重试退避（应对东财偶发 ECONNRESET/超时，akshare 同款策略）。 */
-async function getJson(url, { headers = {}, timeout = 30000, retries = 2 } = {}) {
+async function getBuffer(url, { headers = {}, timeout = 30000, retries = 2 } = {}) {
   let lastErr
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -44,11 +52,11 @@ async function getJson(url, { headers = {}, timeout = 30000, retries = 2 } = {})
           headers: { 'User-Agent': UA, 'Referer': 'https://quote.eastmoney.com/', ...headers },
           timeout
         }, (res) => {
-          let body = ''
-          res.on('data', (c) => { body += c })
+          const chunks = []
+          res.on('data', (c) => chunks.push(c))
           res.on('end', () => {
             if (res.statusCode !== 200) return reject(new Error(`东财返回 ${res.statusCode}: ${url}`))
-            try { resolve(JSON.parse(body)) } catch { reject(new Error(`东财返回非 JSON: ${url}`)) }
+            resolve(Buffer.concat(chunks))
           })
         })
         req.on('error', (e) => reject(new Error(`东财请求失败 (${e.code || e.message}): ${url}`)))
@@ -61,6 +69,22 @@ async function getJson(url, { headers = {}, timeout = 30000, retries = 2 } = {})
     }
   }
   throw lastErr
+}
+
+/** 取文本；encoding 可传 gbk/gb18030（腾讯行情返回 GBK，按 utf8 解码会乱码）。 */
+async function getText(url, { encoding = 'utf8', ...opts } = {}) {
+  const buf = await getBuffer(url, opts)
+  return encoding === 'utf8' ? buf.toString('utf8') : new TextDecoder(encoding).decode(buf)
+}
+
+/** 取 JSON（getText + JSON.parse，对外签名与原实现一致，调用方无感知）。 */
+async function getJson(url, opts = {}) {
+  const text = await getText(url, opts)
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`东财返回非 JSON: ${url}`)
+  }
 }
 
 /** 6 位时间补零：92500 -> "092500"。 */
@@ -139,59 +163,88 @@ async function fallbackTushare(eastError, date, limitType, label) {
   return await tushare.getLimitListD(date, limitType, token)
 }
 
-/** 指数日K（index_zh_a_hist 等价）；klines 逗号串：日期,开,收,高,低,量,额,振幅,涨跌幅,涨跌额,换手率 */
+/** 指数日K（index_zh_a_hist 等价）；klines 逗号串：日期,开,收,高,低,量,额,振幅,涨跌幅,涨跌额,换手率
+ *  取数顺序：东财 push2his → 腾讯 fqkline（东财域名被网络拦截时跨厂商兜底） */
 async function getIndexDailyData({ symbol, start_date, end_date, period = 'daily' }) {
   const klt = period === 'weekly' ? '102' : period === 'monthly' ? '103' : '101'
   const known = { '000001': '1', '399001': '0', '399006': '0', '000688': '1', '000300': '1', '000905': '1', '000016': '1', '000852': '1' }
   const prefixes = known[symbol] ? [known[symbol]] : ['1', '0', '2', '47']
-  let klines = null
-  for (const pf of prefixes) {
-    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${pf}.${symbol}&ut=${UT}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=0&beg=0&end=20500000`
-    const json = await getJson(url)
-    if (json && json.data && json.data.klines) { klines = json.data.klines; break }
-  }
-  if (!klines || !klines.length) return []
-  const rows = klines.map((line) => {
-    const [d, o, c, h, l, vol, amt, amp, chg, pc, tr] = line.split(',')
-    return {
-      '日期': d, '开盘': +o, '收盘': +c, '最高': +h, '最低': +l,
-      '成交量': +vol, '成交额': +amt, '振幅': +amp, '涨跌幅': +chg, '涨跌额': +pc, '换手率': +tr
+  let lastErr = null
+  try {
+    let klines = null
+    // retries:0 —— 网络被拦时快速失败进兜底，避免多前缀×重试退避叠加超过前端超时
+    for (const pf of prefixes) {
+      const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${pf}.${symbol}&ut=${UT}&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&klt=${klt}&fqt=0&beg=0&end=20500000`
+      const json = await getJson(url, { retries: 0, timeout: 10000 })
+      if (json && json.data && json.data.klines) { klines = json.data.klines; break }
     }
-  })
-  const sd = (start_date || '00000000').replace(/\D/g, '')
-  const ed = (end_date || '99999999').replace(/\D/g, '')
-  return rows.filter((r) => {
-    const d = String(r['日期']).replace(/\D/g, '')
-    return d >= sd && d <= ed
-  })
+    if (!klines || !klines.length) return []
+    const rows = klines.map((line) => {
+      const [d, o, c, h, l, vol, amt, amp, chg, pc, tr] = line.split(',')
+      return {
+        '日期': d, '开盘': +o, '收盘': +c, '最高': +h, '最低': +l,
+        '成交量': +vol, '成交额': +amt, '振幅': +amp, '涨跌幅': +chg, '涨跌额': +pc, '换手率': +tr
+      }
+    })
+    return filterRowsByDate(rows, start_date, end_date)
+  } catch (e) {
+    lastErr = e
+  }
+  // 腾讯兜底：东财只在网络层失败时走到这里（空数据视为真无数据直接返回 []）
+  try {
+    const periodKey = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day'
+    const raw = await getKlineFromTencent({ symbol, isIndex: true, periodKey, fq: '', start: start_date, end: end_date })
+    if (raw.length) {
+      console.warn(`[aktools] 东财指数K线不可用(${symbol})，切换腾讯 fqkline 兜底(${raw.length} 根)`)
+      return filterRowsByDate(mapTxKline(raw), start_date, end_date)
+    }
+  } catch (e) {
+    lastErr = lastErr || e
+  }
+  throw lastErr || new Error(`指数K线各源均失败(${symbol},${period})`)
 }
 
-/** 个股日K/周K/月K（stock_zh_a_hist 等价）；market: 6开头→上交所(1)，否则→深交所(0) */
+/** 个股日K/周K/月K（stock_zh_a_hist 等价）；market: 6开头→上交所(1)，否则→深交所(0)
+ *  取数顺序：东财 push2his → 腾讯 fqkline（跨厂商兜底） → Tushare pro_bar（仅日K，需配置 token） */
 async function getStockHistory({ symbol, period = 'daily', start_date, end_date, adjust = 'qfq' }) {
+  const periodKey = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day'
+  const fq = adjust === 'qfq' ? 'qfq' : adjust === 'hfq' ? 'hfq' : ''
+  let lastErr = null
   try {
     const market = symbol.startsWith('6') ? 1 : 0
     const klt = period === 'weekly' ? '102' : period === 'monthly' ? '103' : '101'
     const fqt = adjust === 'qfq' ? '1' : adjust === 'hfq' ? '2' : '0'
     const beg = (start_date || '19700101').replace(/\D/g, '')
     const end = (end_date || '20500101').replace(/\D/g, '')
+    // retries:0 —— 网络被拦时快速失败进兜底，不再叠加 1.5s/3s 退避
     const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116&ut=${UT}&klt=${klt}&fqt=${fqt}&secid=${market}.${symbol}&beg=${beg}&end=${end}`
-    const json = await getJson(url)
+    const json = await getJson(url, { retries: 0, timeout: 10000 })
     const klines = json && json.data && json.data.klines
-    if (!klines || !klines.length) {
-      if (period === 'daily') return await fallbackKlineTushare(symbol, start_date, end_date)
-      return []
+    if (klines && klines.length) {
+      return klines.map((line) => {
+        const p = line.split(',')
+        return {
+          '日期': p[0], '股票代码': symbol, '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4],
+          '成交量': +p[5], '成交额': +p[6], '振幅': +p[7], '涨跌幅': +p[8], '涨跌额': +p[9], '换手率': +p[10]
+        }
+      })
     }
-    return klines.map((line) => {
-      const p = line.split(',')
-      return {
-        '日期': p[0], '股票代码': symbol, '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4],
-        '成交量': +p[5], '成交额': +p[6], '振幅': +p[7], '涨跌幅': +p[8], '涨跌额': +p[9], '换手率': +p[10]
-      }
-    })
+    return []
   } catch (e) {
-    if (period === 'daily') return await fallbackKlineTushare(symbol, start_date, end_date, e)
-    throw e
+    lastErr = e
   }
+  // 腾讯 fqkline 兜底：东财仅在网络层失败时走到这里（空区间视为真无数据返回 []）
+  try {
+    const raw = await getKlineFromTencent({ symbol, periodKey, fq, start: start_date, end: end_date })
+    if (raw.length) {
+      console.warn(`[aktools] 东财K线不可用(${symbol})，切换腾讯 fqkline 兜底(${raw.length} 根)`)
+      return filterRowsByDate(mapTxKline(raw, { symbol }), start_date, end_date)
+    }
+  } catch (e) {
+    lastErr = lastErr || e
+  }
+  if (period === 'daily') return await fallbackKlineTushare(symbol, start_date, end_date, lastErr)
+  throw lastErr || new Error(`东财/腾讯K线均返回空(${symbol},${period})`)
 }
 
 /** 东财日K失败 → Tushare pro_bar(adj=qfq) 兜底 */
@@ -202,35 +255,102 @@ async function fallbackKlineTushare(symbol, startDate, endDate, eastError) {
   return await tushare.getDailyBar(symbol, startDate, endDate, token)
 }
 
-/** 沪深京 A 股实时行情（stock_zh_a_spot_em 等价）；pz=2000 分页取全市场 */
+/** 沪深京 A 股实时行情（stock_zh_a_spot_em 等价）；pz=2000 分页取全市场
+ *  取数顺序：东财 clist → 腾讯 aStock 榜单（push2 被拦或返回空时跨厂商兜底） */
 async function getStockSpot() {
-  const all = []
-  let pn = 1
-  while (pn <= 5) { // 最多 5 页 × 2000 = 10000，安全上限
-    const url = `https://82.push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=2000&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&fid=f12&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11`
-    const json = await getJson(url)
-    const list = json && json.data && json.data.list
-    if (!list || !list.length) break
-    for (let i = 0; i < list.length; i++) {
-      const it = list[i]
-      all.push({
-        '序号': all.length + 1, '代码': it.f12, '名称': it.f14, '最新价': it.f2, '涨跌幅': it.f3, '涨跌额': it.f4,
-        '成交量': it.f5, '成交额': it.f6, '振幅': it.f7, '最高': it.f15, '最低': it.f16, '今开': it.f17, '昨收': it.f18,
-        '量比': it.f10, '换手率': it.f8, '市盈率-动态': it.f9, '市净率': it.f23, '总市值': it.f20, '流通市值': it.f21,
-        '涨速': it.f22, '5分钟涨跌': it.f11, '60日涨跌幅': it.f24, '年初至今涨跌幅': it.f25
-      })
+  let lastErr = null
+  try {
+    const all = []
+    let pn = 1
+    while (pn <= 5) { // 最多 5 页 × 2000 = 10000，安全上限
+      const url = `https://82.push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=2000&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&fid=f12&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048&fields=f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f14,f15,f16,f17,f18,f20,f21,f23,f24,f25,f22,f11`
+      const json = await getJson(url, { retries: 0, timeout: 10000 })
+      // 东财 clist 返回 data.diff（np=1 为数组），不是 data.list——原实现误读 list 恒为空
+      const diff = json && json.data && json.data.diff
+      const list = Array.isArray(diff) ? diff : diff ? Object.values(diff) : null
+      if (!list || !list.length) break
+      for (let i = 0; i < list.length; i++) {
+        const it = list[i]
+        all.push({
+          '序号': all.length + 1, '代码': it.f12, '名称': it.f14, '最新价': it.f2, '涨跌幅': it.f3, '涨跌额': it.f4,
+          '成交量': it.f5, '成交额': it.f6, '振幅': it.f7, '最高': it.f15, '最低': it.f16, '今开': it.f17, '昨收': it.f18,
+          '量比': it.f10, '换手率': it.f8, '市盈率-动态': it.f9, '市净率': it.f23, '总市值': it.f20, '流通市值': it.f21,
+          '涨速': it.f22, '5分钟涨跌': it.f11, '60日涨跌幅': it.f24, '年初至今涨跌幅': it.f25
+        })
+      }
+      if (list.length < 2000) break
+      pn++
     }
-    if (list.length < 2000) break
-    pn++
+    if (all.length) return all
+    lastErr = new Error('东财全市场行情返回空')
+  } catch (e) {
+    lastErr = e
   }
-  return all
+  try {
+    const rows = await getStockSpotFromTencent()
+    if (rows.length) {
+      console.warn(`[aktools] 东财全市场行情不可用(${lastErr && lastErr.message})，切换腾讯 aStock 兜底(${rows.length} 只)`)
+      return rows
+    }
+  } catch (e) {
+    lastErr = lastErr || e
+  }
+  throw lastErr || new Error('全市场行情各源均返回空')
 }
 
-/** 指数实时行情（stock_zh_index_spot_em 等价）；沪深重要指数→33.push2 fs=b:MK0010 data.diff，其余→48.push2 data.list */
+/** 兜底 secids 清单：clist 不可用时按代码精确取数（覆盖复盘三指数 + 仪表盘核心指数） */
+const INDEX_FALLBACK_SECIDS = {
+  '沪深重要指数': '1.000001,1.000300,1.000016,1.000688,1.000905,0.399001,0.399006,0.399005,0.399106',
+  '上证系列指数': '1.000001,1.000002,1.000003,1.000016,1.000300,1.000688,1.000905,1.000852',
+  '深证系列指数': '0.399001,0.399002,0.399003,0.399005,0.399006,0.399106,0.399673',
+  '中证系列指数': '1.000300,1.000905,1.000852,1.000016',
+  '指数成份': '1.000300,1.000016,0.399001,0.399006'
+}
+
+/** 并行竞速取数：多个源同时发起，取最先成功者；全部失败抛出首个错误。
+ *  串行降级在弱网下会叠加每级超时（实测单次连接可达 7~8s，超过前端 15s 请求超时），故改为竞速。 */
+async function firstFulfilled(fns) {
+  return await new Promise((resolve, reject) => {
+    let pending = fns.length
+    let firstErr = null
+    fns.forEach((fn) => {
+      Promise.resolve()
+        .then(fn)
+        .then(resolve, (e) => {
+          if (!firstErr) firstErr = e
+          if (--pending === 0) reject(firstErr || new Error('全部行情源均失败'))
+        })
+    })
+  })
+}
+
+/** 指数实时行情（stock_zh_index_spot_em 等价）。
+ *  三源并行竞速：东财 clist（全量系列）/ 东财 ulist.np（按 secids）/ 腾讯 qt.gtimg.cn（跨厂商兜底）。
+ *  兜底原因：东财 push2 域名下 /api/qt/* 在部分网络会被 WAF 直接 RST（ECONNRESET），
+ *  单靠东财会整页空白，故末级切厂商保证指数卡片有数。 */
 async function getStockIndexSpot(symbol = '上证系列指数') {
+  const source = (name, fn) => async () => {
+    try {
+      const list = await fn()
+      if (list && list.length) return list
+      throw new Error('返回空')
+    } catch (e) {
+      console.warn(`[aktools] 指数源 ${name}(${symbol}) 失败: ${e.message}`)
+      throw e
+    }
+  }
+  return await firstFulfilled([
+    source('clist', () => getIndexSpotFromClist(symbol)),
+    source('ulist', () => getIndexSpotFromUlist(symbol)),
+    source('tencent', () => getIndexSpotFromTencent(symbol))
+  ])
+}
+
+/** 主路径：东财 clist（沪深重要指数→33.push2 fs=b:MK0010，其余→48.push2 按系列 fs） */
+async function getIndexSpotFromClist(symbol) {
   if (symbol === '沪深重要指数') {
     const url = `https://33.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=100&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&dect=1&wbp2u=|0|0|0|web&fid=&fs=b:MK0010&fields=f2,f3,f4,f5,f6,f7,f10,f12,f14,f15,f16,f17,f18`
-    const json = await getJson(url)
+    const json = await getJson(url, { retries: 0, timeout: 8000 })
     const diff = json && json.data && json.data.diff
     if (!diff) return []
     return diff.map((it, i) => mapIndexSpot(it, i))
@@ -238,10 +358,58 @@ async function getStockIndexSpot(symbol = '上证系列指数') {
   const symbolMap = { '上证系列指数': 'm:1+t:1', '深证系列指数': 'm:0+t:5', '指数成份': 'm:1+s:3,m:0+t:5', '中证系列指数': 'm:2' }
   const fs = symbolMap[symbol] || 'm:1+t:1'
   const url = `https://48.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=500&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&wbp2u=|0|0|0|web&fid=f12&fs=${fs}&fields=f2,f3,f4,f5,f6,f7,f10,f12,f14,f15,f16,f17,f18`
-  const json = await getJson(url)
-  const list = json && json.data && json.data.list
-  if (!list) return []
-  return list.map((it, i) => mapIndexSpot(it, i))
+  const json = await getJson(url, { retries: 0, timeout: 8000 })
+  // 东财 clist 返回的是 data.diff（对象数组），不是 data.list；原实现误读 list 恒为空
+  const diff = json && json.data && json.data.diff
+  if (!diff) return []
+  return diff.map((it, i) => mapIndexSpot(it, i))
+}
+
+/** 兜底路径：ulist.np/get?secids=... 按指数代码精确取数，字段与 clist 同为 f2/f3/f12/f14... */
+async function getIndexSpotFromUlist(symbol) {
+  const secids = INDEX_FALLBACK_SECIDS[symbol] || INDEX_FALLBACK_SECIDS['上证系列指数']
+  const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&invt=2&secids=${secids}&fields=f2,f3,f4,f5,f6,f7,f10,f12,f14,f15,f16,f17,f18`
+  const json = await getJson(url, { retries: 0, timeout: 8000 })
+  const diff = json && json.data && json.data.diff
+  if (!diff || !diff.length) throw new Error(`指数行情兜底接口返回空(${symbol})`)
+  return diff.map((it, i) => mapIndexSpot(it, i))
+}
+
+/** 末级兜底：腾讯行情 qt.gtimg.cn（东财 push2 域名不可达时切厂商）。
+ *  返回 GBK 文本，行格式 v_s_sh000001="1~上证指数~000001~3842.19~11.74~0.31~414560247~67939899~~682245.82~ZS~";
+ *  字段序：0市场标识 1名称 2代码 3最新价 4涨跌额 5涨跌幅 6成交量(手) 7成交额(万元)。
+ *  价格/涨跌幅口径与东财 fltt=2 一致，可直接复用 mapIndexSpot。 */
+async function getIndexSpotFromTencent(symbol) {
+  const secids = INDEX_FALLBACK_SECIDS[symbol] || INDEX_FALLBACK_SECIDS['上证系列指数']
+  const q = secids.split(',').map((id) => {
+    const [market, code] = id.split('.')
+    return `s_${market === '1' ? 'sh' : 'sz'}${code}`
+  }).join(',')
+  const text = await getText(`https://qt.gtimg.cn/q=${q}`, {
+    encoding: 'gbk',
+    headers: { Referer: 'https://gu.qq.com/' },
+    retries: 0, timeout: 14000
+  })
+  const out = []
+  const re = /v_s_(?:sh|sz)(\d{6})="([^"]*)"/g
+  let m
+  while ((m = re.exec(text)) !== null) {
+    const f = m[2].split('~')
+    if (f.length < 6 || f[3] === '') continue
+    const price = Number(f[3])
+    const change = Number(f[4])
+    const amountWan = Number(f[7])
+    out.push(mapIndexSpot({
+      f12: m[1], f14: f[1],
+      f2: price, f3: Number(f[5]), f4: change,
+      f5: Number(f[6]),
+      // 腾讯成交额单位为万元，转成与东财一致的元；字段缺失时不写 NaN（JSON 会变成 null）
+      f6: Number.isFinite(amountWan) ? amountWan * 10000 : undefined,
+      f18: Number.isFinite(price) && Number.isFinite(change) ? Math.round((price - change) * 100) / 100 : undefined
+    }, out.length))
+  }
+  if (!out.length) throw new Error(`腾讯行情兜底返回空(${symbol})`)
+  return out
 }
 
 function mapIndexSpot(it, i) {
@@ -273,28 +441,47 @@ function inRange(t, sd, ed) {
   return (!s || x >= s.slice(0, 8)) && (!e || x <= e.slice(0, 8))
 }
 
-/** 个股分时（stock_zh_a_hist_min_em 等价）；period=1→trends2(8字段)，5/15/30/60→kline(11字段) */
+/** 个股分时（stock_zh_a_hist_min_em 等价）；period=1→trends2(8字段)，5/15/30/60→kline(11字段)
+ *  取数顺序：东财 push2his → 腾讯 day·minute query / mkline（东财域名被拦时跨厂商兜底） */
 async function getStockMinute({ symbol, period = '5', start_date, end_date, adjust = '' }) {
   const market = symbol.startsWith('6') ? 1 : 0
   const fqt = adjust === 'qfq' ? '1' : adjust === 'hfq' ? '2' : '0'
-  if (period === '1') {
-    const url = `https://push2his.eastmoney.com/api/qt/stock/trends2/get?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ut=${UT}&ndays=5&iscr=0&secid=${market}.${symbol}`
-    const json = await getJson(url)
-    const trends = json && json.data && json.data.trends
-    if (!trends || !trends.length) return []
-    return trends.map((line) => {
+  let lastErr = null
+  try {
+    if (period === '1') {
+      const url = `https://push2his.eastmoney.com/api/qt/stock/trends2/get?fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&ut=${UT}&ndays=5&iscr=0&secid=${market}.${symbol}`
+      const json = await getJson(url, { retries: 0, timeout: 10000 })
+      const trends = json && json.data && json.data.trends
+      if (!trends || !trends.length) return []
+      return trends.map((line) => {
+        const p = line.split(',')
+        return { '时间': p[0], '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4], '成交量': +p[5], '成交额': +p[6], '均价': +p[7] }
+      }).filter((r) => inRange(r['时间'], start_date, end_date))
+    }
+    const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=${UT}&klt=${period}&fqt=${fqt}&secid=${market}.${symbol}&beg=0&end=20500000`
+    const json = await getJson(url, { retries: 0, timeout: 10000 })
+    const klines = json && json.data && json.data.klines
+    if (!klines || !klines.length) return []
+    return klines.map((line) => {
       const p = line.split(',')
-      return { '时间': p[0], '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4], '成交量': +p[5], '成交额': +p[6], '均价': +p[7] }
+      return { '时间': p[0], '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4], '成交量': +p[5], '成交额': +p[6], '振幅': +p[7], '涨跌幅': +p[8], '涨跌额': +p[9], '换手率': +p[10] }
     }).filter((r) => inRange(r['时间'], start_date, end_date))
+  } catch (e) {
+    lastErr = e
   }
-  const url = `https://push2his.eastmoney.com/api/qt/stock/kline/get?fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61&ut=${UT}&klt=${period}&fqt=${fqt}&secid=${market}.${symbol}&beg=0&end=20500000`
-  const json = await getJson(url)
-  const klines = json && json.data && json.data.klines
-  if (!klines || !klines.length) return []
-  return klines.map((line) => {
-    const p = line.split(',')
-    return { '时间': p[0], '开盘': +p[1], '收盘': +p[2], '最高': +p[3], '最低': +p[4], '成交量': +p[5], '成交额': +p[6], '振幅': +p[7], '涨跌幅': +p[8], '涨跌额': +p[9], '换手率': +p[10] }
-  }).filter((r) => inRange(r['时间'], start_date, end_date))
+  // 腾讯兜底（仅东财网络层失败时触发；东财返回空视为真无数据）
+  try {
+    const rows = period === '1'
+      ? await getMinuteFromTencent(symbol, start_date, end_date)
+      : await getMklineFromTencent(symbol, period, start_date, end_date)
+    if (rows.length) {
+      console.warn(`[aktools] 东财分时不可用(${symbol},p${period}: ${lastErr && lastErr.message})，切换腾讯兜底(${rows.length} 行)`)
+      return rows
+    }
+  } catch (e) {
+    lastErr = lastErr || e
+  }
+  throw lastErr || new Error(`东财/腾讯分时均返回空(${symbol},${period})`)
 }
 
 /** 个股信息（stock_individual_info_em 等价）；返回 [{item,value}]（akshare 同构） */
@@ -325,28 +512,289 @@ async function getStockHolding({ date, indicator = '个人', symbol: change = '�
   }))
 }
 
-/** 行业板块一览（stock_board_industry_summary_ths 等价，改用东财 clist JSON 替代同花顺反爬）；
+/** 行业板块一览（stock_board_industry_summary_ths 等价，主源东财 clist JSON）；
  *  fs=m:90+t:2 行业板块，pz=200 一次取全（~100 板块）。
  *  字段：f14=板块名 f3=涨跌幅 f5=总成交量 f6=总成交额 f62=净流入 f104=上涨家数 f105=下跌家数 f128=领涨股名 f140=领涨股涨跌幅。
- *  均价/领涨股-最新价：东财 clist 未确认对应 f 码，暂 null（converter 可处理 null），待限流缓解后补测确认。 */
+ *  均价/领涨股-最新价：东财 clist 未确认对应 f 码，暂 null（converter 可处理 null），待限流缓解后补测确认。
+ *  取数顺序：东财 clist → 同花顺 thshy 静态页（push2 被拦或返回空时兜底，单位折算见 parseThsIndustryRows）。 */
 async function getStockIndustry() {
-  const url = `https://17.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&fid=f3&fs=m:90+t:2+f:!50&fields=f12,f14,f3,f5,f6,f62,f104,f105,f128,f140`
-  const json = await getJson(url)
-  const list = json && json.data && json.data.list
-  if (!list) return []
-  return list.map((it) => ({
-    '板块': it.f14,
-    '涨跌幅': it.f3,
-    '总成交量': it.f5,
-    '总成交额': it.f6,
-    '净流入': it.f62,
-    '上涨家数': it.f104,
-    '下跌家数': it.f105,
-    '均价': null,
-    '领涨股': it.f128,
-    '领涨股-最新价': null,
-    '领涨股-涨跌幅': it.f140
-  })).filter((r) => r['板块'])
+  let lastErr = null
+  try {
+    const url = `https://17.push2.eastmoney.com/api/qt/clist/get?pn=1&pz=200&po=1&np=1&ut=${UT_SPOT}&fltt=2&invt=2&fid=f3&fs=m:90+t:2+f:!50&fields=f12,f14,f3,f5,f6,f62,f104,f105,f128,f140`
+    const json = await getJson(url, { retries: 0, timeout: 10000 })
+    // 东财 clist 返回 data.diff（np=1 为数组），不是 data.list——原实现误读 list 恒为空
+    const diff = json && json.data && json.data.diff
+    const list = Array.isArray(diff) ? diff : diff ? Object.values(diff) : null
+    if (list && list.length) {
+      return list.map((it) => ({
+        '板块': it.f14,
+        '涨跌幅': it.f3,
+        '总成交量': it.f5,
+        '总成交额': it.f6,
+        '净流入': it.f62,
+        '上涨家数': it.f104,
+        '下跌家数': it.f105,
+        '均价': null,
+        '领涨股': it.f128,
+        '领涨股-最新价': null,
+        '领涨股-涨跌幅': it.f140
+      })).filter((r) => r['板块'])
+    }
+    lastErr = new Error('东财行业板块返回空')
+  } catch (e) {
+    lastErr = e
+  }
+  try {
+    const rows = await getStockIndustryFromThs()
+    console.warn(`[aktools] 东财行业板块不可用(${lastErr && lastErr.message})，切换同花顺 thshy 兜底(${rows.length} 个)`)
+    return rows
+  } catch (e) {
+    throw lastErr || e
+  }
+}
+
+// ==== 跨厂商兜底数据源（东财 push2/push2his 的 /api/qt/* 被网络 WAF RST 时的降级路径） ====
+// 依赖：腾讯 web.ifzq.gtimg.cn / ifzq.gtimg.cn / proxy.finance.qq.com（行情 JSON），同花顺 q.10jqka.com.cn（GBK 静态页）。
+// 这些厂商本身不可达时，兜底抛错并沿用东财原始错误，不影响主路径语义。
+
+/** A股代码 → 腾讯代码前缀：北交所(43/8x/920)→bj，6 开头→sh，其余(0/3 深市)→sz */
+function txStockPrefix(code) {
+  const c = String(code)
+  if (/^(43|8[2-9]|920)/.test(c)) return 'bj'
+  return c.startsWith('6') ? 'sh' : 'sz'
+}
+
+/** 指数代码 → 腾讯前缀：399 深证系列→sz，其余(000 上证系列/中证)→sh */
+function txIndexPrefix(code) { return String(code).startsWith('399') ? 'sz' : 'sh' }
+
+/** '20260901' / '2026-09-01' / '' → '2026-09-01' / ''（腾讯 fqkline 日期参数要求 YYYY-MM-DD） */
+function fmtDashedDate(v) {
+  const d = String(v || '').replace(/\D/g, '')
+  return d.length === 8 ? `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)}` : ''
+}
+
+/** 数值解析：空串/非数字 → null（避免 NaN 进 JSON 变 null 的脏值） */
+function nv(v) { const n = Number(v); return Number.isFinite(n) ? n : null }
+
+/** 保留两位小数（百分比类字段） */
+function round2(x) { return Number.isFinite(x) ? Math.round(x * 100) / 100 : null }
+
+/** 按日期区间过滤（数字串比较，兼容 '2026-09-01' / '20260901' / 空=不过滤） */
+function filterRowsByDate(rows, sd, ed, dateKey = '日期') {
+  const s = String(sd || '').replace(/\D/g, '')
+  const e = String(ed || '').replace(/\D/g, '')
+  if (!s && !e) return rows
+  return rows.filter((r) => {
+    const d = String(r[dateKey]).replace(/\D/g, '')
+    return (!s || d >= s) && (!e || d <= e)
+  })
+}
+
+/** 简单并发池：最多 limit 个 worker 并发消费 items，结果按输入顺序返回 */
+async function runPool(items, limit, worker) {
+  const out = new Array(items.length)
+  let next = 0
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length || 1)) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await worker(items[i], i)
+    }
+  })
+  await Promise.all(lanes)
+  return out
+}
+
+/** 腾讯 K 线原始行 → 与东财 klines 同构的中文键行。
+ *  腾讯行结构 [date, open, close, high, low, volume(手), ...]；成交额/换手率腾讯不提供 → null。
+ *  涨跌额/涨跌幅/振幅按前一根收盘价计算，首根无前收 → null（前端 Number(null)||0 显示 0）。 */
+function mapTxKline(rawRows, { symbol = null, dateKey = '日期' } = {}) {
+  let prevClose = null
+  return rawRows.map((p) => {
+    const o = nv(p[1]), c = nv(p[2]), h = nv(p[3]), l = nv(p[4])
+    const chg = prevClose == null || c == null ? null : round2(c - prevClose)
+    const row = {
+      [dateKey]: p[0],
+      ...(symbol ? { '股票代码': symbol } : {}),
+      '开盘': o, '收盘': c, '最高': h, '最低': l, '成交量': nv(p[5]),
+      '成交额': null,
+      '振幅': prevClose == null ? null : round2((h - l) / prevClose * 100),
+      '涨跌幅': prevClose == null ? null : round2(chg / prevClose * 100),
+      '涨跌额': chg,
+      '换手率': null
+    }
+    if (c != null) prevClose = c
+    return row
+  })
+}
+
+/** 腾讯 fqkline（K 线兜底）；periodKey: day|week|month，fq: ''(不复权)|qfq|hfq。
+ *  返回键名随复权参数变化：day/qfqday/hfqday、week/qfqweek...，故按后缀探测。
+ *  count 上限 2000（实测 3000 即返回 bad params），超长区间会截断为最近 2000 根——东财主源可用时无此限制。 */
+async function getKlineFromTencent({ symbol, isIndex = false, periodKey = 'day', fq = '', start, end, count = 2000 }) {
+  const code = (isIndex ? txIndexPrefix(symbol) : txStockPrefix(symbol)) + symbol
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${periodKey},${fmtDashedDate(start)},${fmtDashedDate(end)},${count},${fq}`
+  const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } })
+  const box = json && json.data && json.data[code]
+  if (!box) return []
+  const key = [`${fq}${periodKey}`, periodKey, `qfq${periodKey}`, `hfq${periodKey}`]
+    .find((k) => Array.isArray(box[k]) && box[k].length)
+  return key ? box[key] : []
+}
+
+/** 腾讯全市场榜单（getBoardRankList board_code=aStock，UTF-8）。
+ *  count 实测上限 200（500 即报错），全市场 ~5600 只需分页 + 并发拉取。
+ *  单位折算：turnover=万元→元，zsz/ltsz=亿元→元；成交量(手)/换手率/涨跌幅与东财口径一致。
+ *  腾讯榜单无 高/低/开/昨收/量比 字段 → 置 null（mapSpotItem 兜底为 0）。 */
+async function getStockSpotFromTencent() {
+  const PAGE = 200
+  const MAX_PAGES = 40
+  const fetchPage = async (offset) => {
+    const url = `https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList?_appver=11.17.0&board_code=aStock&sort_type=price&direct=down&offset=${offset}&count=${PAGE}`
+    const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://stockapp.finance.qq.com/' } })
+    const d = json && json.data
+    return { list: (d && d.rank_list) || [], total: (d && d.total) || 0 }
+  }
+  const first = await fetchPage(0)
+  if (!first.list.length) throw new Error('腾讯全市场行情返回空')
+  const total = first.total || first.list.length
+  const offsets = []
+  for (let o = PAGE; o < total && offsets.length < MAX_PAGES - 1; o += PAGE) offsets.push(o)
+  const rest = offsets.length ? await runPool(offsets, 6, fetchPage) : []
+  const all = first.list.concat(...rest.map((r) => r.list))
+  return all.map((it, i) => ({
+    '序号': i + 1,
+    '代码': String(it.code || '').replace(/^(sh|sz|bj)/, ''),
+    '名称': it.name,
+    '最新价': nv(it.zxj), '涨跌幅': nv(it.zdf), '涨跌额': nv(it.zd),
+    '成交量': nv(it.volume),
+    '成交额': nv(it.turnover) == null ? null : nv(it.turnover) * 10000,
+    '振幅': nv(it.zf),
+    '最高': null, '最低': null, '今开': null, '昨收': null, '量比': null,
+    '换手率': nv(it.hsl), '市盈率-动态': nv(it.pe_ttm), '市净率': nv(it.pn),
+    '总市值': nv(it.zsz) == null ? null : nv(it.zsz) * 1e8,
+    '流通市值': nv(it.ltsz) == null ? null : nv(it.ltsz) * 1e8,
+    '涨速': nv(it.speed), '5分钟涨跌': null,
+    '60日涨跌幅': nv(it.zdf_d60), '年初至今涨跌幅': nv(it.zdf_y)
+  })).filter((r) => r['代码'])
+}
+
+/** 腾讯分钟 K 线兜底（ifzq.gtimg.cn mkline，参数 m5/m15/m30/m60）。
+ *  行结构 ['YYYYMMDDHHmm', open, close, high, low, volume(手), {}, ...]，对齐东财分钟 K 线 11 字段。 */
+async function getMklineFromTencent(symbol, period, start_date, end_date) {
+  const code = txStockPrefix(symbol) + symbol
+  const url = `https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=${code},m${period},,2000`
+  const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } })
+  const box = json && json.data && json.data[code]
+  const raw = box && box[`m${period}`]
+  if (!raw || !raw.length) return []
+  let prevClose = null
+  const rows = raw.map((p) => {
+    const stamp = String(p[0] || '')
+    const time = `${stamp.slice(0, 4)}-${stamp.slice(4, 6)}-${stamp.slice(6, 8)} ${stamp.slice(8, 10)}:${stamp.slice(10, 12)}`
+    const o = nv(p[1]), c = nv(p[2]), h = nv(p[3]), l = nv(p[4])
+    const chg = prevClose == null || c == null ? null : round2(c - prevClose)
+    const row = {
+      '时间': time, '开盘': o, '收盘': c, '最高': h, '最低': l, '成交量': nv(p[5]),
+      '成交额': null,
+      '振幅': prevClose == null ? null : round2((h - l) / prevClose * 100),
+      '涨跌幅': prevClose == null ? null : round2(chg / prevClose * 100),
+      '涨跌额': chg, '换手率': null
+    }
+    if (c != null) prevClose = c
+    return row
+  })
+  return rows.filter((r) => inRange(r['时间'], start_date, end_date))
+}
+
+/** 腾讯分时兜底（period=1）：day/query 取指定日区间，无数据再退 minute/query（仅最近交易日）。
+ *  行为 ['HHmm', 现价, 累计成交量(手), 累计成交额(元)]——腾讯给累计值，差分成单分钟量额；
+ *  单分钟只有成交价：开盘取前一分钟收盘价，高/低取端点，均价=单分钟额/(量×100)。 */
+async function getMinuteFromTencent(symbol, start_date, end_date) {
+  const code = txStockPrefix(symbol) + symbol
+  const opts = { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } }
+  let days = []
+  try {
+    const ed = String(end_date || '').replace(/\D/g, '')
+    const json = await getJson(`https://web.ifzq.gtimg.cn/appstock/app/day/query?code=${code}${ed ? `&date=${ed}` : ''}`, opts)
+    days = (json && json.data && json.data[code] && json.data[code].data) || []
+    if (!Array.isArray(days)) days = []
+  } catch { days = [] }
+  if (!days.length) {
+    const json = await getJson(`https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=${code}`, opts)
+    const box = json && json.data && json.data[code] && json.data[code].data
+    if (box && box.date) days = [{ date: box.date, data: box.data }]
+  }
+  const rows = []
+  for (const day of days) {
+    const d = String(day.date || '')
+    if (d.length !== 8) continue
+    let prevPx = null, prevVol = 0, prevAmt = 0
+    for (const line of day.data || []) {
+      const p = String(line).split(' ')
+      if (p.length < 4) continue
+      const price = nv(p[1]), vol = nv(p[2]), amt = nv(p[3])
+      if (price == null || vol == null || amt == null) continue
+      const perVol = Math.max(vol - prevVol, 0)
+      const perAmt = Math.max(amt - prevAmt, 0)
+      rows.push({
+        '时间': `${d.slice(0, 4)}-${d.slice(4, 6)}-${d.slice(6, 8)} ${p[0].slice(0, 2)}:${p[0].slice(2, 4)}`,
+        '开盘': prevPx == null ? price : prevPx,
+        '收盘': price,
+        '最高': prevPx == null ? price : Math.max(prevPx, price),
+        '最低': prevPx == null ? price : Math.min(prevPx, price),
+        '成交量': perVol,
+        '成交额': perAmt,
+        '均价': perVol > 0 ? round2(perAmt / (perVol * 100)) : null
+      })
+      prevPx = price; prevVol = vol; prevAmt = amt
+    }
+  }
+  return rows.filter((r) => inRange(r['时间'], start_date, end_date))
+}
+
+/** 同花顺行业板块兜底（q.10jqka.com.cn/thshy，GBK 静态页；每页 50 行，全行业 ~90 个两页取完）。
+ *  列序：序号|板块|涨跌幅(%)|总成交量(万手)|总成交额(亿元)|净流入(亿元)|上涨家数|下跌家数|均价|领涨股|领涨股最新价|领涨股涨跌幅。
+ *  单位折算为东财口径：万手→手(×1e4)，亿元→元(×1e8)，保证 DolphinDB plate_market_quotation 存量数据同构。 */
+async function getStockIndustryFromThs() {
+  const pages = ['', 'index/page/2/', 'index/page/3/']
+  const out = []
+  for (const p of pages) {
+    const html = await getText(`https://q.10jqka.com.cn/thshy/${p}`, {
+      encoding: 'gbk', retries: 0, timeout: 15000,
+      headers: { Referer: 'https://q.10jqka.com.cn/thshy/' }
+    })
+    const rows = parseThsIndustryRows(html)
+    if (!rows.length) break
+    out.push(...rows)
+    if (rows.length < 50) break // 末页不满一页即结束
+  }
+  if (!out.length) throw new Error('同花顺行业板块返回空')
+  return out
+}
+
+/** 解析同花顺 thshy 表格行（仅取含板块详情链接的 <tr>，表头/翻档行自动跳过） */
+function parseThsIndustryRows(html) {
+  const out = []
+  for (const tr of String(html).split('<tr>').slice(1)) {
+    if (!tr.includes('detail/code/')) continue
+    const cells = [...tr.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => m[1].replace(/<[^>]*>/g, '').trim())
+    if (cells.length < 12 || !cells[1]) continue
+    const vol = nv(cells[3]), amt = nv(cells[4]), inflow = nv(cells[5])
+    out.push({
+      '板块': cells[1],
+      '涨跌幅': nv(cells[2]),
+      '总成交量': vol == null ? null : vol * 1e4,
+      '总成交额': amt == null ? null : amt * 1e8,
+      '净流入': inflow == null ? null : inflow * 1e8,
+      '上涨家数': nv(cells[6]) || 0,
+      '下跌家数': nv(cells[7]) || 0,
+      '均价': nv(cells[8]),
+      '领涨股': cells[9],
+      '领涨股-最新价': nv(cells[10]),
+      '领涨股-涨跌幅': nv(cells[11])
+    })
+  }
+  return out
 }
 
 module.exports = {

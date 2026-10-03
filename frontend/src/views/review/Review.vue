@@ -371,11 +371,10 @@ const selectedMarket = ref('all');
 const selectedMarket2 = ref('day');
 
 
-// 计算连板转换数据
-const calculateBoardTransition = (limitUpData) => {
-  //计算上证指数、深证成指、创业板指
-  //查找indexData.value数组里各项指数
-  indexData.value.map(item => {
+// 三大指数卡片赋值：从 indexData 中提取上证/深证成指/创业板指
+// 独立成函数并由 applyLoadedData 无条件调用，避免被"涨停池是否为空"的条件拦截（指数数据与涨停池无依赖）
+const applyIndexCards = () => {
+  indexData.value.forEach(item => {
     if (item.代码 === '000001') {
       indexValue.value = item.最新价
       indexChange.value = item.涨跌幅
@@ -389,6 +388,10 @@ const calculateBoardTransition = (limitUpData) => {
       chinextIndexChange.value = item.涨跌幅
     }
   })
+}
+
+// 计算连板转换数据
+const calculateBoardTransition = (limitUpData) => {
   // 总涨停数
   const totalLimitUp = limitUpData.length;
   maxLimitUpLevel.value = totalLimitUp > 0
@@ -616,7 +619,9 @@ const toggleKline = async (stock) => {
 // 处理已载入内存的数据（缓存或网络均可）：渲染分类、计算指标、应用市场筛选
 const applyLoadedData = async () => {
   chooseStockCategories.value = stockCategories.value
-  // 计算连板转换数据（同时提取三大指数值、最高板等指标）
+  // 三大指数卡片独立渲染：只要指数数据到位就显示，不依赖涨停池
+  applyIndexCards()
+  // 计算连板转换数据（最高板、连板率等指标依赖涨停池）
   if (limitUpData.value.length > 0) {
     calculateBoardTransition(limitUpData.value)
   }

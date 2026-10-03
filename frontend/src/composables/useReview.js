@@ -393,6 +393,9 @@ export function useReview() {
     const loadCachedReview = () => {
         const cached = cacheStorage.get(REVIEW_CACHE_KEY)
         if (!cached) return null
+        // 指数为空视为缓存失效：上游故障时曾把空数组写进持久缓存（无 TTL），
+        // 若不判定为未命中，后端修复后打开页面仍会一直直出空白
+        if (!cached.indexData || cached.indexData.length === 0) return null
         indexData.value = cached.indexData || []
         limitUpData.value = cached.limitUpData || []
         limitDownData.value = cached.limitDownData || []

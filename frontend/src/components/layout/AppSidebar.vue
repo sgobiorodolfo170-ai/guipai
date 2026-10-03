@@ -20,15 +20,9 @@ const menuItems = [
     icon: 'Search'
   },
   {
-    index: '/kline-practice',
-    title: 'K线实战',
-    icon: 'TrendCharts',
-    children: [
-      {
-        index: '/kline-practice/random-stock',
-        title: 'A股随机K线实战'
-      }
-    ]
+    index: '/watchlist',
+    title: '自选股',
+    icon: 'Star'
   },
   {
     index: '/stocks',
@@ -42,11 +36,6 @@ const menuItems = [
     ]
   },
   {
-    index: '/watchlist',
-    title: '自选股',
-    icon: 'Star'
-  },
-  {
     index: '/notes',
     title: '笔记',
     icon: 'Document',
@@ -58,6 +47,17 @@ const menuItems = [
       {
         index: '/notes/create',
         title: '创建笔记'
+      }
+    ]
+  },
+  {
+    index: '/kline-practice',
+    title: 'K线实战',
+    icon: 'TrendCharts',
+    children: [
+      {
+        index: '/kline-practice/random-stock',
+        title: 'A股随机K线实战'
       }
     ]
   },
