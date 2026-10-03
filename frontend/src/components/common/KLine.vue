@@ -588,18 +588,8 @@ function createOption(data) {
     });
   }
 
-  // 指标区域（关键修改：只有indicator为true时才添加指标网格）
+  // 指标区域（只有 indicator 为 true 时才添加指标网格）
   if (props.tooltipDisplayItems.indicator && currentIndicator.value !== 'NONE') {
-    grid.push({
-      left: '3%',
-      right: '1%',
-      top: props.showVolume ? '72%' : '70%',
-      height: '25%'
-    });
-  }
-
-  // 指标区域
-  if (currentIndicator.value !== 'NONE') {
     grid.push({
       left: '3%',
       right: '1%',
@@ -863,14 +853,15 @@ function initChart(data) {
   const option = createOption(data);
   myChart.setOption(option);
 
-  // 响应窗口大小变化
-  const handleResize = () => myChart.resize();
+  // 响应窗口大小变化（幂等注册：先移除再添加，避免重复监听累积）
+  window.removeEventListener('resize', handleResize);
   window.addEventListener('resize', handleResize);
-
-  onUnmounted(() => {
-    window.removeEventListener('resize', handleResize);
-  });
 }
+
+// 窗口大小变化处理（固定引用，供 initChart 与顶层卸载时共用）
+const handleResize = () => {
+  if (myChart) myChart.resize();
+};
 
 // 加载数据并初始化图表
 async function loadAndInitChart() {
@@ -907,8 +898,9 @@ onMounted(() => {
   loadAndInitChart();
 });
 
-// 组件卸载时销毁图表实例
+// 组件卸载时销毁图表实例并移除 resize 监听
 onUnmounted(() => {
+  window.removeEventListener('resize', handleResize);
   if (myChart) {
     myChart.dispose();
     myChart = null;

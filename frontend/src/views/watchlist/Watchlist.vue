@@ -171,7 +171,7 @@ const getRealTimeData = (code) => {
           @close="deleteGroup(group)"
           class="group-tag"
         >
-          {{ group.name }} ({{ watchlistStore.getTemplatesByCategory(group.id)?.length || 0 }})
+          {{ group.name }} ({{ (watchlistStore.watchlist || []).filter(s => s.groupId === group.id).length }})
         </el-tag>
       </div>
     </el-card>

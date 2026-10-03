@@ -42,7 +42,8 @@ export const useStockStore = defineStore('stock', () => {
     try {
       loading.value = true
       const response = await stockService.getStockList(params)
-      stockList.value = response.list || response
+      // 拦截器返回信封 {code,data,msg}，真实列表在 response.data.list
+      stockList.value = response.data?.list || response.data || []
       return response
     } catch (error) {
       throw error

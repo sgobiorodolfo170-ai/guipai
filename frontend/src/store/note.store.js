@@ -47,7 +47,8 @@ export const useNoteStore = defineStore('note', () => {
     try {
       loading.value = true
       const response = await noteService.getNoteList(params)
-      notes.value = response.list || response
+      // 拦截器返回信封 {code,data,msg}，真实数据在 response.data
+      notes.value = response.data?.list || response.data || []
       return response
     } catch (error) {
       throw error
@@ -61,7 +62,7 @@ export const useNoteStore = defineStore('note', () => {
     try {
       loading.value = true
       const response = await noteService.getNoteDetail(id)
-      currentNote.value = response
+      currentNote.value = response.data || response
       return response
     } catch (error) {
       throw error
@@ -74,7 +75,8 @@ export const useNoteStore = defineStore('note', () => {
   const createNote = async (noteData) => {
     try {
       const response = await noteService.createNote(noteData)
-      notes.value.unshift(response)
+      // 拦截器返回信封，真实数据在 response.data
+      notes.value.unshift(response.data || response)
       return response
     } catch (error) {
       throw error
@@ -85,16 +87,16 @@ export const useNoteStore = defineStore('note', () => {
   const updateNote = async (id, noteData) => {
     try {
       const response = await noteService.updateNote(id, noteData)
-      
+      const data = response.data || response
       // 更新本地状态
       const index = notes.value.findIndex(note => note.id === id)
       if (index !== -1) {
-        notes.value[index] = { ...notes.value[index], ...response }
+        notes.value[index] = { ...notes.value[index], ...data }
       }
       
       // 更新当前笔记
       if (currentNote.value && currentNote.value.id === id) {
-        currentNote.value = { ...currentNote.value, ...response }
+        currentNote.value = { ...currentNote.value, ...data }
       }
       
       return response
@@ -127,7 +129,7 @@ export const useNoteStore = defineStore('note', () => {
   const fetchNoteCategories = async () => {
     try {
       const response = await noteService.getNoteCategories()
-      categories.value = response
+      categories.value = response.data || response || []
       return response
     } catch (error) {
       throw error
@@ -138,7 +140,7 @@ export const useNoteStore = defineStore('note', () => {
   const createNoteCategory = async (categoryData) => {
     try {
       const response = await noteService.createNoteCategory(categoryData)
-      categories.value.push(response)
+      categories.value.push(response.data || response)
       return response
     } catch (error) {
       throw error
@@ -149,11 +151,11 @@ export const useNoteStore = defineStore('note', () => {
   const updateNoteCategory = async (id, categoryData) => {
     try {
       const response = await noteService.updateNoteCategory(id, categoryData)
-      
+      const data = response.data || response
       // 更新本地状态
       const index = categories.value.findIndex(category => category.id === id)
       if (index !== -1) {
-        categories.value[index] = { ...categories.value[index], ...response }
+        categories.value[index] = { ...categories.value[index], ...data }
       }
       
       return response
@@ -188,7 +190,7 @@ export const useNoteStore = defineStore('note', () => {
   const searchNotes = async (keyword) => {
     try {
       const response = await noteService.searchNotes(keyword)
-      searchResults.value = response
+      searchResults.value = response.data || response || []
       return response
     } catch (error) {
       throw error
@@ -199,7 +201,7 @@ export const useNoteStore = defineStore('note', () => {
   const fetchNoteTags = async () => {
     try {
       const response = await noteService.getNoteTags()
-      tags.value = response
+      tags.value = response.data || response || []
       return response
     } catch (error) {
       throw error

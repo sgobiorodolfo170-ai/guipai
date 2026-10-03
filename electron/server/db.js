@@ -7,6 +7,7 @@ const path = require('path')
 let sqljs = null
 let db = null
 let dbPath = null
+let dataDirPath = null
 let saveTimer = null
 
 class PreparedStatement {
@@ -68,6 +69,7 @@ function scheduleSave() {
 
 async function initDb(dataDir) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
+  dataDirPath = dataDir
   dbPath = path.join(dataDir, 'tradeinsight.db')
 
   if (!sqljs) {
@@ -149,6 +151,71 @@ async function initDb(dataDir) {
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_sst_user ON sim_single_training(user_id);
+    CREATE TABLE IF NOT EXISTS watchlist (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT,
+      group_id INTEGER DEFAULT 0,
+      note TEXT,
+      add_time TEXT DEFAULT (datetime('now','localtime')),
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_wl_user ON watchlist(user_id);
+    CREATE TABLE IF NOT EXISTS watchlist_group (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      name TEXT NOT NULL,
+      description TEXT,
+      create_time TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS price_alert (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      code TEXT NOT NULL,
+      target_price REAL, direction TEXT, note TEXT, enabled INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS note_category (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS note (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      title TEXT NOT NULL,
+      content TEXT,
+      category_id INTEGER,
+      tags TEXT DEFAULT '[]',
+      is_public INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_note_user ON note(user_id);
+    CREATE TABLE IF NOT EXISTS template_category (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      name TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE TABLE IF NOT EXISTS template (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      name TEXT NOT NULL,
+      description TEXT,
+      content TEXT,
+      category_id INTEGER,
+      fields TEXT DEFAULT '[]',
+      is_public INTEGER DEFAULT 0,
+      is_shared INTEGER DEFAULT 0,
+      share_code TEXT,
+      use_count INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_tpl_user ON template(user_id);
   `)
 
   persist()
@@ -169,10 +236,15 @@ function getDb() {
   return db
 }
 
+/** 数据目录（附件等文件存放于此） */
+function getDataDir() {
+  return dataDirPath
+}
+
 function closeDb() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   persist()
   if (db) { db.close(); db = null }
 }
 
-module.exports = { initDb, getDb, closeDb, scheduleSave }
+module.exports = { initDb, getDb, getDataDir, closeDb, scheduleSave }

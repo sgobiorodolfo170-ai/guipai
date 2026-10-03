@@ -377,15 +377,15 @@ const calculateBoardTransition = (limitUpData) => {
   //查找indexData.value数组里各项指数
   indexData.value.map(item => {
     if (item.代码 === '000001') {
-      indexValue.value = item.今开
+      indexValue.value = item.最新价
       indexChange.value = item.涨跌幅
     }
     if (item.代码 === '399001') {
-      shenzhenIndexValue.value = item.今开
+      shenzhenIndexValue.value = item.最新价
       shenzhenIndexChange.value = item.涨跌幅
     }
     if (item.代码 === '399006') {
-      chinextIndexValue.value = item.今开
+      chinextIndexValue.value = item.最新价
       chinextIndexChange.value = item.涨跌幅
     }
   })
@@ -436,8 +436,8 @@ const setCurrentDate = () => {
 
 // 处理市场筛选变化
 const handleMarketChange = async () => {
-// 遍历 displayData 数组中的所有元素
-  displayData.value.forEach(item => {
+// 遍历 displayData 数组中的所有元素（未加载时为空数组，避免 undefined.forEach 崩溃）
+  (displayData.value || []).forEach(item => {
     // 遍历每个 item 中的 stocks 数组
     item.stocks.forEach(stock => {
       // 将 showKline 设置为 false
@@ -496,10 +496,10 @@ const handleMarketChange = async () => {
 const displayData = computed(() => {
   // 如果 yesterdayLimitUpData 有值（且不是 null），则使用它
   if (yesterdayLimitUpData.value !== null) {
-    return yesterdayLimitUpData.value;
+    return yesterdayLimitUpData.value || [];
   }
   // 否则使用 chooseStockCategories
-  return chooseStockCategories.value;
+  return chooseStockCategories.value || [];
 });
 
 // 切换K线显示
@@ -624,13 +624,13 @@ const applyLoadedData = async () => {
 }
 
 // 刷新（刷新按钮调用）：强制拉取最新数据并写入本地缓存
-const refreshData = () => {
+const refreshData = async () => {
   if (!isButtonEnabled.value) return;
 
   // 禁用按钮
   isButtonEnabled.value = false;
   countdown.value = 3;
-  refreshReview()
+  await refreshReview()
   // 设置倒计时
   const interval = setInterval(() => {
     countdown.value -= 1;

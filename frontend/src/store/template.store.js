@@ -47,7 +47,7 @@ export const useTemplateStore = defineStore('template', () => {
     try {
       loading.value = true
       const response = await templateService.getTemplateList(params)
-      templates.value = response.list || response
+      templates.value = response.data?.list || response.data || []
       return response
     } catch (error) {
       throw error
@@ -61,7 +61,7 @@ export const useTemplateStore = defineStore('template', () => {
     try {
       loading.value = true
       const response = await templateService.getTemplateDetail(id)
-      currentTemplate.value = response
+      currentTemplate.value = response.data || response
       return response
     } catch (error) {
       throw error
@@ -74,7 +74,7 @@ export const useTemplateStore = defineStore('template', () => {
   const createTemplate = async (templateData) => {
     try {
       const response = await templateService.createTemplate(templateData)
-      templates.value.unshift(response)
+      templates.value.unshift(response.data || response)
       return response
     } catch (error) {
       throw error
@@ -85,16 +85,16 @@ export const useTemplateStore = defineStore('template', () => {
   const updateTemplate = async (id, templateData) => {
     try {
       const response = await templateService.updateTemplate(id, templateData)
-      
+      const data = response.data || response
       // 更新本地状态
       const index = templates.value.findIndex(template => template.id === id)
       if (index !== -1) {
-        templates.value[index] = { ...templates.value[index], ...response }
+        templates.value[index] = { ...templates.value[index], ...data }
       }
       
       // 更新当前模板
       if (currentTemplate.value && currentTemplate.value.id === id) {
-        currentTemplate.value = { ...currentTemplate.value, ...response }
+        currentTemplate.value = { ...currentTemplate.value, ...data }
       }
       
       return response
@@ -127,7 +127,7 @@ export const useTemplateStore = defineStore('template', () => {
   const copyTemplate = async (id) => {
     try {
       const response = await templateService.copyTemplate(id)
-      templates.value.unshift(response)
+      templates.value.unshift(response.data || response)
       return response
     } catch (error) {
       throw error
@@ -138,7 +138,7 @@ export const useTemplateStore = defineStore('template', () => {
   const fetchTemplateCategories = async () => {
     try {
       const response = await templateService.getTemplateCategories()
-      categories.value = response
+      categories.value = response.data || response || []
       return response
     } catch (error) {
       throw error
@@ -149,7 +149,7 @@ export const useTemplateStore = defineStore('template', () => {
   const fetchPublicTemplates = async (params = {}) => {
     try {
       const response = await templateService.getPublicTemplates(params)
-      publicTemplates.value = response.list || response
+      publicTemplates.value = response.data?.list || response.data || []
       return response
     } catch (error) {
       throw error
@@ -160,12 +160,12 @@ export const useTemplateStore = defineStore('template', () => {
   const shareTemplate = async (id) => {
     try {
       const response = await templateService.shareTemplate(id)
-      
+      const shareData = response.data || response
       // 更新本地状态
       const template = templates.value.find(t => t.id === id)
       if (template) {
         template.isShared = true
-        template.shareCode = response.shareCode
+        template.shareCode = shareData.shareCode
       }
       
       return response

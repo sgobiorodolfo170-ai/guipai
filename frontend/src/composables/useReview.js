@@ -63,8 +63,7 @@ export function useReview() {
         return categories.map(category => {
             const stocks = data
                 .filter(stock => stock.昨日连板数 >= category.min && stock.昨日连板数 <= category.max)
-                .sort((a, b) => b.昨日连板数 - a.昨日连板数)
-                .sort((a, b) => b.涨跌幅 - a.涨跌幅)
+                .sort((a, b) => (b.昨日连板数 - a.昨日连板数) || (b.涨跌幅 - a.涨跌幅))
                 .map(stock => {
                     return reactive(
                         {
@@ -75,7 +74,7 @@ export function useReview() {
                             concept: stock.所属行业,
                             specialTag: stock.涨停统计.replace('/', '天') + '板',
                             amount: stock.成交额,
-                            turnover: stock.换手率?.toFixed(2) || '0.00',
+                            turnover: stock.换手率 == null ? '0.00' : Number(stock.换手率).toFixed(2),
                             showKline: false,
                             klineData: null,
                             current: stock.最新价,
@@ -104,7 +103,7 @@ export function useReview() {
         return categories.map(category => {
             const stocks = data
                 .filter(stock => stock.连板数 >= category.min && stock.连板数 <= category.max)
-                .sort((a, b) => b.连板数 - a.连板数)
+                .sort((a, b) => (b.连板数 - a.连板数) || (b.涨跌幅 - a.涨跌幅))
                 .map(stock => {
                     return reactive(
                         {
@@ -115,7 +114,7 @@ export function useReview() {
                             concept: stock.所属行业,
                             specialTag: stock.涨停统计.replace('/', '天') + '板',
                             amount: stock.成交额,
-                            turnover: stock.换手率?.toFixed(2) || '0.00',
+                            turnover: stock.换手率 == null ? '0.00' : Number(stock.换手率).toFixed(2),
                             showKline: false,
                             klineData: null,
                             current: stock.最新价,
@@ -135,7 +134,6 @@ export function useReview() {
     // 获取涨停池数据
     const fetchLimitUpData = async () => {
         try {
-            loading.value = true
             const dateStr = StockDateUtil.getRecentTradingDay()
             const response = await getStockLimit(dateStr)
 
@@ -148,8 +146,6 @@ export function useReview() {
             console.error('获取涨停池数据失败:', error)
             ElMessage.error('获取涨停池数据失败')
             return []
-        } finally {
-            loading.value = false
         }
     }
 
@@ -173,7 +169,6 @@ export function useReview() {
     // 获取昨天涨停数据
     const fetchYesterdayLimitUpData = async () => {
         try {
-            loading.value = true
             const dateStr = StockDateUtil.getRecentTradingDay()
             const response = await getStockLimitYesterday(dateStr)
 
@@ -186,8 +181,6 @@ export function useReview() {
             console.error('获取涨停池数据失败:', error)
             ElMessage.error('获取涨停池数据失败')
             return []
-        } finally {
-            loading.value = false
         }
     }
 
@@ -413,20 +406,25 @@ export function useReview() {
      * @returns {Promise<boolean>} 是否成功
      */
     const fetchAndCacheReview = async () => {
-        await Promise.all([
-            getIndexData(),
-            fetchLimitUpData(),
-            fetchLimitDownData(),
-            fetchYesterdayLimitUpData(),
-        ])
-        cacheStorage.set(REVIEW_CACHE_KEY, {
-            indexData: indexData.value.filter(item => REVIEW_INDEX_CODES.includes(item.代码)),
-            limitUpData: limitUpData.value,
-            limitDownData: limitDownData.value,
-            yesterdayLimit: yesterdayLimit.value,
-            tradingDay: StockDateUtil.getRecentTradingDay(),
-        })
-        return true
+        loading.value = true
+        try {
+            await Promise.all([
+                getIndexData(),
+                fetchLimitUpData(),
+                fetchLimitDownData(),
+                fetchYesterdayLimitUpData(),
+            ])
+            cacheStorage.set(REVIEW_CACHE_KEY, {
+                indexData: indexData.value.filter(item => REVIEW_INDEX_CODES.includes(item.代码)),
+                limitUpData: limitUpData.value,
+                limitDownData: limitDownData.value,
+                yesterdayLimit: yesterdayLimit.value,
+                tradingDay: StockDateUtil.getRecentTradingDay(),
+            })
+            return true
+        } finally {
+            loading.value = false
+        }
     }
 
     return {

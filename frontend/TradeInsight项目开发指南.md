@@ -26,20 +26,24 @@ TradeInsight 是一个基于 Vue 3 的股票复盘分析平台，采用现代化
 ## 🏗️ 项目架构
 
 ```
-TradeInsight (股票复盘分析平台)
-├── 用户认证模块 (Authentication)
+TradeInsight (龟派 · A股复盘洞察桌面应用)
+├── 仪表盘模块 (Dashboard)
+├── 复盘模块 (Review)
 ├── 股票数据模块 (Stock Data)
 ├── 自选股管理模块 (Watchlist)
 ├── 复盘笔记模块 (Notes)
 ├── 分析模板模块 (Templates)
-└── 用户中心模块 (User Profile)
+├── K线实战模块 (Kline Practice)
+└── 数据管理模块 (Admin / Settings)
 ```
+
+> 说明：桌面版已移除登录/认证模块，本地用户自动创建。
 
 ### 架构设计原则
 - **模块化**: 按业务功能划分模块
 - **组件化**: 可复用的UI组件
-- **响应式**: 支持桌面端和移动端
-- **类型安全**: 完善的数据验证
+- **桌面优先**: 内嵌于 Electron，前端经内嵌后端（Express）访问本地数据与 AKTools 行情
+- **数据本地化**: 复盘数据可持久化到 localStorage，打开页面读缓存、刷新拉取最新
 - **性能优化**: 路由懒加载、组件按需加载
 
 ## 📁 目录结构详解
@@ -47,11 +51,9 @@ TradeInsight (股票复盘分析平台)
 ### 根目录文件
 ```
 ├── .env                    # 环境变量配置
-├── .env.development        # 开发环境配置
 ├── .env.production         # 生产环境配置
 ├── package.json            # 项目依赖和脚本
 ├── vite.config.js          # Vite构建配置
-├── jsconfig.json           # JavaScript配置
 ├── index.html              # HTML入口文件
 └── README.md               # 项目说明文档
 ```
@@ -95,7 +97,7 @@ components/
 #### 📂 src/composables/ - 组合式函数
 ```
 composables/
-├── useAuth.js              # 认证相关逻辑
+├── useReview.js            # 复盘页逻辑（含缓存读写）
 ├── useStockData.js         # 股票数据逻辑
 ├── useWatchlist.js         # 自选股逻辑
 ├── useNotes.js             # 笔记逻辑
@@ -121,11 +123,12 @@ router/
 #### 📂 src/services/ - API服务层
 ```
 services/
-├── auth.service.js         # 认证API
+├── aktools.service.js      # AKTools行情API（指数、涨跌停池、K线等）
 ├── stock.service.js        # 股票API
 ├── watchlist.service.js    # 自选股API
 ├── note.service.js         # 笔记API
-└── template.service.js     # 模板API
+├── template.service.js     # 模板API
+└── limitBoardStatistics.service.js  # 涨跌停统计API
 ```
 
 **用途**: 封装后端API调用
@@ -136,7 +139,6 @@ services/
 #### 📂 src/store/ - 状态管理
 ```
 store/
-├── auth.store.js           # 认证状态
 ├── stock.store.js          # 股票数据状态
 ├── watchlist.store.js      # 自选股状态
 ├── note.store.js           # 笔记状态
@@ -152,25 +154,26 @@ store/
 ```
 utils/
 ├── api.js                  # HTTP客户端配置
-├── auth.js                 # 认证工具函数
+├── cacheStorage.js         # 本地缓存工具（localStorage）
 ├── date.js                 # 日期处理工具
-└── stock.js                # 股票数据工具
+├── stock.js                # 股票数据工具
+└── StockDateUtil.js        # 交易日工具
 ```
 
 **用途**: 通用工具函数库
 - `api.js`: Axios配置和拦截器
-- `auth.js`: 认证相关工具
+- `cacheStorage.js`: 本地缓存工具（localStorage）
 - `date.js`: 日期格式化和处理
 - `stock.js`: 股票数据格式化
+- `StockDateUtil.js`: 交易日计算工具
 
 #### 📂 src/views/ - 页面组件
 ```
 views/
-├── auth/                   # 认证页面
-│   ├── LoginView.vue       # 登录页
-│   └── RegisterView.vue    # 注册页
 ├── dashboard/              # 仪表盘
 │   └── Dashboard.vue       # 主仪表盘
+├── review/                 # 复盘页
+│   └── Review.vue          # 复盘分析
 ├── stock/                  # 股票页面
 │   ├── StockList.vue       # 股票列表
 │   ├── StockDetail.vue     # 股票详情
@@ -185,10 +188,19 @@ views/
 │   └── TemplateEdit.vue    # 模板编辑
 ├── user/                   # 用户中心
 │   └── Profile.vue         # 个人资料
+├── settings/               # 设置
+│   └── Settings.vue        # 应用设置
+├── admin/                  # 数据管理
+│   ├── DataManagement.vue  # 复盘数据任务表
+│   └── ErrorLog.vue        # 报错日志
+├── kline-practice/         # K线实战
+│   └── RandomStockPractice.vue
 ├── error/                  # 错误页面
 │   └── NotFound.vue        # 404页面
 └── test/                   # 测试页面
-    └── ApiTest.vue         # API测试工具
+    ├── ApiTest.vue         # API测试工具
+    ├── KTest.vue           # K线模版
+    └── DataManagementTest.vue
 ```
 
 **用途**: 应用的页面组件
@@ -225,8 +237,6 @@ main.js (入口)
     ↓
 App.vue (根组件)
     ↓
-路由守卫检查认证状态
-    ↓
 渲染对应页面组件
 ```
 
@@ -235,8 +245,6 @@ App.vue (根组件)
 用户访问URL
     ↓
 Vue Router匹配路由
-    ↓
-路由守卫检查权限
     ↓
 懒加载页面组件
     ↓
@@ -338,7 +346,6 @@ const [页面名] = () => import('@/views/[模块名]/[页面名].vue')
   meta: {
     title: '页面标题',
     icon: 'IconName',
-    requiresAuth: true, // 是否需要认证
     hideInMenu: false   // 是否在菜单中隐藏
   }
 }
@@ -515,22 +522,22 @@ router.push({ path: '/target-path', query: { id: 1 } })
 ### 2. 状态管理问题
 ```javascript
 // 正确使用Pinia store
-import { useAuthStore } from '@/store/auth.store'
+import { useStockStore } from '@/store/stock.store'
 
-const authStore = useAuthStore()
+const stockStore = useStockStore()
 // 访问状态
-console.log(authStore.user)
+console.log(stockStore.marketData)
 // 调用方法
-authStore.login(credentials)
+stockStore.fetchMarketData()
 ```
 
 ### 3. API调用问题
 ```javascript
 // 正确的API调用方式
-import * as authService from '@/services/auth.service'
+import * as stockService from '@/services/stock.service'
 
 try {
-  const response = await authService.login(data)
+  const response = await stockService.getStockSpot()
   // 处理成功响应
 } catch (error) {
   // 处理错误

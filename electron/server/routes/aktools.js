@@ -23,11 +23,25 @@ function withCache(key, ttl, fetcher) {
 router.get('/stock/spot', withCache('aktools:stock:spot', 60, () => aktools.getStockSpot()))
 router.get('/stock/history', (req, res) => {
   const p = req.query
-  withCache(`aktools:stock:history:${p.symbol}:${p.period}:${p.adjust}`, 300, () => aktools.getStockHistory(p))(req, res)
+  // 兼容前端驼峰参数（startDate/endDate）与后端蛇形参数（start_date/end_date）
+  const params = {
+    ...p,
+    start_date: p.start_date || p.startDate,
+    end_date: p.end_date || p.endDate,
+  }
+  const cacheKey = `aktools:stock:history:${p.symbol}:${p.period}:${p.adjust}:${params.start_date || ''}:${params.end_date || ''}`
+  withCache(cacheKey, 300, () => aktools.getStockHistory(params))(req, res)
 })
 router.get('/stock/minute', (req, res) => {
   const p = req.query
-  withCache(`aktools:stock:minute:${p.symbol}:${p.period}`, 60, () => aktools.getStockMinute(p))(req, res)
+  // 兼容前端驼峰参数（startDate/endDate）与后端蛇形参数（start_date/end_date）
+  const params = {
+    ...p,
+    start_date: p.start_date || p.startDate,
+    end_date: p.end_date || p.endDate,
+  }
+  const cacheKey = `aktools:stock:minute:${p.symbol}:${p.period}:${params.start_date || ''}:${params.end_date || ''}`
+  withCache(cacheKey, 60, () => aktools.getStockMinute(params))(req, res)
 })
 router.get('/stock/info', (req, res) => {
   const { symbol } = req.query

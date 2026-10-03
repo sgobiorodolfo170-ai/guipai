@@ -261,15 +261,16 @@ const fetchHistoryData = async () => {
     const endDateStr = formatDate(endDate)
     console.log('查询日期范围:', startDateStr, '到', endDateStr)
     
-    // 先尝试模拟数据，如果API不可用的话
+    // 尝试从历史统计接口获取数据
     let result
     try {
       result = await getBasicStatisticsRange(startDateStr, endDateStr)
       console.log('API响应:', result)
     } catch (apiError) {
-      console.warn('API调用失败，使用模拟数据:', apiError)
-      // 生成模拟数据用于测试
-      result = generateMockData(startDateStr, endDateStr)
+      console.warn('API调用失败:', apiError)
+      tableData.value = []
+      ElMessage.error('历史数据获取失败，请检查后端服务')
+      return
     }
     
     // 注意：使用api工具后，成功的响应直接返回data，不需要检查result.code
@@ -314,41 +315,6 @@ const fetchHistoryData = async () => {
     ElMessage.error('获取历史数据失败，请检查网络连接或联系管理员')
   } finally {
     loading.value = false
-  }
-}
-
-// 生成模拟数据用于测试
-const generateMockData = (startDate, endDate) => {
-  console.log('生成模拟数据用于测试...')
-  const data = []
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    // 跳过周末
-    if (d.getDay() === 0 || d.getDay() === 6) continue
-    
-    const dateStr = d.toISOString().split('T')[0]
-    const mockItem = {
-      tradeDate: dateStr,
-      limitUpCount: Math.floor(Math.random() * 50) + 20,
-      limitDownCount: Math.floor(Math.random() * 30) + 5,
-      limitUpOneWordCount: Math.floor(Math.random() * 15) + 3,
-      limitUpContinuousRate: Math.random() * 0.4 + 0.1,
-      limitUpBlastResealCount: Math.floor(Math.random() * 10) + 2,
-      limitUpMaxContinuous: Math.floor(Math.random() * 5) + 2,
-      yesterdayLimitUpAvgIncrease: (Math.random() * 0.1 - 0.05),
-      limitUpDownRatio: Math.random() * 3 + 1,
-      limitUpTotalSealFunds: Math.random() * 200 + 50,
-      limitUpAvgSealFunds: Math.random() * 5000 + 1000
-    }
-    data.push(mockItem)
-  }
-  
-  return {
-    code: 200,
-    msg: '模拟数据生成成功',
-    data: data
   }
 }
 

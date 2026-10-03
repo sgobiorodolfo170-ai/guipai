@@ -351,7 +351,7 @@
 </template>
 
 <script setup>
-import {ref, onMounted, computed} from 'vue'
+import {ref, onMounted, onUnmounted, computed} from 'vue'
 import {ElMessage} from 'element-plus'
 import {getRandomKlineData, submitTrainingResult, getLocalUser} from '@/services/kline.service'
 import KLine from '@/components/common/KLine.vue'
@@ -411,6 +411,16 @@ const trainingSettings = ref({
   speed: 0.5, // 秒
   autoPlay: false
 })
+
+// 自动播放定时器（模块级引用，供换股/卸载时清理，避免泄漏）
+let autoPlayTimer = null
+const stopAutoPlay = () => {
+  if (autoPlayTimer) {
+    clearInterval(autoPlayTimer)
+    autoPlayTimer = null
+  }
+  trainingSettings.value.autoPlay = false
+}
 
 // 训练完成状态标记
 const isTrainingCompleted = ref(false)
@@ -697,10 +707,9 @@ const handleStartTraining = () => {
   trainingSettings.value.autoPlay = !trainingSettings.value.autoPlay
 
   if (trainingSettings.value.autoPlay) {
-    const interval = setInterval(() => {
+    autoPlayTimer = setInterval(() => {
       if (!trainingSettings.value.autoPlay || currentIndex.value >= klineData.value.length - 1) {
-        clearInterval(interval)
-        trainingSettings.value.autoPlay = false
+        stopAutoPlay()
         if (currentIndex.value >= klineData.value.length - 1 && !isTrainingCompleted.value) {
           checkTrainingResult()
         }
@@ -708,6 +717,8 @@ const handleStartTraining = () => {
       }
       handleNextStep()
     }, trainingSettings.value.speed * 1000)
+  } else {
+    stopAutoPlay()
   }
 }
 
@@ -868,6 +879,8 @@ const getProgressStatus = () => {
 
 // 换股
 const handleChangeStock = async () => {
+  // 换股时停止自动播放，避免定时器跨股票运行
+  stopAutoPlay()
   await fetchLocalUser()
   // 重置状态
   currentIndex.value = 0
@@ -909,6 +922,11 @@ onMounted(async () => {
   // 获取随机股票数据
   fetchRandomKlineData()
   tradingState.value.availableFunds = localUser.value?.totalSimulationAssets || 100000
+})
+
+// 组件卸载时清理自动播放定时器
+onUnmounted(() => {
+  stopAutoPlay()
 })
 </script>
 

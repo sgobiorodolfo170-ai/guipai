@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, onMounted, onUnmounted, nextTick } from 'vue'
 import { useStockStore } from '@/store/stock.store'
 import { useWatchlistStore } from '@/store/watchlist.store'
 import { useNoteStore } from '@/store/note.store'
@@ -10,9 +10,9 @@ const noteStore = useNoteStore()
 
 const loading = ref(false)
 const marketData = ref({
-  shanghai: { index: 3200.45, change: 12.34, changePercent: 0.39 },
-  shenzhen: { index: 2100.67, change: -8.92, changePercent: -0.42 },
-  chinext: { index: 2450.23, change: 5.67, changePercent: 0.23 }
+  shanghai: { index: '--', change: 0, changePercent: 0 },
+  shenzhen: { index: '--', change: 0, changePercent: 0 },
+  chinext: { index: '--', change: 0, changePercent: 0 }
 })
 
 const stats = ref({
@@ -61,6 +61,19 @@ onMounted(async () => {
 const fetchMarketOverview = async () => {
   try {
     await stockStore.fetchMarketOverview()
+    const list = stockStore.marketOverview?.data || []
+    // 按名称/代码映射三大指数到本地展示
+    const find = (kw) => list.find(m =>
+      (m.name || '').includes(kw) || String(m.code || '').startsWith(kw)
+    )
+    const sh = find('上证') || find('000001')
+    const sz = find('深证') || find('399001')
+    const cy = find('创业') || find('399006')
+    marketData.value = {
+      shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0 },
+      shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0 },
+      chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 }
+    }
   } catch (error) {
     console.error('获取市场概况失败:', error)
   }
@@ -74,8 +87,8 @@ const fetchStats = async () => {
     ])
     
     stats.value = {
-      watchlistCount: watchlist?.length || 0,
-      notesCount: notes?.total || 0,
+      watchlistCount: watchlist?.data?.length || 0,
+      notesCount: notes?.data?.total || 0,
       templatesCount: 0
     }
   } catch (error) {
@@ -102,6 +115,11 @@ const formatPercent = (percent) => {
 // 初始化资产趋势图表
 const assetChartContainer = ref(null)
 const assetChart = ref(null)
+
+// 资产图表 resize 处理（固定引用，供注册与卸载共用，避免监听器累积）
+const handleAssetResize = () => {
+  assetChart.value?.resize()
+}
 
 const initAssetChart = async () => {
   await nextTick()
@@ -177,10 +195,9 @@ const initAssetChart = async () => {
   
   assetChart.value.setOption(option)
   
-  // 响应式调整
-  window.addEventListener('resize', () => {
-    assetChart.value?.resize()
-  })
+  // 响应式调整（幂等注册，避免每次初始化都叠加监听器）
+  window.removeEventListener('resize', handleAssetResize)
+  window.addEventListener('resize', handleAssetResize)
 }
 
 // 格式化金额
@@ -194,6 +211,15 @@ const getProfitClass = (profit) => {
   if (profit < 0) return 'profit-negative'
   return 'profit-neutral'
 }
+
+// 组件卸载时移除 resize 监听并销毁图表
+onUnmounted(() => {
+  window.removeEventListener('resize', handleAssetResize)
+  if (assetChart.value) {
+    assetChart.value.dispose()
+    assetChart.value = null
+  }
+})
 </script>
 
 <template>

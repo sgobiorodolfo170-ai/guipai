@@ -13,6 +13,9 @@ const trainingRoutes = require('./routes/training')
 const klineRoutes = require('./routes/kline')
 const stockRoutes = require('./routes/stock')
 const marketRoutes = require('./routes/market')
+const watchlistRoutes = require('./routes/watchlist')
+const noteRoutes = require('./routes/note')
+const templateRoutes = require('./routes/template')
 
 let server = null
 
@@ -65,6 +68,9 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/kline', klineRoutes)
   app.use('/api/stocks', stockRoutes)
   app.use('/api/market', marketRoutes)
+  app.use('/api/watchlist', watchlistRoutes)
+  app.use('/api/notes', noteRoutes)
+  app.use('/api/templates', templateRoutes)
 
   app.use((err, req, res, next) => {
     console.error('[server] error:', err.message)

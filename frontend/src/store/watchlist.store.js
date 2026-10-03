@@ -38,7 +38,8 @@ export const useWatchlistStore = defineStore('watchlist', () => {
     try {
       loading.value = true
       const response = await watchlistService.getWatchlist()
-      watchlist.value = response
+      // 拦截器返回信封 {code,data,msg}，真实数据在 response.data
+      watchlist.value = response.data || response || []
       return response
     } catch (error) {
       throw error
@@ -51,11 +52,11 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   const addToWatchlist = async (code) => {
     try {
       const response = await watchlistService.addToWatchlist(code)
-      
+      const data = response.data || response
       // 更新本地状态
       const existingIndex = watchlist.value.findIndex(item => item.code === code)
       if (existingIndex === -1) {
-        watchlist.value.push(response)
+        watchlist.value.push(data)
       }
       
       return response
@@ -88,9 +89,9 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   const batchAddToWatchlist = async (codes) => {
     try {
       const response = await watchlistService.batchAddToWatchlist(codes)
-      
+      const list = response.data || response || []
       // 更新本地状态
-      response.forEach(item => {
+      list.forEach(item => {
         const existingIndex = watchlist.value.findIndex(w => w.code === item.code)
         if (existingIndex === -1) {
           watchlist.value.push(item)
@@ -124,7 +125,7 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   const fetchWatchlistGroups = async () => {
     try {
       const response = await watchlistService.getWatchlistGroups()
-      groups.value = response
+      groups.value = response.data || response || []
       return response
     } catch (error) {
       throw error
@@ -135,7 +136,7 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   const createGroup = async (groupData) => {
     try {
       const response = await watchlistService.createWatchlistGroup(groupData)
-      groups.value.push(response)
+      groups.value.push(response.data || response)
       return response
     } catch (error) {
       throw error
@@ -146,11 +147,11 @@ export const useWatchlistStore = defineStore('watchlist', () => {
   const updateGroup = async (id, groupData) => {
     try {
       const response = await watchlistService.updateWatchlistGroup(id, groupData)
-      
+      const data = response.data || response
       // 更新本地状态
       const index = groups.value.findIndex(group => group.id === id)
       if (index !== -1) {
-        groups.value[index] = { ...groups.value[index], ...response }
+        groups.value[index] = { ...groups.value[index], ...data }
       }
       
       return response
