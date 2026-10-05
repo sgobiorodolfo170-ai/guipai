@@ -96,9 +96,15 @@ async function syncOne(tradeDate, dataType) {
   const dateStr = normDate(tradeDate)
   const dateCompact = fmtDate(dateStr)
 
-  // 检查是否已存在（仅涨跌停池做幂等检查）
-  if (dataType === 'LIMIT_UP' || dataType === 'LIMIT_DOWN') {
-    const c = await ddb.count(`select count(*) as c from loadTable("${DB}", "stock_limit_pool") where trade_date=${dd(dateStr)} and data_type='${dataType}'`)
+  // 检查是否已存在（幂等）：涨跌停池之外，板块/指数也查重——否则重复同步会重复写
+  const EXIST_CHECK = {
+    LIMIT_UP: `select count(*) as c from loadTable("${DB}", "stock_limit_pool") where trade_date=${dd(dateStr)} and data_type='${dataType}'`,
+    LIMIT_DOWN: `select count(*) as c from loadTable("${DB}", "stock_limit_pool") where trade_date=${dd(dateStr)} and data_type='${dataType}'`,
+    PLATE_MARKET: `select count(*) as c from loadTable("${DB}", "plate_market_quotation") where trade_date=${dd(dateStr)}`,
+    INDEX_DAILY: `select count(*) as c from loadTable("${DB}", "stock_zh_index_daily") where trade_date=${dd(dateStr)}`
+  }
+  if (EXIST_CHECK[dataType]) {
+    const c = await ddb.count(EXIST_CHECK[dataType])
     if (c > 0) return { success: true, message: `当日数据已存在 ${c} 条，跳过同步`, successCount: c, failCount: 0 }
   }
 
@@ -252,6 +258,98 @@ router.post('/manual/full-sync', async (req, res) => {
     const rows = db.prepare(`SELECT * FROM data_sync_status WHERE trade_date=? ORDER BY data_type`).all(dateStr)
     ok(res, rows, '完整收盘任务执行完成')
   } catch (e) { errMsg(res, e.message) }
+})
+
+// ---- 区间批量同步 ----
+// 长请求设计：单日×4类型 最坏 ~3s，62 天上限 ≈ 3 分钟。
+// 前端必须以长超时（如 240s）+ skipRetry 调用——超时重发会与在途任务并发压源。
+const MAX_RANGE_DAYS = 62   // 单次区间上限（自然日）；更长区间由前端分批
+let rangeSyncInFlight = false // 同一时刻只允许一个区间任务，避免重复同步/压源
+
+/** 生成区间内自然日列表（YYYY-MM-DD，升序） */
+function daysInRange(startDate, endDate) {
+  const out = []
+  const cur = new Date(startDate + 'T00:00:00')
+  const end = new Date(endDate + 'T00:00:00')
+  while (cur <= end) {
+    out.push(cur.toISOString().slice(0, 10))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return out
+}
+
+/** 周末免请求：周六/周日必然无数据，直接记跳过，省掉上游调用 */
+function isWeekend(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00').getDay()
+  return d === 0 || d === 6
+}
+
+/**
+ * POST /api/sync-status/manual/sync-range?startDate&endDate&dataType?&forceUpdate?
+ * 区间内逐日×逐类型同步；已有成功/跳过记录的日期不再重复（forceUpdate=true 时强制重刷）。
+ * 返回: { days, results: [{date,dataType,status,message}], summary }
+ *   status: 'ok' 写入成功 / 'skipped' 跳过（周末/非交易日/已有记录）/ 'error' 失败
+ */
+router.post('/manual/sync-range', async (req, res) => {
+  if (rangeSyncInFlight) return errMsg(res, '已有区间同步任务在执行中，请等待完成后再试')
+  rangeSyncInFlight = true
+  try {
+    const { startDate, endDate, dataType, forceUpdate } = req.query
+    const s = normDate(startDate), e = normDate(endDate)
+    if (!s || !e || s > e) return errMsg(res, 'startDate/endDate 格式或顺序错误')
+    if (dataType && !DATA_TYPES.some(d => d.code === dataType)) return errMsg(res, '未知数据类型')
+    const days = daysInRange(s, e)
+    if (days.length > MAX_RANGE_DAYS) return errMsg(res, `区间 ${days.length} 天超过单次上限 ${MAX_RANGE_DAYS} 天，请分段同步`)
+    const types = dataType ? DATA_TYPES.filter(d => d.code === dataType) : DATA_TYPES
+    const db = getDb()
+    const results = []
+    for (const day of days) {
+      for (const dt of types) {
+        // 周末：不请求上游，直接记跳过
+        if (isWeekend(day)) {
+          const result = { success: true, message: '周末无交易，跳过', successCount: 0, failCount: 0 }
+          saveSyncStatus(db, dt.code, day, result)
+          results.push({ date: day, dataType: dt.code, status: 'skipped', message: result.message })
+          continue
+        }
+        // 已有成功/跳过记录的日期不再重复同步（除非强制重刷）
+        if (forceUpdate !== 'true') {
+          const st = db.prepare(`SELECT status FROM data_sync_status WHERE data_type=? AND trade_date=?`).get(dt.code, day)
+          if (st && (st.status === 1 || st.status === 3)) {
+            results.push({ date: day, dataType: dt.code, status: 'skipped', message: '已有同步记录，跳过' })
+            continue
+          }
+        }
+        let result
+        try {
+          result = await syncOne(day, dt.code)
+        } catch (err) {
+          result = { success: false, message: err.message, successCount: 0, failCount: 1 }
+        }
+        // 节假日：上游返回空 → 记为跳过(3) 而非失败(2)，避免失败记录误导
+        if (!result.success && result.message === '未获取到数据') {
+          result = { success: true, message: '当日无数据（非交易日），跳过', successCount: 0, failCount: 0 }
+        }
+        saveSyncStatus(db, dt.code, day, result)
+        results.push({
+          date: day, dataType: dt.code,
+          status: result.message.includes('跳过') ? 'skipped' : result.success ? 'ok' : 'error',
+          message: result.message
+        })
+      }
+    }
+    const summary = {
+      total: results.length,
+      ok: results.filter(r => r.status === 'ok').length,
+      skipped: results.filter(r => r.status === 'skipped').length,
+      error: results.filter(r => r.status === 'error').length
+    }
+    ok(res, { days: days.length, results, summary })
+  } catch (e) {
+    errMsg(res, e.message)
+  } finally {
+    rangeSyncInFlight = false
+  }
 })
 
 module.exports = router

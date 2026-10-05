@@ -83,12 +83,16 @@ const menuItems = [
     icon: 'Setting',
     children: [
       {
-        index: '/admin/data-management',
-        title: '复盘数据任务表'
+        index: '/admin/data-overview',
+        title: '数据总览'
       },
       {
-        index: '/admin/error-log',
-        title: '报错日志'
+        index: '/admin/close-data-sync',
+        title: '收盘数据同步'
+      },
+      {
+        index: '/admin/stock-data-pull',
+        title: '股票数据拉取'
       }
     ]
   },
@@ -100,32 +104,42 @@ const menuItems = [
 ]
 
 
-// 开发环境添加API测试菜单
-if (import.meta.env.DEV) {
-  menuItems.push({
-    index: '/test',
-    title: '测试',
-    icon: 'Files',
-    children: [
-      {
-        index: '/api',
-        title: 'API测试'
-      },
-      {
-        index: '/kTest',
-        title: 'K线数据'
-      },
-        {
-          index: '/AI',
-          title: 'AI生成页面'
-        },
-        {
-          index: '/data-test',
-          title: '数据管理测试'
-        }
-    ]
-  })
+// 测试分类：报错日志为常用诊断工具，正式环境也保留；
+// 其余测试页仅开发环境暴露。
+const testMenu = {
+  index: '/test',
+  title: '测试',
+  icon: 'Files',
+  children: [
+    {
+      index: '/test/error-log',
+      title: '报错日志'
+    }
+  ]
 }
+
+if (import.meta.env.DEV) {
+  testMenu.children.push(
+    {
+      index: '/test/api',
+      title: 'API测试'
+    },
+    {
+      index: '/test/kTest',
+      title: 'K线数据'
+    },
+    {
+      index: '/test/AI',
+      title: 'AI生成页面'
+    },
+    {
+      index: '/test/data-test',
+      title: '数据管理测试'
+    }
+  )
+}
+
+menuItems.push(testMenu)
 
 
 // 当前激活的菜单
