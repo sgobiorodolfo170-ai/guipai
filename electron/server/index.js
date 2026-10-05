@@ -52,14 +52,43 @@ function startServer(port = 8080, dataDir) {
     } catch (e) { res.json({ code: 500, msg: e.message }) }
   })
 
-  // ---- 设置（Tushare token 等） ----
+  // ---- 设置（Tushare 多账号池） ----
+  const tushare = require('./tushare')
+  // 列表：账号 + 内存运行统计（成功/失败/冷却/无效标记）
   app.get('/api/settings/tushare', (req, res) => {
-    res.json({ code: 200, data: { configured: settings.isTushareConfigured() } })
+    res.json({ code: 200, data: { accounts: tushare.getTokenPoolStatus(), configured: settings.isTushareConfigured() } })
   })
-  app.post('/api/settings/tushare', (req, res) => {
-    const token = req.body && req.body.token
-    settings.setTushareToken(token)
-    res.json({ code: 200, msg: settings.isTushareConfigured() ? 'Tushare token 已保存' : 'token 已清除' })
+  // 添加账号；test=true 时先验证 token 有效性再入库
+  app.post('/api/settings/tushare/accounts', async (req, res) => {
+    try {
+      const { name, token, test } = req.body || {}
+      if (test === true || test === 'true') await tushare.testToken(String(token || '').trim())
+      const acc = settings.addTushareToken({ name, token })
+      res.json({ code: 200, msg: `账号「${acc.name}」已添加`, data: { id: acc.id } })
+    } catch (e) { res.json({ code: 400, msg: e.message }) }
+  })
+  // 更新账号（改名 / 启用停用 / 换 token）
+  app.put('/api/settings/tushare/accounts/:id', (req, res) => {
+    try {
+      const acc = settings.updateTushareToken(req.params.id, req.body || {})
+      res.json({ code: 200, msg: `账号「${acc.name}」已更新` })
+    } catch (e) { res.json({ code: 400, msg: e.message }) }
+  })
+  // 删除账号
+  app.delete('/api/settings/tushare/accounts/:id', (req, res) => {
+    try {
+      settings.removeTushareToken(req.params.id)
+      res.json({ code: 200, msg: '已删除' })
+    } catch (e) { res.json({ code: 400, msg: e.message }) }
+  })
+  // 测试某账号 token（trade_cal 零门槛接口）
+  app.post('/api/settings/tushare/accounts/:id/test', async (req, res) => {
+    try {
+      const acc = settings.getTushareTokens().find(t => t.id === req.params.id)
+      if (!acc) return res.json({ code: 400, msg: '账号不存在' })
+      const r = await tushare.testToken(acc.token)
+      res.json({ code: 200, msg: `连接正常（返回 ${r.rows} 行交易日历）` })
+    } catch (e) { res.json({ code: 500, msg: e.message }) }
   })
 
   app.use('/api/aktools', aktoolsRoutes)

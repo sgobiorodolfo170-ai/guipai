@@ -16,6 +16,10 @@ function withCache(key, ttl, fetcher, { cacheEmpty = true } = {}) {
       if (cacheEmpty || !Array.isArray(data) || data.length > 0) cache.set(key, data, ttl)
       res.json({ code: 200, msg: '成功', data })
     } catch (e) {
+      // 上游受限：429 + 恢复时长提示（前端据此提示"约 N 秒后重试"）
+      if (e.retryAfterSec) {
+        return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+      }
       res.json({ code: 500, msg: e.message })
     }
   }

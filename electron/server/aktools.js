@@ -100,9 +100,8 @@ async function getStockLimitPool(date) {
     const json = await getJson(url)
     const pool = json && json.data && json.data.pool
     if (!pool || !pool.length) {
-      // 东财返回空：可能是限流软封或确实无数据。配置了 Tushare 则兜底尝试。
-      const token = settings.getTushareToken()
-      if (token) { console.log('[aktools] 东财涨停池返回空，尝试 Tushare 兜底'); return await tushare.getLimitListD(date, 'U', token) }
+      // 东财返回空：可能是限流软封或确实无数据。配置了 Tushare 则兜底尝试（账号池自动选号）。
+      if (settings.isTushareConfigured()) { console.log('[aktools] 东财涨停池返回空，尝试 Tushare 兜底'); return await tushare.getLimitListD(date, 'U') }
       return []
     }
     return pool.map((it) => ({
@@ -132,8 +131,7 @@ async function getStockDropPool(date) {
     const json = await getJson(url)
     const pool = json && json.data && json.data.pool
     if (!pool || !pool.length) {
-      const token = settings.getTushareToken()
-      if (token) { console.log('[aktools] 东财跌停池返回空，尝试 Tushare 兜底'); return await tushare.getLimitListD(date, 'D', token) }
+      if (settings.isTushareConfigured()) { console.log('[aktools] 东财跌停池返回空，尝试 Tushare 兜底'); return await tushare.getLimitListD(date, 'D') }
       return []
     }
     return pool.map((it) => ({
@@ -157,11 +155,15 @@ async function getStockDropPool(date) {
 }
 
 /** 东财失败 → Tushare 兜底（需在设置页配置 Tushare token） */
+/** 东财涨跌停池失败 → Tushare 兜底（账号池自动选号；Tushare 也失败时抛带 retryAfterSec 的受限错误） */
 async function fallbackTushare(eastError, date, limitType, label) {
-  const token = settings.getTushareToken()
-  if (!token) throw eastError
+  if (!settings.isTushareConfigured()) throw eastError
   console.log(`[aktools] 东财${label}失败，回退 Tushare: ${eastError.message.slice(0, 80)}`)
-  return await tushare.getLimitListD(date, limitType, token)
+  try {
+    return await tushare.getLimitListD(date, limitType)
+  } catch (e) {
+    throw makeRestrictedError(label, [`东财: ${eastError.message.slice(0, 40)}`, `Tushare: ${e.message.slice(0, 50)}`])
+  }
 }
 
 /** 指数日K（index_zh_a_hist 等价）；klines 逗号串：日期,开,收,高,低,量,额,振幅,涨跌幅,涨跌额,换手率
@@ -205,12 +207,27 @@ async function getIndexDailyData({ symbol, start_date, end_date, period = 'daily
   throw lastErr || new Error(`指数K线各源均失败(${symbol},${period})`)
 }
 
+/** 多源全部失败时组装"受限错误"：携带各源失败原因 + retryAfterSec（秒）。
+ *  重试时长取 Tushare 账号池最近恢复时间；未配置 Tushare 时默认 60s。
+ *  路由层据此返回 code=429 + "请约 N 秒后重试"的用户提示。 */
+function makeRestrictedError(label, reasons) {
+  let retryAfterSec = 60
+  if (settings.isTushareConfigured()) {
+    const left = tushare.getPoolRetryAfterSec()
+    if (left != null && left > 0) retryAfterSec = left
+  }
+  const e = new Error(`${label}获取受限/失败（${reasons.join('；')}）`)
+  e.retryAfterSec = retryAfterSec
+  return e
+}
+
 /** 个股日K/周K/月K（stock_zh_a_hist 等价）；market: 6开头→上交所(1)，否则→深交所(0)
- *  取数顺序：东财 push2his → 腾讯 fqkline（跨厂商兜底） → Tushare daily+adj_factor（仅日K，需配置 token） */
+ *  取数顺序：东财 push2his → 腾讯 fqkline（跨厂商兜底） → Tushare daily+adj_factor（仅日K，需配置 token）
+ *  全部失败时抛出带 retryAfterSec 的受限错误（前端据此提示"N 秒后重试"）。 */
 async function getStockHistory({ symbol, period = 'daily', start_date, end_date, adjust = 'qfq' }) {
   const periodKey = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day'
   const fq = adjust === 'qfq' ? 'qfq' : adjust === 'hfq' ? 'hfq' : ''
-  let lastErr = null
+  const reasons = []
   try {
     const market = symbol.startsWith('6') ? 1 : 0
     const klt = period === 'weekly' ? '102' : period === 'monthly' ? '103' : '101'
@@ -232,7 +249,7 @@ async function getStockHistory({ symbol, period = 'daily', start_date, end_date,
     }
     return []
   } catch (e) {
-    lastErr = e
+    reasons.push(`东财: ${e.message.slice(0, 50)}`)
   }
   // 腾讯 fqkline 兜底：东财仅在网络层失败时走到这里（空区间视为真无数据返回 []）
   try {
@@ -241,19 +258,20 @@ async function getStockHistory({ symbol, period = 'daily', start_date, end_date,
       console.warn(`[aktools] 东财K线不可用(${symbol})，切换腾讯 fqkline 兜底(${raw.length} 根)`)
       return filterRowsByDate(mapTxKline(raw, { symbol }), start_date, end_date)
     }
+    reasons.push('腾讯: 返回空')
   } catch (e) {
-    lastErr = lastErr || e
+    reasons.push(`腾讯: ${e.message.slice(0, 50)}`)
   }
-  if (period === 'daily') return await fallbackKlineTushare(symbol, start_date, end_date, lastErr)
-  throw lastErr || new Error(`东财/腾讯K线均返回空(${symbol},${period})`)
-}
-
-/** 东财日K失败 → Tushare daily + adj_factor 兜底(自算前复权) */
-async function fallbackKlineTushare(symbol, startDate, endDate, eastError) {
-  const token = settings.getTushareToken()
-  if (!token) throw eastError || new Error('东财日K返回空且未配置 Tushare')
-  console.log(`[aktools] 东财日K(${symbol})失败，回退 Tushare daily+adj_factor: ${(eastError ? eastError.message : '空数据').slice(0, 80)}`)
-  return await tushare.getDailyBar(symbol, startDate, endDate, token)
+  // 日K 最后一道兜底：Tushare（受限时把账号池恢复时长带给用户）
+  if (period === 'daily' && settings.isTushareConfigured()) {
+    try {
+      console.log(`[aktools] 东财/腾讯日K(${symbol})不可用，回退 Tushare daily+adj_factor`)
+      return await tushare.getDailyBar(symbol, start_date, end_date)
+    } catch (e) {
+      reasons.push(`Tushare: ${e.message.slice(0, 50)}`)
+    }
+  }
+  throw makeRestrictedError(`${symbol} ${period}K线`, reasons)
 }
 
 /** 沪深京 A 股实时行情（stock_zh_a_spot_em 等价）；pz=2000 分页取全市场
@@ -727,11 +745,10 @@ async function warmupUpstream() {
     () => getText('https://qt.gtimg.cn/q=s_sh000001,s_sz399001', Object.assign({ encoding: 'gbk' }, SLOW)),
     // 7) 东财 push2ex 涨停池（涨停/跌停/昨日涨停池数据源，实测首请求可卡 7s+）
     () => getJson(`https://push2ex.eastmoney.com/getTopicZTPool?ut=${UT}&dpt=wz.ztzt&Pageindex=0&pagesize=10&sort=fbt:asc&date=20260101`, Object.assign({}, EM_H, SLOW)),
-    // 8) Tushare daily + adj_factor（若已配置 token）：实测首次调用 ~10s
+    // 8) Tushare daily + adj_factor（若已配置账号）：实测首次调用 ~10s
     async () => {
-      const token = settings.getTushareToken()
-      if (!token) return null
-      return await tushare.getDailyBar('600519', '20260101', '20260131', token)
+      if (!settings.isTushareConfigured()) return null
+      return await tushare.getDailyBar('600519', '20260101', '20260131')
     }
   ]
   // 慢或失败再补打一次：冷启动只影响第一次请求，第二发基本必然命中热路径

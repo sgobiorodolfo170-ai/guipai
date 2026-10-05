@@ -29,7 +29,9 @@ api.interceptors.response.use(
       return data
     } else {
       const errorMsg = data.msg || data.message || '请求失败'
-      ElMessage.error(errorMsg)
+      // 429 = 上游数据源受限：msg 已含"约 N 秒后重试"，用 warning 提示而非红色 error
+      if (data.code === 429) ElMessage.warning({ message: errorMsg, duration: 6000 })
+      else ElMessage.error(errorMsg)
       return Promise.reject(new Error(errorMsg))
     }
   },

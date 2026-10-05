@@ -80,7 +80,7 @@ const syncOne = async (force) => {
   if (!singleDate.value) return ElMessage.warning('请选择日期')
   singleBusy.value = true
   try {
-    const res = await api.post('/sync-status/manual/sync', null, {
+    const res = await api.post('/sync-status/manual/sync', {}, {
       params: { tradeDate: singleDate.value, dataType: singleType.value, forceUpdate: force ? 'true' : 'false' }
     })
     const r = res.data || {}
@@ -124,7 +124,7 @@ const fullSync = async () => {
   if (!fullDate.value) return ElMessage.warning('请选择日期')
   fullBusy.value = true
   try {
-    const res = await api.post('/sync-status/manual/full-sync', null, {
+    const res = await api.post('/sync-status/manual/full-sync', {}, {
       params: { tradeDate: fullDate.value }
     })
     const rows = res.data || []
@@ -184,7 +184,7 @@ const rangeSync = async () => {
 
     const agg = { total: 0, ok: 0, skipped: 0, error: 0 }
     for (const [s, e] of slices) {
-      const res = await api.post('/sync-status/manual/sync-range', null, {
+      const res = await api.post('/sync-status/manual/sync-range', {}, {
         params: {
           startDate: s, endDate: e,
           dataType: rangeType.value || undefined,
