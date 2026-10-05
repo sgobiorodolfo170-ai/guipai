@@ -29,12 +29,21 @@ function mapSpotItem(m) {
   }
 }
 
+// 两级缓存，各自独立 key：
+//   SPOT_RAW_KEY    —— aktools 原始行（中文列名）。与 /api/aktools/stock/spot 及启动预热 primeCache 共用，
+//                     预热写入的就是这份数据，本模块只读不写形状，避免同 key 两种结构互相污染。
+//   SPOT_MAPPED_KEY —— 映射后的列表，仅本模块使用，缓存它是为了避免每请求重复映射 5500+ 行。
+const SPOT_RAW_KEY = 'aktools:stock:spot'
+const SPOT_MAPPED_KEY = 'aktools:stock:spot:mapped'
+
 async function getSpotList() {
-  const cached = cache.get('aktools:stock:spot')
-  if (cached) return cached
-  const raw = await aktools.getStockSpot()
+  const mapped = cache.get(SPOT_MAPPED_KEY)
+  if (mapped) return mapped
+  // 优先复用预热/其它路由已缓存的原始数据，避免全市场快照重复冷调用（1.5~4s）
+  const raw = cache.get(SPOT_RAW_KEY) || await aktools.getStockSpot()
   const list = (raw || []).map(mapSpotItem).filter(s => s.code)
-  cache.set('aktools:stock:spot', list, 60)
+  // 空结果不落缓存：上游被拦时返回空包，缓存会让首屏"无数据"固化一个 TTL 周期
+  if (list.length) cache.set(SPOT_MAPPED_KEY, list, 60)
   return list
 }
 
@@ -97,11 +106,16 @@ router.get('/:code', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// K线数据（DolphinDB first → 东财/Tushare 兜底 → 异步回填 DolphinDB）
+// K线数据（DolphinDB first → 东财/腾讯/Tushare 兜底 → 异步回填 DolphinDB）
+// 进程内缓存 300s：K线是"看图必查"的重接口，且上游（东财被拦、腾讯会限流）单次耗时在
+// 0.1s~8s 之间剧烈波动；没有缓存时每次打开图都会重新走一遍网络（实测同一区间第二次仍要 4s+）。
 router.get('/:code/kline', async (req, res) => {
   try {
     const { code } = req.params
     const { period = 'daily', startDate, endDate, adjust = 'qfq' } = req.query
+    const cacheKey = `stocks:kline:${code}:${period}:${adjust}:${startDate || ''}:${endDate || ''}`
+    const cached = cache.get(cacheKey)
+    if (cached) return ok(res, cached, '成功(缓存)')
 
     // 1. DolphinDB first（daily 直接查；weekly/monthly/quarterly/yearly 从 daily_k 聚合）
     try {
@@ -118,7 +132,8 @@ router.get('/:code/kline', async (req, res) => {
           volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
           turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
         }))
-        return ok(res, kline)
+        cache.set(cacheKey, kline, 300)
+        return ok(res, kline, '成功(缓存)')
       }
     } catch (e) {
       console.error('[stock] DolphinDB kline query failed, fallback to 东财:', e.message)
@@ -138,6 +153,9 @@ router.get('/:code/kline', async (req, res) => {
       klineRepo.insertDailyK(raw).catch(e => console.error('[stock] daily_k backfill failed:', e.message))
     }
 
+    // 空结果不落缓存：上游被拦/限流时可能返回空数组，缓存会让 K 线图在 TTL 内一直空白，
+    // 即使上游已恢复。与 /stock/indexSpot 的 cacheEmpty:false 策略保持一致。
+    if (kline.length) cache.set(cacheKey, kline, 300)
     ok(res, kline)
   } catch (e) { errMsg(res, e.message) }
 })

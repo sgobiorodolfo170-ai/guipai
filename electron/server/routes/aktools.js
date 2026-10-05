@@ -73,4 +73,18 @@ router.get('/stock/indexSpot', (req, res) => {
   withCache(`aktools:stock:indexSpot:${symbol}`, 60, () => aktools.getStockIndexSpot(symbol), { cacheEmpty: false })(req, res)
 })
 
+/** 启动预热：把全市场快照写进进程缓存。
+ *  背景：spot 是最重的接口（全市场 5500+ 只，需分页并发拉取，冷调用 1.5~4s），
+ *  而首屏（市场概况 / 热门榜 / 股票列表）都要它。启动后台先拉一次并缓存 5 分钟，首屏即可直接命中。
+ *  best-effort：失败静默，不影响启动。 */
+async function primeCache() {
+  try {
+    const spot = await aktools.getStockSpot()
+    if (Array.isArray(spot) && spot.length) cache.set('aktools:stock:spot', spot, 300)
+  } catch (e) {
+    // 忽略预热失败
+  }
+}
+
 module.exports = router
+module.exports.primeCache = primeCache

@@ -37,6 +37,10 @@ let DMOD = null // dolphindb 模块命名空间（含 DdbVector* / DdbTable）
 let ddb = null // 当前连接实例
 let connected = false
 let connecting = null // 进行中的连接 Promise（防并发重连）
+let lastConnectFailAt = 0 // 上次连接失败时间戳
+const CONNECT_FAIL_COOLDOWN_MS = 30000 // 连接失败冷却窗：本机没起 DolphinDB 时，
+// 每次 execute 都会 connect() 一次，而每次失败要耗 ~10s（实测），
+// 于是"K线路由"等每次请求都要先白等 10s 才走网络兜底。冷却期内直接判定"不可用"并立即返回。
 
 /** 动态加载 dolphindb 模块（ESM），缓存命名空间。 */
 async function loadMod() {
@@ -45,10 +49,15 @@ async function loadMod() {
   return DMOD
 }
 
-/** 建立与 DolphinDB 的 WebSocket 连接（幂等、可重入）。 */
+/** 建立与 DolphinDB 的 WebSocket 连接（幂等、可重入）。
+ *  opts.force: true 时忽略失败冷却（用户手动重连/设置页触发）。 */
 async function connect(opts = {}) {
   if (connected && ddb) return ddb
   if (connecting) return connecting
+  // 冷却期内且未强制：直接拒绝，避免每次查询都白等一次连接超时
+  if (!opts.force && Date.now() - lastConnectFailAt < CONNECT_FAIL_COOLDOWN_MS) {
+    throw new Error('DolphinDB 处于连接失败冷却期（暂不可用），请确认本机已启动 DolphinDB 服务')
+  }
 
   connecting = (async () => {
     try {
@@ -61,6 +70,7 @@ async function connect(opts = {}) {
       })
       await ddb.connect()
       connected = true
+      lastConnectFailAt = 0
       log('已连接', url)
       // 连接成功后确保库表存在（失败仅告警，不阻断）
       try {
@@ -72,6 +82,7 @@ async function connect(opts = {}) {
     } catch (e) {
       connected = false
       ddb = null
+      lastConnectFailAt = Date.now()
       warn('连接 DolphinDB 失败（行情功能不可用）:', e.message)
       throw e
     } finally {
@@ -241,6 +252,8 @@ async function ensureSchema(dbPath) {
     `}`
   )
   // 个股日K表（前复权 qfq）
+// volume 为 LONG：行情源成交量（手）带小数，写入前由 kline-repository.toInt() 取整，
+// 避免 "cannot be converted to a BigInt"。改列类型需重建分区表，故统一按 LONG 落库。
   await execute(
     `if (!existsTable("${dbPath}", "daily_k")) {\n` +
     `  t = table(1:0, \`symbol\`trade_date\`open\`close\`high\`low\`volume\`amount\`turnover_rate\`pct_chg\`amplitude\`create_time, ` +

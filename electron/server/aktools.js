@@ -36,8 +36,9 @@ const UT_SPOT = 'bd1d9ddb04089700cf9c27f6f7426281' // 东财 clist（spot/指数
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 
 /** 通用 HTTP GET 取字节流（Node 核心 http/https 模块，不依赖 undici）。
- *  含重试退避（应对东财偶发 ECONNRESET/超时，akshare 同款策略）。 */
-async function getBuffer(url, { headers = {}, timeout = 30000, retries = 2 } = {}) {
+ *  含重试退避（应对东财偶发 ECONNRESET/超时，akshare 同款策略）。
+ *  retryDelay: 重试间隔基数（ms），默认 1500；传 0 表示立即重试（用于"首请求必卡 5s"的腾讯场景）。 */
+async function getBuffer(url, { headers = {}, timeout = 30000, retries = 2, retryDelay = 1500 } = {}) {
   let lastErr
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
@@ -65,7 +66,7 @@ async function getBuffer(url, { headers = {}, timeout = 30000, retries = 2 } = {
       })
     } catch (e) {
       lastErr = e
-      if (attempt < retries) await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)))
+      if (attempt < retries && retryDelay > 0) await new Promise((r) => setTimeout(r, retryDelay * (attempt + 1)))
     }
   }
   throw lastErr
@@ -205,7 +206,7 @@ async function getIndexDailyData({ symbol, start_date, end_date, period = 'daily
 }
 
 /** 个股日K/周K/月K（stock_zh_a_hist 等价）；market: 6开头→上交所(1)，否则→深交所(0)
- *  取数顺序：东财 push2his → 腾讯 fqkline（跨厂商兜底） → Tushare pro_bar（仅日K，需配置 token） */
+ *  取数顺序：东财 push2his → 腾讯 fqkline（跨厂商兜底） → Tushare daily+adj_factor（仅日K，需配置 token） */
 async function getStockHistory({ symbol, period = 'daily', start_date, end_date, adjust = 'qfq' }) {
   const periodKey = period === 'weekly' ? 'week' : period === 'monthly' ? 'month' : 'day'
   const fq = adjust === 'qfq' ? 'qfq' : adjust === 'hfq' ? 'hfq' : ''
@@ -247,17 +248,26 @@ async function getStockHistory({ symbol, period = 'daily', start_date, end_date,
   throw lastErr || new Error(`东财/腾讯K线均返回空(${symbol},${period})`)
 }
 
-/** 东财日K失败 → Tushare pro_bar(adj=qfq) 兜底 */
+/** 东财日K失败 → Tushare daily + adj_factor 兜底(自算前复权) */
 async function fallbackKlineTushare(symbol, startDate, endDate, eastError) {
   const token = settings.getTushareToken()
   if (!token) throw eastError || new Error('东财日K返回空且未配置 Tushare')
-  console.log(`[aktools] 东财日K(${symbol})失败，回退 Tushare pro_bar: ${(eastError ? eastError.message : '空数据').slice(0, 80)}`)
+  console.log(`[aktools] 东财日K(${symbol})失败，回退 Tushare daily+adj_factor: ${(eastError ? eastError.message : '空数据').slice(0, 80)}`)
   return await tushare.getDailyBar(symbol, startDate, endDate, token)
 }
 
 /** 沪深京 A 股实时行情（stock_zh_a_spot_em 等价）；pz=2000 分页取全市场
- *  取数顺序：东财 clist → 腾讯 aStock 榜单（push2 被拦或返回空时跨厂商兜底） */
-async function getStockSpot() {
+ *  取数顺序：东财 clist → 腾讯 aStock 榜单（push2 被拦或返回空时跨厂商兜底）
+ *
+ *  进程内共享memo：spot 是最重的接口（腾讯兜底要分页拉 28 页，1.5~4s），
+ *  而 /api/stocks、/api/market/hot、/api/market/overview 都要它。
+ *  这里做 TTL 记忆化 + 在途请求去重，避免同一份全市场快照被重复拉取
+ *  （路由层的 withCache 只缓存各自整形后的结果，救不了重复取数）。 */
+const SPOT_MEMO_MS = 60000
+let spotMemo = { at: 0, data: null }
+let spotInFlight = null
+
+async function fetchStockSpot() {
   let lastErr = null
   try {
     const all = []
@@ -296,6 +306,19 @@ async function getStockSpot() {
     lastErr = lastErr || e
   }
   throw lastErr || new Error('全市场行情各源均返回空')
+}
+
+async function getStockSpot() {
+  if (spotMemo.data && Date.now() - spotMemo.at < SPOT_MEMO_MS) return spotMemo.data
+  if (!spotInFlight) {
+    spotInFlight = fetchStockSpot()
+      .then((rows) => {
+        spotMemo = { at: Date.now(), data: rows }
+        return rows
+      })
+      .finally(() => { spotInFlight = null })
+  }
+  return await spotInFlight
 }
 
 /** 兜底 secids 清单：clist 不可用时按代码精确取数（覆盖复盘三指数 + 仪表盘核心指数） */
@@ -627,30 +650,115 @@ function mapTxKline(rawRows, { symbol = null, dateKey = '日期' } = {}) {
   })
 }
 
-/** 腾讯 fqkline（K 线兜底）；periodKey: day|week|month，fq: ''(不复权)|qfq|hfq。
- *  返回键名随复权参数变化：day/qfqday/hfqday、week/qfqweek...，故按后缀探测。
- *  count 上限 2000（实测 3000 即返回 bad params），超长区间会截断为最近 2000 根——东财主源可用时无此限制。 */
-async function getKlineFromTencent({ symbol, isIndex = false, periodKey = 'day', fq = '', start, end, count = 2000 }) {
-  const code = (isIndex ? txIndexPrefix(symbol) : txStockPrefix(symbol)) + symbol
+/** 估算腾讯 fqkline 需要的 count。
+ *  下限 200 是实测结论：区间请求时 count 过小会命中腾讯服务端的慢路径——
+ *  count=43 在同一 URL 上出现过 5s(超时)/2.7s/79ms 的巨大抖动，而 count≥200 稳定 ~75ms（3/3 次）。
+ *  上限 2000（实测 3000 即返回 bad params）。多要一些根数不影响返回体大小（区间内只有真实交易日那么多行）。 */
+function estimateTxKlineCount(start, end, periodKey) {
+  const MIN_COUNT = 200
+  const DEFAULT_COUNT = 640 // 无区间时约 2.5 年交易日，足够图表展示
+  const MAX_COUNT = 2000
+  if (!start || !end) return DEFAULT_COUNT
+  const days = Math.ceil((new Date(end).getTime() - new Date(start).getTime()) / 86400000) + 1
+  if (!Number.isFinite(days) || days <= 0) return DEFAULT_COUNT
+  const per = periodKey === 'week' ? 7 : periodKey === 'month' ? 30 : 1
+  return Math.min(MAX_COUNT, Math.max(MIN_COUNT, Math.ceil(days / per) + 10))
+}
+
+/** 腾讯 fqkline 单次请求（并发对冲）。
+ *  实测 2026-10：腾讯同一 URL 的耗时在 75ms 与 5s 之间跳（服务端会话冷启动/坏节点），
+ *  串行"短超时+立即重试"仍可能连续两次都撞上坏状态（实测 2.5s × 2 = 5s）。
+ *  因此改成并发对冲：先发一条，600ms 还没动静就并发补一条，谁先成功用谁——
+ *  实测对冲把冷启动那次的等待从 5s 压到 ~0.5s，最坏情形约 4s（单条超时上限）。 */
+async function txFetchKline(code, periodKey, fq, start, end, count) {
   const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${code},${periodKey},${fmtDashedDate(start)},${fmtDashedDate(end)},${count},${fq}`
-  const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } })
+  const once = () => getJson(url, { retries: 0, timeout: 4000, headers: { Referer: 'https://gu.qq.com/' } })
+  let hedgeTimer = null
+  const hedge = new Promise((resolve, reject) => {
+    hedgeTimer = setTimeout(() => { once().then(resolve, reject) }, 600)
+  })
+  let json
+  try {
+    json = await Promise.race([once(), hedge])
+  } finally {
+    if (hedgeTimer) clearTimeout(hedgeTimer)
+  }
   const box = json && json.data && json.data[code]
   if (!box) return []
+  // 返回键名随复权参数变化：day/qfqday/hfqday、week/qfqweek...，故按后缀探测
   const key = [`${fq}${periodKey}`, periodKey, `qfq${periodKey}`, `hfq${periodKey}`]
     .find((k) => Array.isArray(box[k]) && box[k].length)
   return key ? box[key] : []
 }
 
+/** 腾讯 fqkline（K 线兜底）；periodKey: day|week|month，fq: ''(不复权)|qfq|hfq。
+ *  count 未显式指定时按区间估算（上限 2000，实测 3000 即 bad params）。 */
+async function getKlineFromTencent({ symbol, isIndex = false, periodKey = 'day', fq = '', start, end, count }) {
+  const code = (isIndex ? txIndexPrefix(symbol) : txStockPrefix(symbol)) + symbol
+  return await txFetchKline(code, periodKey, fq, start, end, count || estimateTxKlineCount(start, end, periodKey))
+}
+
+/** 上游预热（best-effort，fire-and-forget，失败静默）。
+ *  背景（实测 2026-10）：腾讯 fqkline/榜单/分时、同花顺行业页、东财 push2ex、Tushare daily
+ *  都存在"进程内首次请求被服务端挂起 3~10s、之后 ~100ms"的冷启动现象
+ *  （腾讯 10 次连测：前 2 次 5s/3.2s、后 8 次全 ~80ms；Tushare 首次 10.6s、第二次 37ms）。
+ *  这是连接/会话冷启动而非参数问题，对策是启动后台按"长超时"把每个源打热：
+ *  - 必须用长超时：用户侧请求用短超时（否则预热自己会被掐断，起不到作用）；
+ *  - 慢/失败再打一次：冷启动只影响"第一次"，补打一次基本必然命中热路径；
+ *  - 并发执行：串行会累加（5+8+8+10s ≈ 30s），期间用户仍会撞冷启动。 */
+async function warmupUpstream() {
+  const SLOW = { retries: 0, timeout: 20000 } // 预热专用：宁可等 20s 也要把连接打通
+  const SLOW_GBK = Object.assign({ encoding: 'gbk' }, SLOW)
+  const TX_H = { headers: { Referer: 'https://gu.qq.com/' } }
+  const RANK_H = { headers: { Referer: 'https://stockapp.finance.qq.com/' } }
+  const EM_H = { headers: { Referer: 'https://quote.eastmoney.com/' } }
+  const tasks = [
+    // 1) 腾讯 fqkline（日K 前复权，count 取下限 200 —— count 过小会命中腾讯慢路径）
+    () => getJson('https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=sh600519,day,,,200,qfq', Object.assign({}, TX_H, SLOW)),
+    // 2) 腾讯全市场榜单（proxy.finance.qq.com）：打第一页即可建立连接
+    () => getJson('https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList?_appver=11.17.0&board_code=aStock&sort_type=price&direct=down&offset=0&count=10', Object.assign({}, RANK_H, SLOW)),
+    // 3) 同花顺行业页（q.10jqka.com.cn，GBK）
+    () => getText('https://q.10jqka.com.cn/thshy/', SLOW_GBK),
+    // 4) 腾讯分时 day/query（p1 分时兜底路径，实测首请求 ~7.7s）
+    () => getJson('https://web.ifzq.gtimg.cn/appstock/app/day/query?code=sh600519', Object.assign({}, TX_H, SLOW)),
+    // 5) 腾讯分钟 mkline（p5/p15/p30/p60 兜底路径）
+    () => getJson('https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh600519,m5,,50', Object.assign({}, TX_H, SLOW)),
+    // 6) 腾讯实时行情 qt.gtimg.cn（指数快照兜底，GBK）
+    () => getText('https://qt.gtimg.cn/q=s_sh000001,s_sz399001', Object.assign({ encoding: 'gbk' }, SLOW)),
+    // 7) 东财 push2ex 涨停池（涨停/跌停/昨日涨停池数据源，实测首请求可卡 7s+）
+    () => getJson(`https://push2ex.eastmoney.com/getTopicZTPool?ut=${UT}&dpt=wz.ztzt&Pageindex=0&pagesize=10&sort=fbt:asc&date=20260101`, Object.assign({}, EM_H, SLOW)),
+    // 8) Tushare daily + adj_factor（若已配置 token）：实测首次调用 ~10s
+    async () => {
+      const token = settings.getTushareToken()
+      if (!token) return null
+      return await tushare.getDailyBar('600519', '20260101', '20260131', token)
+    }
+  ]
+  // 慢或失败再补打一次：冷启动只影响第一次请求，第二发基本必然命中热路径
+  const runWithRetry = async (t) => {
+    const s = Date.now()
+    try {
+      await t()
+      if (Date.now() - s > 1500) await t() // 首打就慢 → 说明命中冷启动，补打一次
+    } catch (e) {
+      try { await t() } catch (e2) { /* 预热失败无副作用 */ }
+    }
+  }
+  await Promise.all(tasks.map(runWithRetry))
+}
+
 /** 腾讯全市场榜单（getBoardRankList board_code=aStock，UTF-8）。
  *  count 实测上限 200（500 即报错），全市场 ~5600 只需分页 + 并发拉取。
  *  单位折算：turnover=万元→元，zsz/ltsz=亿元→元；成交量(手)/换手率/涨跌幅与东财口径一致。
- *  腾讯榜单无 高/低/开/昨收/量比 字段 → 置 null（mapSpotItem 兜底为 0）。 */
+ *  腾讯榜单无 高/低/开/昨收/量比 字段 → 置 null（mapSpotItem 兜底为 0）。
+ *  单页 timeout 取 4s（不是 15s）：28 页中任一页卡住都会拖垮整体（6 并发 × 15s ≈ 75s），
+ *  而腾讯的卡顿都是"进程内冷启动"级别，warmupUpstream 已提前打通连接。 */
 async function getStockSpotFromTencent() {
   const PAGE = 200
   const MAX_PAGES = 40
   const fetchPage = async (offset) => {
     const url = `https://proxy.finance.qq.com/cgi/cgi-bin/rank/hs/getBoardRankList?_appver=11.17.0&board_code=aStock&sort_type=price&direct=down&offset=${offset}&count=${PAGE}`
-    const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://stockapp.finance.qq.com/' } })
+    const json = await getJson(url, { retries: 1, timeout: 4000, retryDelay: 0, headers: { Referer: 'https://stockapp.finance.qq.com/' } })
     const d = json && json.data
     return { list: (d && d.rank_list) || [], total: (d && d.total) || 0 }
   }
@@ -683,7 +791,7 @@ async function getStockSpotFromTencent() {
 async function getMklineFromTencent(symbol, period, start_date, end_date) {
   const code = txStockPrefix(symbol) + symbol
   const url = `https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=${code},m${period},,2000`
-  const json = await getJson(url, { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } })
+  const json = await getJson(url, { retries: 1, timeout: 4000, retryDelay: 0, headers: { Referer: 'https://gu.qq.com/' } })
   const box = json && json.data && json.data[code]
   const raw = box && box[`m${period}`]
   if (!raw || !raw.length) return []
@@ -711,7 +819,9 @@ async function getMklineFromTencent(symbol, period, start_date, end_date) {
  *  单分钟只有成交价：开盘取前一分钟收盘价，高/低取端点，均价=单分钟额/(量×100)。 */
 async function getMinuteFromTencent(symbol, start_date, end_date) {
   const code = txStockPrefix(symbol) + symbol
-  const opts = { retries: 0, timeout: 15000, headers: { Referer: 'https://gu.qq.com/' } }
+  // timeout 4s（不是 15s）：腾讯被限流时整站请求会挂在 5s+，15s 只会让用户干等；
+  // 拿不到就返回空，由上层按"空数据"处理（分时没有第三方兜底源）。
+  const opts = { retries: 0, timeout: 4000, headers: { Referer: 'https://gu.qq.com/' } }
   let days = []
   try {
     const ed = String(end_date || '').replace(/\D/g, '')
@@ -808,5 +918,6 @@ module.exports = {
   getStockIndustry,
   getZtPoolPrevious,
   getStockIndexSpot,
-  getIndexDailyData
+  getIndexDailyData,
+  warmupUpstream
 }

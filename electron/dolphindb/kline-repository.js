@@ -13,6 +13,7 @@
 const ddb = require('./client')
 
 // daily_k 列定义（须与 ensureSchema 列序一致）
+// volume 为 LONG：与 daily_k 建表脚本一致；写入前由 toInt() 取整以容纳行情源的小数成交量。
 const DAILY_K_COLS = [
   { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
   { name: 'open', type: 'double' }, { name: 'close', type: 'double' },
@@ -42,6 +43,18 @@ function normRows(rows) {
   })
 }
 
+/** DolphinDB 是否可用（已连接）。
+ *  本机没起 DolphinDB 时必须走这里快速短路：否则每次读库都会触发一次 connect()，
+ *  而连接失败要耗 ~10s（实测），表现为"K线接口每次都要等十几秒才返回"。 */
+function ddbReady() { return ddb.isConnected() }
+
+/** 数值安全转整数：行情源成交量（手）带小数，写入 LONG 列会报 BigInt 转换失败。
+ *  存量表 daily_k.volume 若为 LONG 类型（建表早于 DOUBLE 修正），靠此处取整兜底。 */
+function toInt(v) {
+  const n = Number(v)
+  return Number.isFinite(n) ? Math.round(n) : 0
+}
+
 /**
  * 写入个股日K（前复权）——预删除(symbol+日期范围) + insertRows，幂等去重。
  * @param rawRows aktools.getStockHistory 返回的中文键行数组
@@ -49,11 +62,12 @@ function normRows(rows) {
  */
 async function insertDailyK(rawRows) {
   if (!rawRows || rawRows.length === 0) return 0
+  if (!ddbReady()) return 0 // 本机无 DolphinDB：跳过回填，避免无谓的连接尝试
   const rows = rawRows.map(r => ({
     symbol: r['股票代码'],
     trade_date: r['日期'],
     open: r['开盘'], close: r['收盘'], high: r['最高'], low: r['最低'],
-    volume: r['成交量'], amount: r['成交额'],
+    volume: toInt(r['成交量']), amount: r['成交额'],
     turnover_rate: r['换手率'], pct_chg: r['涨跌幅'], amplitude: r['振幅'],
     create_time: new Date()
   }))
@@ -70,6 +84,7 @@ async function insertDailyK(rawRows) {
  * @returns 中文键行数组（与 aktools.getStockHistory 输出同构）
  */
 async function getDailyK(symbol, startDate, endDate) {
+  if (!ddbReady()) return [] // 未连接 → 直接判 miss，让路由走网络兜底（避免白等 ~10s 连接超时）
   const sd = dd(startDate), ed = dd(endDate)
   const r = await ddb.execute(
     `select trade_date as 日期, symbol as 股票代码, open as 开盘, close as 收盘,` +
@@ -85,6 +100,7 @@ async function getDailyK(symbol, startDate, endDate) {
  * @param period 'weekly'|'monthly'|'quarterly'|'yearly'
  */
 async function getKlineAggregated(symbol, startDate, endDate, period) {
+  if (!ddbReady()) return [] // 同上：未连接直接判 miss
   const sd = dd(startDate), ed = dd(endDate)
   let groupBy
   if (period === 'weekly') groupBy = 'year(trade_date), weekOfYear(trade_date)'
@@ -107,6 +123,7 @@ async function getKlineAggregated(symbol, startDate, endDate, period) {
  * @returns 'YYYY-MM-DD' 或 null
  */
 async function getDailyKLatest(symbol) {
+  if (!ddbReady()) return null
   const r = await ddb.execute(`select max(trade_date) as latest from ${TBL} where symbol='${symbol}'`)
   if (!Array.isArray(r) || !r.length) return null
   return normDate(r[0].latest)
@@ -114,10 +131,12 @@ async function getDailyKLatest(symbol) {
 
 /** 统计某股日K行数（数据完整性检查） */
 async function getDailyKCount(symbol) {
+  if (!ddbReady()) return 0
   return await ddb.count(`select count(*) as c from ${TBL} where symbol='${symbol}'`)
 }
 
 module.exports = {
+  ddbReady,
   insertDailyK,
   getDailyK,
   getKlineAggregated,

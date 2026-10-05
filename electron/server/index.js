@@ -16,6 +16,7 @@ const marketRoutes = require('./routes/market')
 const watchlistRoutes = require('./routes/watchlist')
 const noteRoutes = require('./routes/note')
 const templateRoutes = require('./routes/template')
+const dataPullRoutes = require('./routes/data-pull')
 
 let server = null
 
@@ -62,6 +63,7 @@ function startServer(port = 8080, dataDir) {
   })
 
   app.use('/api/aktools', aktoolsRoutes)
+  app.use('/api/data-mgmt', require('./routes/data-mgmt'))
   app.use('/api/limit-board-statistics', statisticsRoutes)
   app.use('/api/sync-status', syncRoutes)
   app.use('/api/sim-training', trainingRoutes)
@@ -71,6 +73,7 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/watchlist', watchlistRoutes)
   app.use('/api/notes', noteRoutes)
   app.use('/api/templates', templateRoutes)
+  app.use('/api/data-pull', dataPullRoutes)
 
   app.use((err, req, res, next) => {
     console.error('[server] error:', err.message)
@@ -80,6 +83,10 @@ function startServer(port = 8080, dataDir) {
   return new Promise((resolve) => {
     server = app.listen(port, () => {
       console.log(`[server] Express running on http://localhost:${port}`)
+      // 预热上游：把腾讯 fqkline / 榜单、同花顺行业页的"进程内首请求卡 3~5s"挪到启动后台消化，
+      // 并预热全市场快照缓存，避免用户第一次打开页面就等 2~4s。均为 best-effort，不阻塞启动。
+      require('./aktools').warmupUpstream().catch(() => {})
+      if (typeof aktoolsRoutes.primeCache === 'function') aktoolsRoutes.primeCache().catch(() => {})
       resolve({ port, app })
     })
   })

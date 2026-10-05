@@ -103,41 +103,104 @@ function parseContinuous(upStat) {
 }
 
 /**
- * 个股日K线（Tushare pro_bar，前复权 adj=qfq）。
+ * 个股日K线（Tushare pro daily + adj_factor，自算前复权）。
  * @param symbol 股票代码（纯数字如 600519，函数内转 .SZ/.SH）
  * @param startDate YYYYMMDD
  * @param endDate YYYYMMDD
  * @param token Tushare token
  * @returns 中文键对象数组（与东财 getStockHistory 输出同构）
+ *
+ * 实现说明：Tushare Pro **没有 pro_bar 接口**（那是 AKShare 的封装名，直接调用会返回
+ * "请指定正确的接口名"）。前复权需自己拼：daily（不复权行情）+ adj_factor（复权因子），
+ * 前复权价 = 不复权价 × 当日因子 / 锚点因子（这样最新一天价格与实际一致）。
+ * adj_factor 取不到时降级为不复权（仍返回可用行情）。
+ *
+ * 口径对齐（关键，写入 daily_k 后与东财数据同表混存，必须一致）：
+ *   - 锚点取"当前可得的最新因子"而非区间末日。取区间末日会让 endDate 落在过去时
+ *     与东财 fqt=1 的前复权价对不上，同一 symbol 会出现两套锚点的价格序列。
+ *   - 涨跌幅/振幅等衍生字段与腾讯兜底（mapTxKline）一致，一律由前复权价推导，
+ *     不用 daily 原始 pct_chg —— 原始涨跌幅基于不复权价，与 涨跌额(=前复权价差) 自相矛盾。
  */
 async function getDailyBar(symbol, startDate, endDate, token) {
-  // 纯数字 → Tushare ts_code（6开头=.SH，否则=.SZ）
+  // 纯数字 → Tushare ts_code（6开头=.SH，8/4/92开头=.BJ，其余=.SZ）
   const tsCode = symbol.startsWith('6')
     ? `${symbol}.SH`
-    : `${symbol}.SZ`
+    : /^(4|8|92)/.test(symbol) ? `${symbol}.BJ` : `${symbol}.SZ`
   const sd = String(startDate).replace(/\D/g, '')
   const ed = String(endDate).replace(/\D/g, '')
-  const data = await callTushare('pro_bar', {
+  // turnover_rate(换手率%) 是 daily 原生列且 daily_k 会持久化它，不取就永久为 null
+  // （前端换手率显示 0）。amp / pct_chg / pre_close 一律不取：振幅与涨跌幅改由前复权价推导，
+  // 见上方口径说明——原始值基于不复权价，与 涨跌额(=前复权价差) 自相矛盾。
+  const data = await callTushare('daily', {
     ts_code: tsCode,
     start_date: sd,
-    end_date: ed,
-    adj: 'qfq',
-    freq: 'D'
-  }, 'ts_code,trade_date,open,high,low,close,vol,amount,turnover_rate,pct_chg,amp', token)
+    end_date: ed
+  }, 'ts_code,trade_date,open,high,low,close,vol,amount,turnover_rate', token)
   const records = toRecords(data)
-  return records.map((r) => ({
-    '日期': fmtDate(r.trade_date),       // YYYYMMDD → YYYY-MM-DD
-    '股票代码': symbol,
-    '开盘': +r.open,
-    '收盘': +r.close,
-    '最高': +r.high,
-    '最低': +r.low,
-    '成交量': +r.vol,
-    '成交额': +r.amount,
-    '振幅': +r.amp,
-    '涨跌幅': +r.pct_chg,
-    '换手率': +r.turnover_rate
-  }))
+  if (!records.length) return []
+
+  // 复权因子：区间起点 → 今天（而不是区间终点），以便拿到最新可得因子做锚点。失败则按不复权输出。
+  const factors = {}
+  try {
+    const f = await callTushare('adj_factor', { ts_code: tsCode, start_date: sd, end_date: todayCompact() }, 'ts_code,trade_date,adj_factor', token)
+    for (const r of toRecords(f)) {
+      const v = Number(r.adj_factor)
+      if (Number.isFinite(v) && v > 0) factors[String(r.trade_date)] = v
+    }
+  } catch (e) {
+    // 忽略：降级为不复权
+  }
+  // 锚点 = 因子表里最大交易日对应的因子；无因子时 anchor=1，即 ratio 恒为 1（不复权）
+  const anchorDay = Object.keys(factors).sort().pop()
+  const anchor = anchorDay ? factors[anchorDay] : 1
+
+  // Tushare 返回按日期倒序，统一升序，便于计算涨跌额
+  records.sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)))
+  // 前复权系数：把锚点日的价格锚定为真实价格
+  const qfq = (v, day) => {
+    const f = factors[day]
+    const ratio = f ? f / anchor : 1
+    return Number((Number(v) * ratio).toFixed(2))
+  }
+
+  const out = []
+  let prevClose = null
+  for (const r of records) {
+    const day = String(r.trade_date)
+    const close = qfq(r.close, day)
+    const open = qfq(r.open, day)
+    const high = qfq(r.high, day)
+    const low = qfq(r.low, day)
+    const chg = prevClose == null ? null : Number((close - prevClose).toFixed(2))
+    out.push({
+      '日期': fmtDate(day),
+      '股票代码': symbol,
+      '开盘': open,
+      '收盘': close,
+      '最高': high,
+      '最低': low,
+      '成交量': +r.vol,          // Tushare vol 单位为手（与东财口径一致）
+      '成交额': r.amount != null ? Math.round(+r.amount * 1000) : null, // Tushare amount 单位为千元 → ×1000 统一为元
+      // 首行无前收盘 → 振幅/涨跌幅为 null（与腾讯兜底 mapTxKline 的处理保持一致）
+      '振幅': chg == null || prevClose === 0 ? null : round2((high - low) / prevClose * 100),
+      '涨跌幅': chg == null || prevClose === 0 ? null : round2(chg / prevClose * 100),
+      '涨跌额': chg,
+      '换手率': r.turnover_rate != null ? +r.turnover_rate : null
+    })
+    prevClose = close
+  }
+  return out
+}
+
+/** 今天 YYYYMMDD（把复权因子取到最新，使前复权锚定最近一个因子） */
+function todayCompact() {
+  const d = new Date()
+  return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+}
+
+/** 保留两位小数（百分比类字段）；非有限数返回 null，避免 NaN 进 JSON 变脏值 */
+function round2(x) {
+  return Number.isFinite(x) ? Math.round(x * 100) / 100 : null
 }
 
 /** YYYYMMDD → YYYY-MM-DD */

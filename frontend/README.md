@@ -69,7 +69,7 @@ npm run dev        # 等价于 node electron/dev-runner.js
 
 ```bash
 cd frontend
-npm run dev        # http://localhost:5173
+npm run dev        # http://localhost:5174（端口取自 .env 的 VITE_DEV_PORT）
 ```
 
 ### 构建
@@ -98,8 +98,10 @@ VITE_API_BASE_URL=http://localhost:8080/api
 VITE_APP_TITLE=龟派
 VITE_APP_VERSION=1.0.0
 
-# 开发端口
-VITE_DEV_PORT=5173
+# 开发端口（开发端口的唯一来源：vite dev server、dev-runner、Electron standalone 均读此值；
+# 5173 常被本机其它项目占用，故默认 5174。dev-runner 会从此端口起向后扫描空闲端口；
+# 也可用 GP_DEV_PORT 环境变量临时覆盖起始端口）
+VITE_DEV_PORT=5174
 ```
 
 ## 核心模块说明
