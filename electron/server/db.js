@@ -216,6 +216,14 @@ async function initDb(dataDir) {
       updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_tpl_user ON template(user_id);
+    CREATE TABLE IF NOT EXISTS stock_basic (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      market TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_sb_market ON stock_basic(market);
   `)
 
   persist()

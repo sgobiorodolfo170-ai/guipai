@@ -34,6 +34,7 @@ const SQLITE_TABLE_LABELS = {
   template_category: '模板分类',
   sim_single_training: '模拟训练记录',
   data_sync_status: '收盘同步状态',
+  stock_basic: '股票基础信息(本地库)',
   stock_limit_pool: '涨跌停池(旧表,已迁至DolphinDB)',
   stock_zh_index_daily: '指数日K(旧表,已迁至DolphinDB)',
   plate_market_quotation: '板块行情(旧表,已迁至DolphinDB)'

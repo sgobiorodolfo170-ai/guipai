@@ -1,9 +1,9 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useStockStore } from '@/store/stock.store'
 import { useWatchlistStore } from '@/store/watchlist.store'
-import { formatPrice, formatPercent, formatChange, getChangeStatus } from '@/utils/stock'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
@@ -11,24 +11,54 @@ const stockStore = useStockStore()
 const watchlistStore = useWatchlistStore()
 
 const loading = ref(false)
+const syncing = ref(false)
 const searchKeyword = ref(route.query.search || '')
 const stockList = ref([])
+const total = ref(0)
+const page = ref(1)
+const pageSize = ref(50)
+const activeMarket = ref('') // '' = 全部
 
-onMounted(() => {
-  fetchStockList()
+// 市场分类 tabs（来自本地库 stock_basic 统计）
+const marketTabs = computed(() => {
+  const by = stockStore.marketSummary.byMarket || {}
+  const order = ['沪市主板', '科创板', '深市主板', '创业板', '北交所']
+  const tabs = [{ name: '', label: '全部', count: stockStore.marketSummary.total }]
+  for (const m of order) {
+    if (by[m] > 0) tabs.push({ name: m, label: m, count: by[m] })
+  }
+  const other = Object.keys(by)
+    .filter(m => !order.includes(m))
+    .reduce((s, m) => s + by[m], 0)
+  if (other > 0) tabs.push({ name: '其他', label: '其他', count: other })
+  return tabs
 })
+
+const isEmpty = computed(() => {
+  return !loading.value && (stockStore.marketSummary.total || 0) === 0
+})
+
+const fetchMarketSummary = async () => {
+  try {
+    await stockStore.fetchMarketSummary()
+  } catch (error) {
+    console.error('获取市场分类统计失败:', error)
+  }
+}
 
 const fetchStockList = async () => {
   try {
     loading.value = true
-    const params = {}
-    
-    if (searchKeyword.value) {
-      params.search = searchKeyword.value
+    const params = {
+      page: page.value,
+      pageSize: pageSize.value
     }
-    
-    await stockStore.fetchStockList(params)
+    if (activeMarket.value) params.market = activeMarket.value
+    if (searchKeyword.value.trim()) params.search = searchKeyword.value.trim()
+
+    const response = await stockStore.fetchStockList(params)
     stockList.value = stockStore.stockList
+    total.value = response?.data?.total ?? stockList.value.length
   } catch (error) {
     console.error('获取股票列表失败:', error)
   } finally {
@@ -37,11 +67,58 @@ const fetchStockList = async () => {
 }
 
 const handleSearch = () => {
+  page.value = 1
   fetchStockList()
+}
+
+const handleMarketChange = () => {
+  page.value = 1
+  fetchStockList()
+}
+
+const handlePageChange = (p) => {
+  page.value = p
+  fetchStockList()
+}
+
+const handlePageSizeChange = (size) => {
+  pageSize.value = size
+  page.value = 1
+  fetchStockList()
+}
+
+const handleSync = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '将行情源全市场上市公司列表写入本地数据库，作为股票列表的数据源。是否继续？',
+      '同步股票列表',
+      { confirmButtonText: '开始同步', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+
+  syncing.value = true
+  try {
+    await stockStore.syncStockList()
+    ElMessage.success('股票列表同步完成')
+    page.value = 1
+    await fetchStockList()
+  } catch (error) {
+    ElMessage.error('同步失败: ' + error.message)
+  } finally {
+    syncing.value = false
+  }
 }
 
 const viewStockDetail = (code) => {
   router.push(`/stocks/${code}`)
+}
+
+const tagType = (market) => {
+  if (market === '科创板' || market === '创业板') return 'warning'
+  if (market === '北交所') return 'info'
+  if (market === '沪市主板') return 'success'
+  if (market === '深市主板') return 'primary'
+  return ''
 }
 
 const toggleWatchlist = async (code) => {
@@ -52,44 +129,66 @@ const toggleWatchlist = async (code) => {
   }
 }
 
-const getChangeClass = (change) => {
-  const status = getChangeStatus(change)
-  return `stock-${status}`
-}
+onMounted(async () => {
+  await fetchMarketSummary()
+  await fetchStockList()
+})
 </script>
 
 <template>
   <div class="stock-list">
     <div class="page-header">
       <h1 class="page-title">股票列表</h1>
-      <p class="page-description">搜索和浏览股票信息</p>
+      <p class="page-description">汇总国内全部上市公司，按市场分类浏览（数据来自本地数据库）</p>
     </div>
-    
+
     <!-- 搜索栏 -->
     <el-card class="search-card">
-      <el-row :gutter="20">
-        <el-col :span="16">
-          <el-input
-            v-model="searchKeyword"
-            placeholder="输入股票代码或名称搜索"
-            size="large"
-            @keyup.enter="handleSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-        </el-col>
-        <el-col :span="8">
-          <el-button type="primary" size="large" @click="handleSearch" :loading="loading">
-            搜索
-          </el-button>
-        </el-col>
-      </el-row>
+      <div class="toolbar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="输入股票代码或名称搜索"
+          size="large"
+          clearable
+          @keyup.enter="handleSearch"
+          @clear="handleSearch"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-button type="primary" size="large" :loading="loading" @click="handleSearch">
+          搜索
+        </el-button>
+        <el-button type="warning" size="large" plain :loading="syncing" @click="handleSync">
+          同步股票列表
+        </el-button>
+      </div>
+      <div v-if="stockStore.marketSummary.updatedAt" class="sync-tip">
+        最近同步：{{ stockStore.marketSummary.updatedAt }}
+      </div>
     </el-card>
-    
-    <!-- 股票列表 -->
-    <el-card>
+
+    <!-- 首次使用：本地库为空，引导同步 -->
+    <el-card v-if="isEmpty">
+      <el-empty description="本地数据库暂无股票列表数据，请先同步一次">
+        <el-button type="primary" size="large" :loading="syncing" @click="handleSync">
+          同步股票列表数据
+        </el-button>
+      </el-empty>
+    </el-card>
+
+    <!-- 股票列表 + 市场分类 -->
+    <el-card v-else>
+      <el-tabs v-model="activeMarket" class="market-tabs" @tab-change="handleMarketChange">
+        <el-tab-pane
+          v-for="tab in marketTabs"
+          :key="tab.name"
+          :name="tab.name"
+          :label="`${tab.label} (${tab.count})`"
+        />
+      </el-tabs>
+
       <el-table
         :data="stockList"
         v-loading="loading"
@@ -97,39 +196,11 @@ const getChangeClass = (change) => {
         @row-click="(row) => viewStockDetail(row.code)"
         style="cursor: pointer;"
       >
-        <el-table-column prop="code" label="代码" width="100" />
-        <el-table-column prop="name" label="名称" width="150" />
-        <el-table-column prop="price" label="现价" width="100">
+        <el-table-column prop="code" label="代码" width="110" />
+        <el-table-column prop="name" label="名称" min-width="160" />
+        <el-table-column prop="market" label="市场" width="120">
           <template #default="{ row }">
-            <span class="stock-price" :class="getChangeClass(row.change)">
-              {{ formatPrice(row.price) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="change" label="涨跌额" width="100">
-          <template #default="{ row }">
-            <span :class="getChangeClass(row.change)">
-              {{ formatChange(row.change) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="changePercent" label="涨跌幅" width="100">
-          <template #default="{ row }">
-            <span :class="getChangeClass(row.change)">
-              {{ formatPercent(row.changePercent) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="volume" label="成交量" width="120" />
-        <el-table-column prop="turnover" label="成交额" width="120" />
-        <el-table-column prop="high" label="最高" width="100">
-          <template #default="{ row }">
-            {{ formatPrice(row.high) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="low" label="最低" width="100">
-          <template #default="{ row }">
-            {{ formatPrice(row.low) }}
+            <el-tag size="small" :type="tagType(row.market)">{{ row.market }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
@@ -148,9 +219,20 @@ const getChangeClass = (change) => {
           </template>
         </el-table-column>
       </el-table>
-      
-      <!-- 空状态 -->
+
       <el-empty v-if="!loading && stockList.length === 0" description="暂无数据" />
+
+      <div class="pagination-wrap">
+        <el-pagination
+          v-model:current-page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+          :page-sizes="[20, 50, 100, 200]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handlePageChange"
+          @size-change="handlePageSizeChange"
+        />
+      </div>
     </el-card>
   </div>
 </template>
@@ -164,9 +246,30 @@ const getChangeClass = (change) => {
   margin-bottom: 20px;
 }
 
-.stock-price {
-  font-weight: 600;
-  font-family: 'Courier New', monospace;
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.toolbar .el-input {
+  flex: 1;
+}
+
+.sync-tip {
+  margin-top: 8px;
+  color: #86909c;
+  font-size: 12px;
+}
+
+.market-tabs {
+  margin-bottom: 12px;
+}
+
+.pagination-wrap {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
 }
 
 :deep(.el-table__row) {
@@ -181,7 +284,7 @@ const getChangeClass = (change) => {
   .stock-list {
     padding: 10px;
   }
-  
+
   :deep(.el-table) {
     font-size: 12px;
   }

@@ -2,7 +2,6 @@ import { fileURLToPath, URL } from 'node:url'
 
 import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import vueDevTools from 'vite-plugin-vue-devtools'
 
 // 开发端口的默认兜底值；真实值取自 frontend/.env 的 VITE_DEV_PORT（唯一来源，
 // electron/dev-port.js 与 electron/dev-runner.js 也读同一个键，避免三处端口不一致）。
@@ -23,7 +22,6 @@ export default defineConfig(({ command, mode }) => {
     },
     plugins: [
       vue(),
-      vueDevTools(),
     ],
     resolve: {
       alias: {

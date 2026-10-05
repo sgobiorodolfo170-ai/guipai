@@ -12,6 +12,7 @@ export const useStockStore = defineStore('stock', () => {
   const hotStocks = ref([])
   const loading = ref(false)
   const searchResults = ref([])
+  const marketSummary = ref({ total: 0, byMarket: {}, updatedAt: null })
 
   // 计算属性
   const currentStockCode = computed(() => currentStock.value?.code)
@@ -133,6 +134,32 @@ export const useStockStore = defineStore('stock', () => {
     }
   }
 
+  // 获取股票基础信息状态（总数 + 各市场数量）
+  const fetchMarketSummary = async () => {
+    try {
+      const response = await stockService.getStockBasicStatus()
+      marketSummary.value = {
+        total: response.data?.total ?? 0,
+        byMarket: response.data?.byMarket || {},
+        updatedAt: response.data?.updatedAt || null
+      }
+      return marketSummary.value
+    } catch (error) {
+      throw error
+    }
+  }
+
+  // 同步股票基础信息入库（全市场列表写入本地库）
+  const syncStockList = async () => {
+    try {
+      const response = await stockService.syncStockBasic()
+      await fetchMarketSummary()
+      return response.data
+    } catch (error) {
+      throw error
+    }
+  }
+
   // 获取股票历史数据
   const fetchStockHistory = async (code, params = {}) => {
     try {
@@ -198,6 +225,7 @@ export const useStockStore = defineStore('stock', () => {
     hotStocks,
     loading,
     searchResults,
+    marketSummary,
     
     // 计算属性
     currentStockCode,
@@ -211,6 +239,8 @@ export const useStockStore = defineStore('stock', () => {
     searchStocks,
     fetchMarketOverview,
     fetchHotStocks,
+    fetchMarketSummary,
+    syncStockList,
     fetchStockHistory,
     fetchStockIndicators,
     fetchStockFinancial,

@@ -1,12 +1,28 @@
 import api from '@/utils/api'
 
 /**
- * 获取股票列表
- * @param {Object} params 查询参数
+ * 获取股票列表（只读本地库，支持 market 市场分类过滤）
+ * @param {Object} params 查询参数 { search, market, page, pageSize }
  * @returns {Promise}
  */
 export const getStockList = (params = {}) => {
   return api.get('/stocks', { params })
+}
+
+/**
+ * 获取股票基础信息状态（总数量 + 各市场数量）
+ * @returns {Promise}
+ */
+export const getStockBasicStatus = () => {
+  return api.get('/stocks/basic/status')
+}
+
+/**
+ * 同步股票基础信息入库（全市场列表写入本地库）
+ * @returns {Promise}
+ */
+export const syncStockBasic = () => {
+  return api.post('/stocks/basic/sync')
 }
 
 /**

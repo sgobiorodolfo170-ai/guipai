@@ -12,11 +12,7 @@ const TemplateList = () => import('@/views/template/TemplateList.vue')
 const TemplateEdit = () => import('@/views/template/TemplateEdit.vue')
 const Profile = () => import('@/views/user/Profile.vue')
 const Settings = () => import('@/views/settings/Settings.vue')
-const ApiTest = () => import('@/views/test/ApiTest.vue')
 const Review = () => import('@/views/review/Review.vue')
-const KTest = () => import('@/views/test/KTest.vue')
-const AI = () => import('@/components/common/KLine.vue')
-const DataManagementTest = () => import('@/views/test/DataManagementTest.vue')
 const KlinePractice = () => import('@/views/kline-practice/RandomStockPractice.vue')
 
 const routes = [
@@ -209,53 +205,6 @@ const routes = [
                     hideInMenu: true
                 }
             }
-        ]
-    },
-    {
-        path: '/test',
-        name: 'Test',
-        meta: {
-            title: '测试',
-            icon: 'Setting'
-        },
-        children: [
-            {
-                path: 'error-log',
-                name: 'ErrorLog',
-                component: () => import('@/views/test/ErrorLog.vue'),
-                meta: {
-                    title: '报错日志'
-                }
-            },{
-                path: 'api',
-                name: 'ApiTest',
-                component: ApiTest,
-                meta: {
-                    title: 'API测试'
-                }
-            },{
-                path: 'kTest',
-                name: 'KTest',
-                component: KTest,
-                meta: {
-                    title: 'K线模版'
-                }
-            },{
-                path: 'AI',
-                name: 'AI',
-                component: AI,
-                meta: {
-                    title: 'AI生成的页面'
-                }
-            },{
-                path: 'data-test',
-                name: 'DataManagementTest',
-                component: DataManagementTest,
-                meta: {
-                    title: '数据管理测试'
-                }
-            }
-
         ]
     },
     {
