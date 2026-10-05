@@ -37,7 +37,9 @@ api.interceptors.response.use(
     const config = error.config || {}
     const isNetworkError = !error.response && (error.code === 'ERR_NETWORK' || error.code === 'ECONNREFUSED' || error.code === 'ECONNABORTED')
 
-    if (isNetworkError && (config.__retryCount || 0) < MAX_RETRIES) {
+    // skipRetry：调用方显式声明"这次请求不可重放"。用于长任务/非幂等场景——
+    // 超时后自动重发会把同一个请求并发执行多份（如数据拉取批次压行情源）。
+    if (!config.skipRetry && isNetworkError && (config.__retryCount || 0) < MAX_RETRIES) {
       config.__retryCount = (config.__retryCount || 0) + 1
       await new Promise(r => setTimeout(r, RETRY_DELAY))
       return api(config)

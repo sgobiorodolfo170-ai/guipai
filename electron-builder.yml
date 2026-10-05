@@ -14,7 +14,11 @@ files:
 # 不排除 node_modules：electron-builder 默认只纳入 package.json 的 dependencies（生产依赖），
 # 排除 devDependencies。原 `!**/node_modules/**/*` 会连 express/cors/sql.js/dolphindb 一起丢掉，
 # 导致安装包运行时 require/import 失败。
-extraResources: []
+# 运行时窗口/任务栏图标需随包分发（buildResources 仅供 electron-builder 合成 exe 图标，
+# 不会自动落到 resources/），故显式复制 icon.ico 到 resources/build/。
+extraResources:
+  - from: build/icon.ico
+    to: build/icon.ico
 # asar 关闭：dolphindb 为 ESM 包，经动态 import() 从 asar 内加载在 Electron 中不可靠；
 # 落盘可保证 CommonJS(require) 与 ESM(import) 均按开发态正常解析。
 asar: false
