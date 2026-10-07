@@ -1,0 +1,150 @@
+{
+    "schemaVersion": 1,
+    "manifestId": "dolphindb-web-agent-builtins",
+    "manifestVersion": "2026.09.03",
+    "skillVersion": "1.1.0",
+    "skills": [
+        {
+            "name": "dolphindb-data-import",
+            "package": "skills/dolphindb-data-import.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-plot",
+            "package": "skills/dolphindb-plot.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-orca-dstream",
+            "package": "skills/dolphindb-orca-dstream.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-basic-syntax-programming",
+            "package": "skills/dolphindb-basic-syntax-programming.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-functional-programming",
+            "package": "skills/dolphindb-functional-programming.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-sql-programming",
+            "package": "skills/dolphindb-sql-programming.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-vectorization-programming",
+            "package": "skills/dolphindb-vectorization-programming.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-hfdataimport-check-env",
+            "package": "skills/dolphindb-hfdataimport-check-env.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-csmar-import",
+            "package": "skills/dolphindb-csmar-import.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-datayes-import",
+            "package": "skills/dolphindb-datayes-import.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-backtest-skill",
+            "package": "skills/dolphindb-backtest-skill.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-daily-factor",
+            "package": "skills/dolphindb-daily-factor.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-ficc-pricing",
+            "package": "skills/dolphindb-ficc-pricing.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-finance-dataimport",
+            "package": "skills/dolphindb-finance-dataimport.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-finance-dbtbcreate",
+            "package": "skills/dolphindb-finance-dbtbcreate.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-highfreq-factor",
+            "package": "skills/dolphindb-highfreq-factor.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-machinelearning",
+            "package": "skills/dolphindb-machinelearning.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-ops",
+            "package": "skills/dolphindb-ops.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-rag",
+            "package": "skills/dolphindb-rag.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-report-factor-replication",
+            "package": "skills/dolphindb-report-factor-replication.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-test",
+            "package": "skills/dolphindb-test.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-tushare-import",
+            "package": "skills/dolphindb-tushare-import.zip",
+            "common": false
+        },
+        {
+            "name": "dolphindb-tushare-check-env",
+            "package": "skills/dolphindb-tushare-check-env.zip",
+            "common": false
+        }
+    ],
+    "agents": [
+        {
+            "agentId": "agent_builtin_3f9e3c9d-1b10-4d12-9d4a-0d47a9dfb001",
+            "agentName": "DolphinDB Coding Agent",
+            "description": "用于 DolphinDB 开发、调试、脚本生成和数据分析的内置编程助手。",
+            "status": "ACTIVE",
+            "systemPromptFile": "prompts/coding-assistant.md",
+            "skills": [
+                "dolphindb-data-import",
+                "dolphindb-plot",
+                "dolphindb-orca-dstream",
+                "dolphindb-basic-syntax-programming",
+                "dolphindb-functional-programming",
+                "dolphindb-sql-programming",
+                "dolphindb-vectorization-programming"
+            ],
+            "contextConfig": {
+                "includeSkillCatalog": true,
+                "includeMemory": true
+            },
+            "config": {
+                "builtin": true,
+                "builtinVersion": "2026.09.03",
+                "agentKind": "coding"
+            }
+        }
+    ]
+}

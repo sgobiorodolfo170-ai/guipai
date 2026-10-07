@@ -1,0 +1,463 @@
+/** node_modules/.pnpm/xshell@1.4.38_supports-color@7.2.0/node_modules/xshell/scroll-bar.sass */
+::-webkit-scrollbar, ::-webkit-scrollbar:horizontal, ::-webkit-scrollbar:vertical {
+    width: 10px !important;
+    height: 10px !important;
+    background-color: #aaaaaa !important;
+}
+
+::-webkit-scrollbar-track-piece {
+    background-color: #ffffff !important;
+    box-shadow: inset 0 0 0px #aaaaaa !important;
+    border: 0px solid #aaaaaa !important;
+    border-radius: 0px !important;
+}
+::-webkit-scrollbar-track-piece:vertical {
+    background-image: "";
+}
+::-webkit-scrollbar-track-piece:vertical:hover {
+    background-image: "";
+}
+::-webkit-scrollbar-track-piece:horizontal {
+    background-image: "";
+}
+::-webkit-scrollbar-track-piece:horizontal:hover {
+    background-image: "";
+}
+::-webkit-scrollbar-track-piece:hover {
+    background-color: #d9d9d9 !important;
+    box-shadow: inset 0 0 0px #aaaaaa !important;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #aaaaaa !important;
+    box-shadow: inset 0 0 0px #aaaaaa !important;
+    border-radius: 0px !important;
+    border: 0px solid #aaaaaa !important;
+}
+::-webkit-scrollbar-thumb:vertical {
+    background-image: "";
+}
+::-webkit-scrollbar-thumb:horizontal {
+    background-image: "";
+}
+
+::-webkit-scrollbar-corner {
+    background-color: #B0BEC5 !important;
+}
+
+
+/** src/window.sass */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overscroll-behavior-y: contain;
+    color: #000000;
+}
+
+* {
+    box-sizing: inherit;
+}
+
+.root {
+    height: 100%;
+    box-sizing: border-box;
+    font-size: 20px;
+}
+.root .app {
+    height: 100%;
+}
+
+
+/** src/pagination.sass */
+.root .ant-pagination-item-active, .ant-modal-root .ant-pagination-item-active {
+    border-color: transparent !important;
+}
+.root .themed .ant-pagination, .ant-modal-root .themed .ant-pagination {
+    margin-left: 10px;
+    flex-shrink: 0;
+}
+.root .themed .ant-pagination .ant-pagination-item a, .ant-modal-root .themed .ant-pagination .ant-pagination-item a {
+    color: var(--vscode-editor-foreground, #000000) !important;
+    margin-top: 0.5px;
+}
+.root .themed .ant-pagination .ant-pagination-item-active, .ant-modal-root .themed .ant-pagination .ant-pagination-item-active {
+    background-color: var(--vscode-editor-background, #ffffff) !important;
+    font-weight: bold;
+}
+.root .themed .ant-pagination .ant-pagination-item-active a, .ant-modal-root .themed .ant-pagination .ant-pagination-item-active a {
+    color: var(--vscode-editorLineNumber-activeForeground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-item-ellipsis, .ant-modal-root .themed .ant-pagination .ant-pagination-item-ellipsis {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-item-link, .ant-modal-root .themed .ant-pagination .ant-pagination-item-link {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-item-link-icon, .ant-modal-root .themed .ant-pagination .ant-pagination-item-link-icon {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-disabled svg, .ant-modal-root .themed .ant-pagination .ant-pagination-disabled svg {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options, .ant-modal-root .themed .ant-pagination .ant-pagination-options {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options input, .ant-modal-root .themed .ant-pagination .ant-pagination-options input {
+    color: var(--vscode-input-foreground, rgba(0, 0, 0, 0.8509803922)) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select {
+    color: var(--vscode-editor-foreground, #000000);
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-selector, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-selector {
+    background-color: var(--vscode-editor-background, #ffffff) !important;
+    border-color: var(--vscode-editor-background, #ffffff) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-arrow, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-arrow {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-dropdown, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-dropdown {
+    background-color: var(--vscode-dropdown-background, #ffffff) !important;
+    color: var(--vscode-dropdown-foreground, rgba(0, 0, 0, 0.8509803922)) !important;
+    border: 1px solid var(--vscode-dropdown-border, #ffffff) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item {
+    color: var(--vscode-dropdown-foreground, rgba(0, 0, 0, 0.8509803922)) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item-option-active, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item-option-active {
+    background-color: var(--vscode-inputOption-hoverBackground, #f5f5f5) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item-option-selected, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-item-option-selected {
+    background-color: var(--vscode-editor-selectionBackground, #eeeeee) !important;
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-selection-item, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select .ant-select-selection-item {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select:not(.ant-select-disabled):hover .ant-select-selector, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select:not(.ant-select-disabled):hover .ant-select-selector {
+    border-color: #707070;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select-focused:not(.ant-select-disabled).ant-select:not(.ant-select-customize-input) .ant-select-selector, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select-focused:not(.ant-select-disabled).ant-select:not(.ant-select-customize-input) .ant-select-selector {
+    box-shadow: unset;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select-single.ant-select-open .ant-select-selection-item, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select-single.ant-select-open .ant-select-selection-item {
+    color: var(--vscode-editor-foreground, #000000);
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-select-item-option-selected:not(.ant-select-item-option-disabled), .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-select-item-option-selected:not(.ant-select-item-option-disabled) {
+    background-color: var(--vscode-editor-selectionBackground, #eeeeee) !important;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input {
+    border-color: var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961));
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input:hover, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input:hover {
+    border-color: #707070;
+}
+.root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input:focus, .root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input-focused, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input:focus, .ant-modal-root .themed .ant-pagination .ant-pagination-options .ant-pagination-options-quick-jumper input-focused {
+    border-color: #707070;
+    box-shadow: unset;
+}
+
+
+/** src/obj.sass */
+.obj-result {
+    overflow-y: auto;
+    position: relative;
+    height: 100%;
+}
+.obj-result .table, .obj-result .vector, .obj-result .matrix, .obj-result .dict, .obj-result .chart {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+.obj-result .vector, .obj-result .table, .obj-result .matrix {
+    user-select: text;
+}
+.obj-result .vector .pagination, .obj-result .table .pagination, .obj-result .matrix .pagination {
+    margin: 2px 0px;
+    display: flex;
+    align-items: center;
+}
+.obj-result .vector table, .obj-result .table table, .obj-result .matrix table {
+    text-align: right;
+    word-break: keep-all;
+    white-space: nowrap;
+}
+.obj-result .vector .row-head, .obj-result .table .row-head, .obj-result .matrix .row-head {
+    font-weight: bold;
+    height: 22px;
+}
+.obj-result .vector thead th.ant-table-cell, .obj-result .table thead th.ant-table-cell, .obj-result .matrix thead th.ant-table-cell {
+    text-align: center;
+    font-weight: bold;
+}
+.obj-result .vector thead .type, .obj-result .table thead .type, .obj-result .matrix thead .type {
+    font-weight: normal;
+    font-size: 12px;
+}
+.obj-result .vector thead.ant-table-thead > tr > th, .obj-result .table thead.ant-table-thead > tr > th, .obj-result .matrix thead.ant-table-thead > tr > th {
+    padding: 4px 8px;
+}
+.obj-result .dict {
+    padding-top: 8px;
+}
+.obj-result .dict .table .bottom-bar, .obj-result .dict .vector .bottom-bar, .obj-result .dict .matrix .bottom-bar {
+    padding-left: unset;
+    position: unset;
+    border-top: unset;
+}
+.obj-result .dict .table .bottom-bar-placeholder, .obj-result .dict .vector .bottom-bar-placeholder, .obj-result .dict .matrix .bottom-bar-placeholder {
+    display: none;
+}
+.obj-result .dict .ant-tree-node-content-wrapper {
+    user-select: text;
+}
+.obj-result .dict .ant-tree-show-line .ant-tree-indent-unit::before {
+    border-right: unset !important;
+}
+.obj-result .dict .ant-tree {
+    transition: unset !important;
+}
+.obj-result .dict .ant-tree .ant-tree-node-content-wrapper {
+    transition: unset !important;
+}
+.obj-result .dict .ant-tree .ant-tree-switcher-noop {
+    visibility: hidden;
+}
+.obj-result .dict .ant-tree .ant-tree-treenode:not(.ant-tree-treenode-disabled) .ant-tree-node-content-wrapper:hover {
+    color: var(--vscode-inputOption-hoverBackground, var(--ant-color-primary));
+}
+.obj-result .dict .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+    color: var(--vscode-editorLineNumber-foreground, rgba(0, 0, 0, 0.8509803922));
+}
+.obj-result .dict .ant-tree-node-content-wrapper.ant-tree-node-selected, .obj-result .dict .ant-tree-checkbox + span.ant-tree-node-selected {
+    background-color: unset;
+}
+.obj-result .dict .ant-tree-node-content-wrapper:hover, .obj-result .dict .ant-tree-checkbox + span:hover {
+    background-color: unset;
+}
+.obj-result .tensor {
+    display: flex;
+    flex-flow: column;
+    height: 100%;
+    overflow: auto;
+}
+.obj-result .tensor .tensor-nav {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--vscode-inputOption-hoverBackground, #f5f5f5);
+}
+.obj-result .tensor .tensor-view {
+    flex: 1;
+    overflow: auto;
+    height: 0;
+}
+.obj-result .tensor .tensor-title {
+    padding: 4px 0 4px 8px;
+    cursor: pointer;
+    height: 100%;
+}
+.obj-result .tensor .tensor-title:hover {
+    background: var(--vscode-inputOption-hoverBackground, #f5f5f5);
+}
+.obj-result .tensor .type-name {
+    color: #2d6ebe;
+}
+.obj-result .tensor .tensor-nav-elem {
+    cursor: pointer;
+    padding: 4px 0 4px 2px;
+    display: flex;
+    margin-left: 2px;
+    height: 100%;
+}
+.obj-result .tensor .tensor-nav-elem:hover {
+    background: var(--vscode-inputOption-hoverBackground, #f5f5f5);
+}
+.obj-result .tensor .tensor-elem {
+    font-family: MyFont, Menlo, "Ubuntu Mono", Consolas, "Dejavu Sans Mono", "Noto Sans Mono", PingFangSC, "Microsoft YaHei", monospace, Consolas, "Courier New", monospace;
+    cursor: pointer;
+    width: 100%;
+    padding: 2px 5px 2px 8px;
+}
+.obj-result .tensor .tensor-elem:hover {
+    background: var(--vscode-inputOption-hoverBackground, #f5f5f5);
+}
+.obj-result .tensor .tensor-page {
+    display: flex;
+    align-items: center;
+    border-top: 1px solid var(--vscode-inputOption-hoverBackground, #f5f5f5);
+}
+.obj-result .tensor .tensor-desc {
+    margin: 0 8px;
+    font-weight: bold;
+    line-height: 32px;
+}
+.obj-result .bottom-bar {
+    display: flex;
+    align-items: center;
+    min-height: 0px;
+    width: 100%;
+    height: 30px;
+    position: absolute;
+    bottom: 0px;
+    padding-left: 12px;
+}
+.obj-result .bottom-bar .info {
+    font-size: 16px;
+    white-space: break-spaces;
+    flex-shrink: 0;
+}
+.obj-result .bottom-bar .info .name {
+    margin-left: 8px;
+    font-weight: bold;
+}
+.obj-result .bottom-bar .actions {
+    display: flex;
+    flex-shrink: 0;
+    align-items: center;
+    margin-left: 10px;
+}
+.obj-result .bottom-bar .actions .icon-link, .obj-result .bottom-bar .actions .pause-play {
+    color: #888888;
+}
+.obj-result .bottom-bar .actions .icon-link {
+    margin-right: 10px;
+    font-size: 28px;
+}
+.obj-result .bottom-bar .actions .pause-play {
+    font-size: 20px;
+}
+.obj-result .bottom-bar-placeholder {
+    height: 30px;
+}
+.obj-result .ant-table-wrapper {
+    flex: 1;
+    overflow: auto;
+}
+.obj-result .ant-tree {
+    flex: 1;
+    overflow: auto;
+}
+.obj-result .ant-table-thead > tr > td::before {
+    content: none !important;
+}
+.obj-result .ant-table-thead > tr > th,
+.obj-result .ant-table-tbody > tr > td,
+.obj-result .ant-table tfoot > tr > th,
+.obj-result .ant-table tfoot > tr > td {
+    padding: 1px 8px;
+}
+.obj-result .ant-table-thead > tr > th,
+.obj-result .ant-table-thead > tr > td {
+    text-align: center !important;
+}
+.obj-result .ant-table.ant-table-bordered > .ant-table-container > .ant-table-content > table thead,
+.obj-result .ant-table.ant-table-bordered > .ant-table-container > .ant-table-header > table thead {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+}
+.obj-result .ant-table-wrapper .ant-table.ant-table-bordered > .ant-table-container {
+    border-top: unset;
+}
+.obj-result .ant-table-tbody > tr > td {
+    transition: none;
+}
+.obj-result .ant-table table {
+    width: unset;
+}
+.obj-result .ant-empty-normal .ant-empty-image {
+    display: none;
+}
+.obj-result.themed .default-obj {
+    color: var(--vscode-editor-foreground, #000000);
+    padding: 10px;
+    font-size: 20px;
+    word-wrap: break-word;
+}
+.obj-result.themed .tensor .tensor-elem-count {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.obj-result.themed .vector .row-head, .obj-result.themed .table .row-head, .obj-result.themed .matrix .row-head {
+    background-color: var(--vscode-sideBar-background, #eeeeee) !important;
+    border-bottom: 1px solid var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+    border-right: 1px solid var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+}
+.obj-result.themed .vector thead .type, .obj-result.themed .table thead .type, .obj-result.themed .matrix thead .type {
+    color: var(--vscode-editorGroupHeader-tabsBackground, #888888) !important;
+}
+.obj-result.themed .dict .ant-tree-show-line .ant-tree-switcher {
+    background: var(--vscode-editor-background, #ffffff);
+}
+.obj-result.themed .dict .ant-tree {
+    color: var(--vscode-editor-foreground, #000000);
+    background-color: var(--vscode-editor-background, #ffffff);
+}
+.obj-result.themed .dict .ant-tree .ant-tree-node-content-wrapper.ant-tree-node-selected {
+    background-color: unset !important;
+}
+.obj-result.themed .dict .ant-tree .ant-tree-node-content-wrapper:hover {
+    background-color: unset !important;
+}
+.obj-result.themed .bottom-bar {
+    border-top: 1px solid var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961));
+}
+.obj-result.themed .bottom-bar .info {
+    color: var(--vscode-editor-foreground, #000000);
+}
+.obj-result.themed .ant-table {
+    background-color: var(--vscode-editor-background, #ffffff) !important;
+}
+.obj-result.themed .ant-table-thead > tr > th,
+.obj-result.themed .ant-table-tbody > tr > td,
+.obj-result.themed .ant-table tfoot > tr > th,
+.obj-result.themed .ant-table tfoot > tr > td {
+    color: var(--vscode-editor-foreground, #000000);
+    border-color: var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+}
+.obj-result.themed .ant-table-thead > tr > th,
+.obj-result.themed .ant-table-thead > tr > td {
+    background-color: var(--vscode-sideBar-background, #eeeeee) !important;
+    border-color: var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+}
+.obj-result.themed .ant-table.ant-table-bordered > .ant-table-container > .ant-table-content > table,
+.obj-result.themed .ant-table.ant-table-bordered > .ant-table-container > .ant-table-header > table {
+    border-color: var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+}
+.obj-result.themed .ant-table.ant-table-bordered > .ant-table-container {
+    border-color: var(--vscode-tree-tableColumnsBorder, rgba(96, 96, 96, 0.1254901961)) !important;
+}
+.obj-result.themed .ant-table-tbody > tr.ant-table-row:hover > td,
+.obj-result.themed .ant-table-tbody > tr > td.ant-table-cell-row-hover {
+    background-color: var(--vscode-sideBar-background, #f8f8f8) !important;
+}
+.obj-result.themed .ant-table-tbody > tr.ant-table-placeholder:hover > td {
+    background-color: var(--vscode-editor-background, #ffffff) !important;
+}
+.obj-result.themed .ant-table-wrapper .ant-table-tbody > tr.ant-table-placeholder {
+    background-color: var(--vscode-editor-background, #ffffff) !important;
+}
+.obj-result.themed .ant-empty-normal {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+.obj-result.themed .ant-empty-normal .ant-empty-img-simple-path, .obj-result.themed .ant-empty-normal .ant-empty-img-simple-ellipse {
+    fill: var(--vscode-editor-background, #ffffff);
+}
+.obj-result.themed .ant-empty-normal .ant-empty-description {
+    color: var(--vscode-editor-foreground, #000000) !important;
+}
+
+.ant-modal-body .export-prompt {
+    margin-left: 112px;
+    color: red;
+}
+
+
+/** src/components/Surface.sass */
+.surface-chart {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+.surface-chart .modebar .modebar-group:last-child {
+    display: none;
+}

@@ -19,6 +19,9 @@ files:
 extraResources:
   - from: build/icon.ico
     to: build/icon.ico
+  - from: dolphindb-server
+    to: dolphindb-server
+    filter: ["**/*", "!local8848/**", "!streamlog/**", "!tempResults/**", "!traces/**", "!dolphindb.log", "!dolphindb.dos"]
 # asar 关闭：dolphindb 为 ESM 包，经动态 import() 从 asar 内加载在 Electron 中不可靠；
 # 落盘可保证 CommonJS(require) 与 ESM(import) 均按开发态正常解析。
 asar: false

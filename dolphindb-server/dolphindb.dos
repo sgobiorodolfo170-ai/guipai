@@ -1,0 +1,72 @@
+def avgRunning(mysum, mycount): mysum\mycount
+
+defg tval(x, w){
+	wavgX = wavg(x, w)
+	wavgX2 = wavg(x*x, w)
+	return wavgX/sqrt(wavgX2 - wavgX.square())
+}
+
+def wsum2(X,Y): wsum(X*X, Y)
+
+defg tvalReduce(wsumX, wsumX2, w){
+	wavgX = wsumX.sum()\w.sum()
+	wavgX2 = wsumX2.sum\w.sum()
+	return wavgX/sqrt(wavgX2 - wavgX.square())
+}
+
+def tvalRunning(wsumX, wsumX2, w){
+	wavgX = wsumX\w
+	wavgX2 = wsumX2\w
+	return wavgX/sqrt(wavgX2 - wavgX.square())
+}
+
+mapr tval(x, w){wsum(x, w), wsum2(x, w), contextSum(w, x)->tvalReduce; cumsum, cumsum, cumsum->tvalRunning}
+
+defg geometricMean(x){
+    return x.log().avg().exp()
+}
+def logAvg(x) : log(x).avg()
+defg geometricMeanReduce(logAvgs, counts) : wavg(logAvgs, counts).exp()
+def geometricMeanRunning(logAvgs, counts) : cumwavg(logAvgs, counts).exp()
+
+mapr geometricMean(x){logAvg(x), count(x) -> geometricMeanReduce; copy, copy->geometricMeanRunning}
+
+mapr distinct(x){distinct(x)->distinct}
+mapr nunique(x){distinctForNunique(x)->nunique}
+mapr nunique(x, ignoreNull){distinctForNunique(x), copy(ignoreNull)->nunique}
+mapr sum(x){sum(x)->sum; cumsum}
+mapr sum2(x){sum2(x)->sum; cumsum}
+mapr sum3(x){sum3(x)->sum; cumsum}
+mapr sum4(x){sum4(x)->sum; cumsum}
+mapr prod(x){prod(x)->prod; cumprod}
+mapr max(x){max(x)->max; cummax}
+mapr min(x){min(x)->min; cummin}
+mapr first(x){first(x)->first; first}
+mapr last(x){last(x)->last; copy}
+mapr firstNot(x){firstNot(x)->firstNot}
+mapr firstNot(x, exclude){firstNot(x, exclude)->firstNot}
+mapr lastNot(x){lastNot(x)->lastNot}
+mapr lastNot(x, exclude){lastNot(x, exclude)->lastNot}
+mapr count(x){count(x)->sum; cumsum}
+mapr size(x){size(x)->sum; cumsum}
+mapr avg(x){sum(x),count(x)->avgReduce; cumsum,cumsum->avgRunning}
+mapr mean(x){sum(x),count(x)->avgReduce; cumsum,cumsum->avgRunning}
+mapr std(x){sum(x),sum2(x),count(x)->stdReduce; cumsum,cumsum,cumsum->stdRunning}
+mapr stdp(x){sum(x),sum2(x),count(x)->stdpReduce; cumsum,cumsum,cumsum->stdpRunning}
+mapr var(x){sum(x),sum2(x),count(x)->varReduce; cumsum,cumsum,cumsum->varRunning}
+mapr varp(x){sum(x),sum2(x),count(x)->varpReduce; cumsum,cumsum,cumsum->varpRunning}
+mapr skew(x){sum(x),sum2(x),sum3(x),count(x)->skewReduce; cumsum,cumsum,cumsum,cumsum->skewRunning}
+mapr skew(x, biased){sum(x),sum2(x),sum3(x),count(x),copy(biased)->skewReduce2; cumsum,cumsum,cumsum,cumsum,copy->skewRunning2}
+mapr kurtosis(x){sum(x),sum2(x),sum3(x),sum4(x),count(x)->kurtosisReduce; cumsum,cumsum,cumsum,cumsum,cumsum->kurtosisRunning}
+mapr kurtosis(x, biased){sum(x),sum2(x),sum3(x),sum4(x),count(x),copy(biased)->kurtosisReduce2; cumsum,cumsum,cumsum,cumsum,cumsum,copy->kurtosisRunning2}
+mapr wsum(x,y){wsum(x,y)->sum; cumsum}
+mapr contextCount(x,y){contextCount(x,y)->sum; cumsum}
+mapr contextSum(x,y){contextSum(x,y)->sum; cumsum}
+mapr contextSum2(x,y){contextSum2(x,y)->sum; cumsum}
+mapr wavg(x,y){wavg(x,y),contextSum(y,x)->wavg; copy,copy->cumwavg}
+mapr covar(x,y){wsum(x,y),contextSum(x,y),contextSum(y,x),contextCount(y,x)->covarReduce; cumsum,cumsum,cumsum,cumsum->covarRunning}
+mapr covarp(x,y){wsum(x,y),contextSum(x,y),contextSum(y,x),contextCount(y,x)->covarpReduce; cumsum,cumsum,cumsum,cumsum->covarpRunning}
+mapr cov(x,y){wsum(x,y),contextSum(x,y),contextSum(y,x),contextCount(y,x)->covarReduce; cumsum,cumsum,cumsum,cumsum->covarRunning}
+mapr corr(x,y){wsum(x,y),contextSum2(x,y),contextSum(x,y),contextSum2(y,x),contextSum(y,x),contextCount(y,x)->corrReduce; cumsum,cumsum,cumsum,cumsum,cumsum,cumsum->corrRunning}
+mapr atImax(x,y){max(x),atImax(x,y)->atImax}
+mapr atImin(x,y){min(x),atImin(x,y)->atImin}

@@ -1,0 +1,4 @@
+localSite,mode
+localhost:8901:agent1,agent
+localhost:8902:dnode1,datanode
+localhost:8903:cnode1,computenode

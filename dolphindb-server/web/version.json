@@ -1,0 +1,8 @@
+{
+    "version": "v3.00.6.1",
+    "branch": "main",
+    "time": "2026.09.04 15:57:48",
+    "hash": "1a1e27",
+    "commiter": "Tianchen Fu",
+    "message": "feat: 移除 attachment_search 的 top_k 参数"
+}
