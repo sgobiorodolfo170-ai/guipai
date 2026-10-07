@@ -47,7 +47,8 @@ const DDB_TABLES = [
   { name: 'stock_limit_pool', label: '涨跌停池', dateCol: 'trade_date' },
   { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date' },
   { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date' },
-  { name: 'stock_basic', label: '股票基础信息', dateCol: null }
+  { name: 'stock_basic', label: '股票基础信息', dateCol: null },
+  { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date' }
 ]
 
 /**
@@ -75,7 +76,7 @@ router.get('/overview', async (req, res) => {
     } catch (_) { /* 取不到文件大小不影响其他数据 */ }
 
     // ---- DolphinDB：未连接时快速返回，避免每次打开总览页都等连接超时 ----
-    const ddbTables = DDB_TABLES.map(t => ({ name: t.name, label: t.label, rows: null, latestDate: null }))
+    const ddbTables = DDB_TABLES.map(t => ({ name: t.name, label: t.label, dateCol: t.dateCol, rows: null, latestDate: null }))
     const connected = ddb.isConnected()
     if (connected) {
       await Promise.all(ddbTables.map(async (t) => {
