@@ -1,11 +1,119 @@
 'use strict'
 
 const { app, BrowserWindow, Menu, shell, dialog, ipcMain } = require('electron')
+const { spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
+const net = require('net')
 const { startServer, stopServer } = require('./server')
 const ddb = require('./dolphindb/client')
 const { resolveDevServerUrl } = require('./dev-port')
+
+// ============================================================
+// DolphinDB 引擎进程管理（随包分发，自动拉起）
+// ============================================================
+
+/** 定位 DolphinDB 引擎目录 */
+function resolveDolphinDBDir() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'dolphindb-server')
+  }
+  return path.join(__dirname, '..', 'dolphindb-server')
+}
+
+/** 定位 DolphinDB 数据目录（持久化，跨更新保留） */
+function resolveDolphinDBDataDir() {
+  return path.join(app.getPath('userData'), 'dolphindb-data')
+}
+
+/** 检查端口是否已在监听（已有 DolphinDB 实例则跳过启动） */
+function isPortListening(port) {
+  return new Promise((resolve) => {
+    const sock = net.createServer()
+    sock.once('error', () => resolve(true))
+    sock.once('listening', () => { sock.close(() => resolve(false)) })
+    sock.listen(port, '127.0.0.1')
+  })
+}
+
+/** 等待端口就绪 */
+function waitForPort(port, timeoutMs = 20000) {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    const check = () => {
+      const sock = new net.Socket()
+      sock.setTimeout(1000)
+      sock.once('connect', () => { sock.destroy(); resolve(true) })
+      sock.once('error', () => {
+        sock.destroy()
+        if (Date.now() - start < timeoutMs) setTimeout(check, 500)
+        else resolve(false)
+      })
+      sock.once('timeout', () => {
+        sock.destroy()
+        if (Date.now() - start < timeoutMs) setTimeout(check, 500)
+        else resolve(false)
+      })
+      sock.connect(port, '127.0.0.1')
+    }
+    check()
+  })
+}
+
+let dolphindbProcess = null
+
+/** 启动 DolphinDB 引擎（如果未在运行） */
+async function startDolphinDB() {
+  const DDB_PORT = Number(process.env.DOLPHINDB_PORT) || 8848
+
+  // 端口已在监听 → 外部实例已运行，跳过
+  if (await isPortListening(DDB_PORT)) {
+    console.log('[dolphindb] 端口 8848 已在监听，跳过引擎启动（使用现有实例）')
+    return
+  }
+
+  const engineDir = resolveDolphinDBDir()
+  const exePath = path.join(engineDir, 'dolphindb.exe')
+
+  if (!fs.existsSync(exePath)) {
+    console.warn('[dolphindb] 引擎未找到:', exePath, '（将使用外部 DolphinDB）')
+    return
+  }
+
+  const dataDir = resolveDolphinDBDataDir()
+  try { fs.mkdirSync(dataDir, { recursive: true }) } catch (_) {}
+
+  // cwd 必须设为引擎目录（dolphindb.cfg/dolphindb.lic/dolphindb.dos/DLL 都在此）
+  console.log('[dolphindb] 启动引擎:', exePath, '工作目录:', engineDir)
+  dolphindbProcess = spawn(exePath, ['-console', '0'], {
+    cwd: engineDir,
+    stdio: 'ignore',
+    windowsHide: true
+  })
+
+  dolphindbProcess.on('exit', (code) => {
+    console.log('[dolphindb] 引擎进程退出 code=', code)
+    dolphindbProcess = null
+  })
+
+  const ready = await waitForPort(DDB_PORT, 20000)
+  if (ready) {
+    console.log('[dolphindb] 引擎已就绪 (port 8848)')
+  } else {
+    console.warn('[dolphindb] 引擎启动超时，将尝试连接外部实例')
+  }
+}
+
+/** 停止 DolphinDB 引擎 */
+function stopDolphinDB() {
+  if (dolphindbProcess) {
+    try { dolphindbProcess.kill() } catch (_) {}
+    dolphindbProcess = null
+    console.log('[dolphindb] 引擎进程已停止')
+  }
+}
+
+// ============================================================
 
 process.on('uncaughtException', (err) => {
   const logDir = path.join(app.getPath('userData'), 'logs')
@@ -97,40 +205,31 @@ const template = [
 app.whenReady().then(async () => {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 
-  // ===== DolphinDB 通信桥（渲染进程通过 ipcMain 调用 dolphindb npm 包）=====
-  // 架构：渲染进程 ──ipc──> 主进程 ──WebSocket──> 独立 DolphinDB 进程
+  // ===== DolphinDB 引擎启动（随包分发，自动拉起）=====
+  await startDolphinDB()
+
+  // ===== DolphinDB 通信桥 =====
   ipcMain.handle('ddb:status', async () => ({ connected: ddb.isConnected() }))
   ipcMain.handle('ddb:execute', async (_e, script) => {
-    try {
-      return { ok: true, data: await ddb.execute(script) }
-    } catch (e) {
-      return { ok: false, error: e.message }
-    }
+    try { return { ok: true, data: await ddb.execute(script) } }
+    catch (e) { return { ok: false, error: e.message } }
   })
   ipcMain.handle('ddb:invoke', async (_e, func, args) => {
-    try {
-      return { ok: true, data: await ddb.invoke(func, args) }
-    } catch (e) {
-      return { ok: false, error: e.message }
-    }
+    try { return { ok: true, data: await ddb.invoke(func, args) } }
+    catch (e) { return { ok: false, error: e.message } }
   })
 
   const dataDir = path.join(app.getPath('userData'), 'data')
   try {
     await startServer(SERVER_PORT, dataDir)
   } catch (e) {
-    // 注意：dialog.showErrorBox 是同步阻塞 API，会冻结整个主进程事件循环
-    // （连带内嵌 Express 不再响应任何请求，表现为"接口全部卡住"），因此改用异步弹窗 + 日志。
     console.error('[main] 本地服务启动失败:', e.message)
     dialog.showMessageBox({ type: 'error', title: '龟派', message: '本地服务启动失败', detail: e.message })
   }
 
-  // 连接 DolphinDB（best-effort：不可达不阻断启动）
-  // 这里绝不能用 dialog.showErrorBox —— 那是同步阻塞调用，未启动 DolphinDB 时每次启动都会弹框，
-  // 用户不点掉就会把主进程（含内嵌 Express）整个冻结，症状就是"所有接口无响应/像是卡住了"。
-  // 行情数据已有腾讯/同花顺/Tushare 多源兜底，DolphinDB 不可用时功能正常降级，故仅记录日志。
+  // 连接 DolphinDB（引擎已由 startDolphinDB 拉起）
   ddb.connect().catch((e) => {
-    console.warn('[main] DolphinDB 连接失败（行情将走多源兜底，不影响使用）:', e.message)
+    console.warn('[main] DolphinDB 连接失败:', e.message)
   })
 
   createWindow()
@@ -147,4 +246,5 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   stopServer()
   ddb.disconnect()
+  stopDolphinDB()
 })
