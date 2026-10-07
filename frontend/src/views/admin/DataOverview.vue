@@ -115,12 +115,6 @@ onMounted(fetchOverview)
         <el-table-column label="行数" width="110" align="right">
           <template #default="{ row }">{{ row.rows?.toLocaleString() }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="130" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.legacy" size="small" type="info">已迁移至 DolphinDB</el-tag>
-            <el-tag v-else size="small" type="success">使用中</el-tag>
-          </template>
-        </el-table-column>
       </el-table>
     </el-card>
 

@@ -5,10 +5,10 @@
  *
  * 覆盖两个存储：
  *   - sql.js (tradeinsight.db)：业务元数据（用户/自选/笔记/模板/模拟训练/同步状态）。
- *     stock_limit_pool / stock_zh_index_daily / plate_market_quotation 三张表是
- *     旧方案残留（数据已迁至 DolphinDB），正常应为 0 行，展示时标记 legacy 便于识别。
+ *     已迁移至 DolphinDB 的表（stock_limit_pool / stock_zh_index_daily / plate_market_quotation）
+ *     不在 sql.js 表单中展示，仅在 DolphinDB 表单显示。
  *   - DolphinDB (dfs://tradeinsight)：时序行情（daily_k / stock_limit_pool /
- *     plate_market_quotation / stock_zh_index_daily / stock_basic）。
+ *     plate_market_quotation / stock_zh_index_daily / stock_basic / tick）。
  *     未连接时返回 connected:false + 各表计数为 null，由前端展示提示，不影响 sql.js 部分。
  */
 
@@ -22,7 +22,10 @@ const router = express.Router()
 const ok = (res, data, msg = '成功') => res.json({ code: 200, msg, data })
 const errMsg = (res, msg) => res.json({ code: 500, msg })
 
-/** sql.js 各表的中文说明（表名 → 用途），用于总览页展示 */
+/** 已迁移至 DolphinDB 的表——不在 sql.js 表单中展示 */
+const SQLITE_MIGRATED_TABLES = new Set(['stock_limit_pool', 'stock_zh_index_daily', 'plate_market_quotation'])
+
+/** sql.js 各表的中文说明（表名 → 用途），仅含未迁移的表 */
 const SQLITE_TABLE_LABELS = {
   user: '用户',
   watchlist: '自选股',
@@ -34,12 +37,8 @@ const SQLITE_TABLE_LABELS = {
   template_category: '模板分类',
   sim_single_training: '模拟训练记录',
   data_sync_status: '收盘同步状态',
-  stock_basic: '股票基础信息(本地库)',
-  stock_limit_pool: '涨跌停池(旧表,已迁至DolphinDB)',
-  stock_zh_index_daily: '指数日K(旧表,已迁至DolphinDB)',
-  plate_market_quotation: '板块行情(旧表,已迁至DolphinDB)'
+  stock_basic: '股票基础信息(本地库)'
 }
-const SQLITE_LEGACY_TABLES = new Set(['stock_limit_pool', 'stock_zh_index_daily', 'plate_market_quotation'])
 
 /** DolphinDB 各表及日期列（stock_basic 无日期列） */
 const DDB_TABLES = [
@@ -63,11 +62,13 @@ router.get('/overview', async (req, res) => {
     const tables = db.prepare(
       `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
     ).all()
-    const sqliteTables = tables.map(({ name }) => {
-      let rows = 0
-      try { rows = db.prepare(`SELECT COUNT(*) AS c FROM "${name}"`).get()?.c || 0 } catch (_) { /* 单表失败不阻断整体 */ }
-      return { name, label: SQLITE_TABLE_LABELS[name] || name, rows, legacy: SQLITE_LEGACY_TABLES.has(name) }
-    })
+    const sqliteTables = tables
+      .filter(({ name }) => !SQLITE_MIGRATED_TABLES.has(name))
+      .map(({ name }) => {
+        let rows = 0
+        try { rows = db.prepare(`SELECT COUNT(*) AS c FROM "${name}"`).get()?.c || 0 } catch (_) { /* 单表失败不阻断整体 */ }
+        return { name, label: SQLITE_TABLE_LABELS[name] || name, rows }
+      })
     // tradeinsight.db 文件大小（sql.js 是内存库+定时落盘，文件可能略滞后于内存）
     let fileSize = 0
     try {
