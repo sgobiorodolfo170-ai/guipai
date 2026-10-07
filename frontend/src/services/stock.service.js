@@ -74,35 +74,6 @@ export const getStockHistory = (code, params = {}) => {
 }
 
 /**
- * 获取股票技术指标
- * @param {string} code 股票代码
- * @param {Object} params 查询参数
- * @returns {Promise}
- */
-export const getStockIndicators = (code, params = {}) => {
-  return api.get(`/stocks/${code}/indicators`, { params })
-}
-
-/**
- * 获取股票财务数据
- * @param {string} code 股票代码
- * @returns {Promise}
- */
-export const getStockFinancial = (code) => {
-  return api.get(`/stocks/${code}/financial`)
-}
-
-/**
- * 获取股票新闻
- * @param {string} code 股票代码
- * @param {Object} params 查询参数
- * @returns {Promise}
- */
-export const getStockNews = (code, params = {}) => {
-  return api.get(`/stocks/${code}/news`, { params })
-}
-
-/**
  * 获取市场概况
  * @returns {Promise}
  */

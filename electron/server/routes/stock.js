@@ -302,13 +302,4 @@ router.get('/:code/history', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 技术指标 (暂无数据源，返回空)
-router.get('/:code/indicators', (req, res) => ok(res, []))
-
-// 财务数据 (暂无数据源，返回空)
-router.get('/:code/financial', (req, res) => ok(res, {}))
-
-// 新闻 (暂无数据源，返回空)
-router.get('/:code/news', (req, res) => ok(res, []))
-
 module.exports = router

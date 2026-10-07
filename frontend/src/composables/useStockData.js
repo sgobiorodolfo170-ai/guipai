@@ -42,10 +42,11 @@ export function useStockData(code = null) {
     try {
       loading.value = true
       error.value = null
-      
+
       const response = await stockStore.fetchStockDetail(stockCode)
-      stockData.value = response
-      
+      // 拦截器返回信封 {code,data,msg}，真实股票对象在 response.data
+      stockData.value = response.data || response
+
       return response
     } catch (err) {
       error.value = err.message || '获取股票数据失败'

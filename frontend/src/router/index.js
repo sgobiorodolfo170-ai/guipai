@@ -4,7 +4,6 @@ import {createRouter, createWebHashHistory} from 'vue-router'
 const Dashboard = () => import('@/views/dashboard/Dashboard.vue')
 const StockList = () => import('@/views/stock/StockList.vue')
 const StockDetail = () => import('@/views/stock/StockDetail.vue')
-const StockAnalysis = () => import('@/views/stock/StockAnalysis.vue')
 const Watchlist = () => import('@/views/watchlist/Watchlist.vue')
 const NoteList = () => import('@/views/note/NoteList.vue')
 const NoteDetail = () => import('@/views/note/NoteDetail.vue')
@@ -112,15 +111,6 @@ const routes = [
                 component: StockDetail,
                 meta: {
                     title: '股票详情',
-                    hideInMenu: true
-                }
-            },
-            {
-                path: ':code/analysis',
-                name: 'StockAnalysis',
-                component: StockAnalysis,
-                meta: {
-                    title: '股票分析',
                     hideInMenu: true
                 }
             }

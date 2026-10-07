@@ -170,36 +170,6 @@ export const useStockStore = defineStore('stock', () => {
     }
   }
 
-  // 获取技术指标
-  const fetchStockIndicators = async (code, params = {}) => {
-    try {
-      const response = await stockService.getStockIndicators(code, params)
-      return response
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // 获取财务数据
-  const fetchStockFinancial = async (code) => {
-    try {
-      const response = await stockService.getStockFinancial(code)
-      return response
-    } catch (error) {
-      throw error
-    }
-  }
-
-  // 获取股票新闻
-  const fetchStockNews = async (code, params = {}) => {
-    try {
-      const response = await stockService.getStockNews(code, params)
-      return response
-    } catch (error) {
-      throw error
-    }
-  }
-
   // 清空搜索结果
   const clearSearchResults = () => {
     searchResults.value = []
@@ -242,9 +212,6 @@ export const useStockStore = defineStore('stock', () => {
     fetchMarketSummary,
     syncStockList,
     fetchStockHistory,
-    fetchStockIndicators,
-    fetchStockFinancial,
-    fetchStockNews,
     clearSearchResults,
     setCurrentStock,
     getRealtimePrice

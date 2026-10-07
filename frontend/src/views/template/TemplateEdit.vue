@@ -174,11 +174,6 @@ const insertVariable = (key) => {
     })
   }
 }
-
-// 预览模板
-const previewTemplate = () => {
-  ElMessage.info('预览功能开发中...')
-}
 </script>
 
 <template>
@@ -189,7 +184,6 @@ const previewTemplate = () => {
       </h1>
       <div class="page-actions">
         <el-button @click="handleCancel">取消</el-button>
-        <el-button @click="previewTemplate">预览</el-button>
         <el-button type="primary" @click="handleSave" :loading="loading">
           保存
         </el-button>
