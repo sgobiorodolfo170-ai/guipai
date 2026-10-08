@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, computed } from 'vue'
+import { onMounted, computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useStockData } from '@/composables/useStockData'
 import { useWatchlistStore } from '@/store/watchlist.store'
+import KLineChart from '@/components/common/KLineChart.vue'
 
 const route = useRoute()
 const watchlistStore = useWatchlistStore()
@@ -17,6 +18,10 @@ const {
   changeStatus,
   fetchStockDetail
 } = useStockData(stockCode.value)
+
+// K线图状态
+const klinePeriod = ref('daily')
+const klineAdjust = ref('qfq')
 
 onMounted(() => {
   if (stockCode.value) {
@@ -94,8 +99,23 @@ const isInWatchlist = computed(() => {
           </el-col>
         </el-row>
       </el-card>
+
+      <!-- K线图 -->
+      <el-card class="kline-card">
+        <KLineChart
+          :stock-code="stockCode"
+          v-model:period="klinePeriod"
+          v-model:adjust="klineAdjust"
+          :show-period-switcher="true"
+          :show-adjust-switcher="true"
+          :show-drawing-tools="true"
+          :show-indicator-bar="true"
+          :show-volume="true"
+          height="600px"
+        />
+      </el-card>
     </div>
-    
+
     <!-- 空状态 -->
     <el-empty v-else-if="!loading" description="股票信息不存在" />
   </div>
@@ -113,6 +133,14 @@ const isInWatchlist = computed(() => {
 
 .stock-info-card {
   margin-bottom: 20px;
+}
+
+.kline-card {
+  margin-bottom: 20px;
+}
+
+.kline-card :deep(.el-card__body) {
+  padding: 0;
 }
 
 .stock-header {

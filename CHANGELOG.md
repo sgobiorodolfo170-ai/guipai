@@ -2,6 +2,7 @@
 
 | 版本号 | 日期 | 摘要 |
 | --- | --- | --- |
+| v1.6.0 | 2026-10-08 | K线图全面替换为 KLineCharts v10：新建 KLineChart.vue 通用组件（内置 MA/MACD/KDJ/RSI/BIAS/BOLL 等指标一键切换、画线工具栏水平线/趋势线/平行通道/斐波那契/矩形/文字、日周月K周期切换、前/后复权切换、十字光标价格标签、红涨绿跌A股主题、左滑分页加载更早数据）；删除旧 ECharts KLine.vue；StockDetail.vue 新增完整K线图（含周期/复权/画线/指标）；Watchlist.vue 新增图表 Drawer（懒加载 mini K线）；Dashboard.vue 新增指数K线 Tab（上证/深证/创业板）；Review.vue mini K线迁移到 KLineChart（组件自行拉数据，移除手动 fetch）；RandomStockPractice.vue 实战训练迁移（customDataLoader 渐进揭示：set​DataLoader 返回 [0,currentIndex] 切片 + resetData 每步重触发 getBars）；后端新增 GET /api/market/index-kline（调用已有 aktools.getIndexDailyData，东财→腾讯多源兜底）；新增 utils/klineData.js 数据转换工具；stock.service.js 新增 getIndexKLine |
 | v1.5.0 | 2026-10-05 | K线断点续传：DolphinDB 已有区间只补缺口（起点回退 7 天重叠对账防复权锚点漂移），增量拉取受限时返回库内部分数据并注明恢复时长；上游多源全部失败时聚合各源原因并携带 retryAfterSec，路由层统一返回 code=429"请约 N 秒后重试"；前端拦截器对 429 用 warning 提示（6 秒展示）；Tushare 池新增恢复倒计时查询 |
 | v1.4.0 | 2026-10-05 | Tushare 数据源升级为多账号池：设置页支持多账号增删改/启停/单账号连通性测试/调用统计展示；tushare.js 新增账号池（最久未用优先轮询 + 按错误类型故障转移：无效token停用、限频冷却60s、网络失败冷却10s、无权限换号不冷却、接口错误直接抛出）；settings.js 数组化存储并自动迁移旧单 token；aktools 涨跌停/跌停/日K 兜底改走账号池 |
 | v1.3.1 | 2026-10-05 | 修复收盘同步页操作按钮 500：api.post(url, null) 被 axios 序列化为 "null"，body-parser 严格模式拒绝非 { 或 [ 开头的 JSON 体（Unexpected token 'n'）→ 改发 {} 空对象体 |

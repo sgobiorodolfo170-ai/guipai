@@ -212,12 +212,16 @@
 
               <KLine
                   v-if="stock.showKline"
+                  :key="stock.code"
+                  :stock-code="stock.code"
                   class="mini-kline"
-                  :data="stock.klineData"
-                  :showLegendData="false"
-                  :showVolume="true"
-                  :showMA="false"
-                  :style="{ height: '250px', width: '100%' }"
+                  :show-period-switcher="false"
+                  :show-adjust-switcher="false"
+                  :show-drawing-tools="false"
+                  :show-indicator-bar="false"
+                  :show-volume="true"
+                  :ma-periods="[]"
+                  height="250px"
               />
               <div class="stock-info">
                 <span class="volume">成交额: {{ formatAmount(stock.amount) }}</span>
@@ -281,14 +285,13 @@
 </template>
 
 <script setup>
-import {computed, nextTick, onMounted, ref} from 'vue'
+import {computed, onMounted, ref} from 'vue'
 import {useRouter} from 'vue-router'
 import {useReview} from '@/composables/useReview'
 import * as echarts from 'echarts'
-import {getStockHistory, getStockLimitYesterday} from "@/services/aktools.service.js";
 import SliderFilter from "@/components/common/SliderFilter.vue";
 import StockDateUtil from "@/utils/StockDateUtil.js";
-import KLine from "@/components/common/KLine.vue";
+import KLine from "@/components/common/KLineChart.vue";
 import HistoryDataModal from "@/components/common/HistoryDataModal.vue";
 
 const router = useRouter()
@@ -304,9 +307,7 @@ const {
   limitDownData,
   formatAmount,
   getTradeDates,
-  transformKlineData,
   yesterdayStockCategories,
-  getYearMonthDay,
   loadCachedReview,
   fetchAndCacheReview,
 } = useReview()
@@ -508,40 +509,6 @@ const displayData = computed(() => {
 // 切换K线显示
 const toggleKline = async (stock) => {
   stock.showKline = !stock.showKline
-  if (stock.showKline) {
-    // 数据未加载时请求
-    if (!stock.klineData) {
-      try {
-        let params = {
-          symbol: stock.code,
-          period: 'daily',
-          startDate: tradeDates.value.startDate,
-          endDate: tradeDates.value.endDate,
-          adjust: 'qfq'
-        }
-        let data = await getStockHistory(params)
-
-        // const {dates, prices} = transformKlineData(data.data);
-
-
-        // stock.klinePrices = prices
-        // 渲染图表
-
-        await nextTick()
-        stock.klineData = getYearMonthDay(data.data)
-        await nextTick()
-        // initChart(stock, `kline_${stock.code}`)
-      } catch (err) {
-        console.error('K线加载失败', err)
-      }
-    } else {
-      // 数据已存在时直接渲染
-      await nextTick()
-      // if (chartInstances[stock.code]) {
-      //   initChart(stock, `kline_${stock.code}`)
-      // }
-    }
-  }
 }
 //
 // // 初始化图表

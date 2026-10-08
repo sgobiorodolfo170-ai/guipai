@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useStockStore } from '@/store/stock.store'
 import { useWatchlistStore } from '@/store/watchlist.store'
 import { useNoteStore } from '@/store/note.store'
+import KLineChart from '@/components/common/KLineChart.vue'
 
 const stockStore = useStockStore()
 const watchlistStore = useWatchlistStore()
@@ -87,6 +88,14 @@ const formatPercent = (percent) => {
   const sign = percent > 0 ? '+' : ''
   return `${sign}${percent.toFixed(2)}%`
 }
+
+// 指数K线
+const indexTabs = [
+  { code: '000001', name: '上证指数' },
+  { code: '399001', name: '深证成指' },
+  { code: '399006', name: '创业板指' }
+]
+const activeIndex = ref('000001')
 </script>
 
 <template>
@@ -140,6 +149,35 @@ const formatPercent = (percent) => {
               </div>
             </el-col>
           </el-row>
+        </el-card>
+      </el-col>
+      
+      <!-- 指数K线 -->
+      <el-col :span="24" class="mb-20">
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <span>指数K线</span>
+              <el-radio-group v-model="activeIndex" size="small">
+                <el-radio-button
+                  v-for="idx in indexTabs"
+                  :key="idx.code"
+                  :value="idx.code"
+                >{{ idx.name }}</el-radio-button>
+              </el-radio-group>
+            </div>
+          </template>
+          <KLineChart
+            :key="activeIndex"
+            :stock-code="activeIndex"
+            :is-index="true"
+            :show-period-switcher="true"
+            :show-adjust-switcher="false"
+            :show-drawing-tools="false"
+            :show-indicator-bar="true"
+            :show-volume="true"
+            height="400px"
+          />
         </el-card>
       </el-col>
       
