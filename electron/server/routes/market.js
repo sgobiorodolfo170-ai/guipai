@@ -48,4 +48,43 @@ router.get('/hot', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
+// 指数K线数据
+// 调用 aktools.getIndexDailyData（东财 push2his → 腾讯 fqkline 兜底），返回与个股K线相同结构。
+// 支持 period=daily|weekly|monthly，adjust 参数对指数无意义（指数不除权），保留兼容。
+router.get('/index-kline', async (req, res) => {
+  try {
+    const { code, period = 'daily', startDate, endDate } = req.query
+    if (!code) return errMsg(res, '缺少 code 参数')
+
+    const cacheKey = `market:index-kline:${code}:${period}:${startDate || ''}:${endDate || ''}`
+    const cached = cache.get(cacheKey)
+    if (cached) return ok(res, cached, '成功(缓存)')
+
+    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const effEnd = (endDate || '').replace(/-/g, '') || today
+    const raw = await aktools.getIndexDailyData({
+      symbol: code,
+      period,
+      start_date: (startDate || '').replace(/-/g, ''),
+      end_date: effEnd
+    })
+
+    // 中文键 → snake_case，与 routes/stock.js KLINE_ROW_MAP 保持一致
+    const kline = (raw || []).map(m => ({
+      date: m['日期'], open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
+      high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
+      volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
+      turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
+    }))
+
+    if (kline.length) cache.set(cacheKey, kline, 300)
+    ok(res, kline)
+  } catch (e) {
+    if (e.retryAfterSec) {
+      return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    }
+    errMsg(res, e.message)
+  }
+})
+
 module.exports = router

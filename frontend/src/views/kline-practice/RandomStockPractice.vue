@@ -21,18 +21,15 @@
             <!--            </template>-->
             <KLine
                 ref="klineRef"
-                :data="chartData"
-                :style="{ height: '710px', width: '100%' }"
-                :mas="[5, 10, 30, 120]"
-                :showMA="true"
-                :showVolume="true"
-                :showLegendData="true"
-                :tooltip-display-items="{
-                  kline: true,    // 显示K线核心数据
-                  volume: true,  // 关闭成交量显示
-                  indicator: true // 显示技术指标
-                }"
-                :showIndicatorButtons="true"
+                :stock-code="stockInfo.code || 'PRACTICE'"
+                :custom-data-loader="customDataLoader"
+                :show-period-switcher="false"
+                :show-adjust-switcher="false"
+                :show-drawing-tools="true"
+                :show-indicator-bar="true"
+                :show-volume="true"
+                :ma-periods="[5, 10, 30, 120]"
+                height="710px"
             />
           </el-card>
         </div>
@@ -351,10 +348,11 @@
 </template>
 
 <script setup>
-import {ref, onMounted, onUnmounted, computed} from 'vue'
+import {ref, onMounted, onUnmounted, computed, nextTick} from 'vue'
 import {ElMessage} from 'element-plus'
 import {getRandomKlineData, submitTrainingResult, getLocalUser} from '@/services/kline.service'
-import KLine from '@/components/common/KLine.vue'
+import KLine from '@/components/common/KLineChart.vue'
+import {toKLineDataList} from '@/utils/klineData'
 
 // 常量定义
 const TRAINING_START_INDEX = 200 // 训练开始的索引位置
@@ -368,9 +366,25 @@ const stockInfo = ref({})
 const klineData = ref([])
 const currentIndex = ref(0)
 const visibleData = ref([])
-const chartData = ref([])
 // 训练的天数
 const trainingDays = ref(50)
+
+// 自定义 dataLoader：渐进揭示——只返回 [0, currentIndex] 的数据切片。
+// KLineCharts v10 无 applyNewData，改用 setDataLoader + resetData 重触发 getBars。
+// 闭包捕获 ref 对象，每次调用时读取最新值，保证换股/下一天后数据同步。
+const customDataLoader = {
+  getBars: ({ callback }) => {
+    const visible = klineData.value.slice(0, currentIndex.value + 1)
+    callback(toKLineDataList(visible), { forward: false, backward: false })
+  }
+}
+
+// 触发图表重载数据（渐进揭示每一步后调用）
+const updateChart = () => {
+  nextTick(() => {
+    klineRef.value?.resetData()
+  })
+}
 
 //储初始资金
 const initialCapital = ref(0)
@@ -455,7 +469,7 @@ const fetchRandomKlineData = async () => {
       tradeProgress.value.current = TRAINING_START_INDEX
       updateVisibleData()
       updateTradingState()
-      updateChartData()
+      updateChart()
       isTrainingCompleted.value = false
       // 保存初始资金
       initialCapital.value = tradingState.value.availableFunds + tradingState.value.positionValue
@@ -475,29 +489,6 @@ const fetchRandomKlineData = async () => {
 // 更新可见数据
 const updateVisibleData = () => {
   visibleData.value = klineData.value.slice(0, currentIndex.value + 1)
-}
-
-// 更新图表数据
-const updateChartData = () => {
-  if (visibleData.value.length === 0) return
-
-  // 转换数据格式为KLine组件需要的格式
-  chartData.value = visibleData.value.map(item => {
-    // 计算涨跌幅
-    const prevClose = item.preclose || item.open
-    const changePercent = ((item.close - prevClose) / prevClose) * 100
-
-    return [
-      item.date,
-      item.open,
-      item.close,
-      item.low,
-      item.high,
-      item.amount, // 成交金额
-      changePercent
-    ]
-  })
-
 }
 
 // 更新交易状态
@@ -697,7 +688,7 @@ const handleNextStep = () => {
   tradeProgress.value.current++
   updateVisibleData()
   updateTradingState()
-  updateChartData()
+  updateChart()
 }
 
 // 开始训练

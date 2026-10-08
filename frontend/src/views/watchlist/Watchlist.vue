@@ -4,6 +4,7 @@ import { useWatchlistStore } from '@/store/watchlist.store'
 import { useStockStore } from '@/store/stock.store'
 import { formatPrice, formatPercent, formatChange, getChangeStatus } from '@/utils/stock'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import KLineChart from '@/components/common/KLineChart.vue'
 
 const watchlistStore = useWatchlistStore()
 const stockStore = useStockStore()
@@ -106,6 +107,15 @@ const getChangeClass = (change) => {
 
 const getRealTimeData = (code) => {
   return stockStore.realtimeData[code] || {}
+}
+
+// K线图 Drawer
+const chartDrawer = ref(false)
+const chartStock = ref({ code: '', name: '' })
+
+const showStockChart = (row) => {
+  chartStock.value = { code: row.code, name: row.name }
+  chartDrawer.value = true
 }
 </script>
 
@@ -210,8 +220,16 @@ const getRealTimeData = (code) => {
         </el-table-column>
         <el-table-column prop="note" label="备注" />
         <el-table-column prop="addTime" label="添加时间" width="150" />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
+            <el-button
+              type="primary"
+              size="small"
+              @click="showStockChart(row)"
+            >
+              <el-icon><TrendCharts /></el-icon>
+              图表
+            </el-button>
             <el-button
               type="danger"
               size="small"
@@ -248,6 +266,25 @@ const getRealTimeData = (code) => {
         <el-button type="primary" @click="createGroup">确定</el-button>
       </template>
     </el-dialog>
+
+    <!-- K线图 Drawer -->
+    <el-drawer
+      v-model="chartDrawer"
+      :title="`${chartStock.name} (${chartStock.code})`"
+      size="70%"
+      direction="rtl"
+    >
+      <KLineChart
+        v-if="chartDrawer && chartStock.code"
+        :stock-code="chartStock.code"
+        :show-period-switcher="true"
+        :show-adjust-switcher="true"
+        :show-drawing-tools="true"
+        :show-indicator-bar="true"
+        :show-volume="true"
+        height="100%"
+      />
+    </el-drawer>
   </div>
 </template>
 

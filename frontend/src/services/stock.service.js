@@ -10,6 +10,53 @@ export const getStockList = (params = {}) => {
 }
 
 /**
+ * 获取股票元数据（上市日/ST/停牌/股本等，来自本地库）
+ * @param {string} code 股票代码
+ * @returns {Promise}
+ */
+export const getStockMeta = (code) => {
+  return api.get(`/stocks/${code}/meta`)
+}
+
+/**
+ * 获取股票财报（最近 N 季，来自本地库）
+ * @param {string} code 股票代码
+ * @param {number} n 季数
+ * @returns {Promise}
+ */
+export const getStockFinancial = (code, n = 8) => {
+  return api.get(`/stocks/${code}/financial`, { params: { n } })
+}
+
+/**
+ * 获取股票估值指标快照（PE/PB/PS/PCF/股息率，来自本地库）
+ * @param {string} code 股票代码
+ * @returns {Promise}
+ */
+export const getStockIndicator = (code) => {
+  return api.get(`/stocks/${code}/indicator`)
+}
+
+/**
+ * 同步单只股票财报入库
+ * @param {string} code 股票代码
+ * @param {number} n 季数
+ * @returns {Promise}
+ */
+export const syncStockFinancial = (code, n = 8) => {
+  return api.post(`/stocks/${code}/financial/sync`, null, { params: { n }, timeout: 60000, skipRetry: true })
+}
+
+/**
+ * 同步单只股票估值指标入库
+ * @param {string} code 股票代码
+ * @returns {Promise}
+ */
+export const syncStockIndicator = (code) => {
+  return api.post(`/stocks/${code}/indicator/sync`, null, { timeout: 60000, skipRetry: true })
+}
+
+/**
  * 获取股票基础信息状态（总数量 + 各市场数量）
  * @returns {Promise}
  */
@@ -88,4 +135,14 @@ export const getMarketOverview = () => {
  */
 export const getHotStocks = (params = {}) => {
   return api.get('/market/hot', { params })
+}
+
+/**
+ * 获取指数K线数据
+ * @param {string} code 指数代码（如 000001 上证 / 399001 深证 / 399006 创业板）
+ * @param {Object} params 查询参数 { period, startDate, endDate }
+ * @returns {Promise}
+ */
+export const getIndexKLine = (code, params = {}) => {
+  return api.get('/market/index-kline', { params: { code, ...params } })
 }
