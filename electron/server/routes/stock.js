@@ -6,6 +6,7 @@ const cache = require('../cache')
 const klineRepo = require('../../dolphindb/kline-repository')
 const ddb = require('../../dolphindb/client')
 const { getDb } = require('../db')
+const akshareSource = require('../sources/akshare')
 
 const router = express.Router()
 
@@ -34,20 +35,44 @@ function classifyMarket(code) {
   return '其他'
 }
 
-/** 把全市场股票基础信息批量 upsert 进 stock_basic（库内数据只由显式同步动作维护）。 */
+/** 把全市场股票基础信息批量 upsert 进 stock_basic（库内数据只由显式同步动作维护）。
+ *  stocks 项可携带元数据：total_shares/float_shares/is_st/is_suspended（spot 派生）；
+ *  list_date/delist_date 由 upsertListDates 单独补（akshare 批量，异步）。 */
 function upsertStockBasics(stocks) {
   if (!stocks || !stocks.length) return 0
   const db = getDb()
   const now = nowLocal()
   db.transaction(() => {
     for (const s of stocks) {
-      db.prepare(`INSERT INTO stock_basic (code, name, market, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(code) DO UPDATE SET name=excluded.name, market=excluded.market, updated_at=excluded.updated_at`)
-        .run(s.code, s.name, classifyMarket(s.code), now)
+      db.prepare(`INSERT INTO stock_basic (code, name, market, is_st, is_suspended, total_shares, float_shares, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(code) DO UPDATE SET name=excluded.name, market=excluded.market,
+          is_st=excluded.is_st, is_suspended=excluded.is_suspended,
+          total_shares=excluded.total_shares, float_shares=excluded.float_shares,
+          updated_at=excluded.updated_at`)
+        .run(s.code, s.name, classifyMarket(s.code),
+          s.is_st ?? 0, s.is_suspended ?? 0, s.total_shares ?? null, s.float_shares ?? null, now)
     }
   })
   return stocks.length
+}
+
+/** 用 akshare 批量元数据（上市日）补 stock_basic.list_date/delist_date。
+ *  仅更新已存在的行（不新增）；akshare 不可用时静默跳过。 */
+function upsertListDates(metaList) {
+  if (!metaList || !metaList.length) return 0
+  const db = getDb()
+  const now = nowLocal()
+  let n = 0
+  const upd = db.prepare(`UPDATE stock_basic SET list_date=?, delist_date=?, updated_at=? WHERE code=?`)
+  db.transaction(() => {
+    for (const m of metaList) {
+      if (!m.code || (!m.list_date && !m.delist_date)) continue
+      const r = upd.run(m.list_date || null, m.delist_date || null, now, m.code)
+      if (r.changes > 0) n++
+    }
+  })
+  return n
 }
 
 /** 汇总 stock_basic 各市场数量（股票列表页分类 tabs 用）。 */
@@ -133,18 +158,42 @@ router.get('/basic/status', (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 同步股票基础信息入库：从行情源一次性拉取全市场列表写入本地库。
-// 属显式数据维护动作（首次使用/定期刷新时由用户触发），页面读取不直连行情源。
+// 同步股票基础信息入库：从行情源一次性拉取全市场列表，派生元数据写入本地库。
+// spot 派生：总/流通股本=市值÷价、is_st=名称含ST、is_suspended=价=0（无需 akshare）。
+// akshare 可用时追加：上市/退市日（批量，沪/深/北交所 stock_info_*_name_code）。
 router.post('/basic/sync', async (req, res) => {
   try {
     const raw = await aktools.getStockSpot()
     const list = (raw || [])
       .filter(s => s['代码'])
-      .map(s => ({ code: s['代码'], name: s['名称'] }))
+      .map(s => {
+        const price = Number(s['最新价']) || 0
+        const tmv = Number(s['总市值']) || 0
+        const fmv = Number(s['流通市值']) || 0
+        return {
+          code: s['代码'], name: s['名称'],
+          total_shares: price > 0 ? (tmv / price) : null,     // 总市值÷价 = 总股本
+          float_shares: price > 0 ? (fmv / price) : null,     // 流通市值÷价 = 流通股本
+          is_st: /ST/.test(String(s['名称'])) ? 1 : 0,         // 名称含 ST/*ST
+          is_suspended: price === 0 ? 1 : 0                   // 价=0 视为停牌
+        }
+      })
     if (!list.length) return errMsg(res, '行情源返回空列表，未写入')
     const written = upsertStockBasics(list)
-    ok(res, { ...stockBasicStats(), updatedAt: nowLocal() },
-      `同步完成，共 ${written} 只`)
+
+    // 上市/退市日（akshare 批量，best-effort：不可用则跳过，元数据其余列已写入）
+    let listDateUpdated = 0
+    try {
+      if (akshareSource.available()) {
+        const meta = await akshareSource.fetchers.stockMeta()
+        listDateUpdated = upsertListDates(meta)
+      }
+    } catch (e) {
+      console.warn('[stock] list_date 同步跳过（akshare 不可用）:', e.message)
+    }
+
+    ok(res, { ...stockBasicStats(), updatedAt: nowLocal(), listDateUpdated },
+      `同步完成，共 ${written} 只（上市日补 ${listDateUpdated} 条）`)
   } catch (e) { errMsg(res, e.message) }
 })
 
@@ -175,11 +224,15 @@ router.get('/realtime', async (req, res) => {
   try {
     const { codes } = req.query
     const codeList = codes ? codes.split(',') : []
-    const list = await getSpotList()
-    const results = codeList.length
-      ? list.filter(s => codeList.includes(s.code))
-      : list.slice(0, 50)
-    ok(res, results)
+    if (codeList.length) {
+      // 有具体 codes 时直接按代码取快照，避免拉全市场（TDX 模式下 5-10s vs <1s）
+      const raw = await aktools.getStockSpot(codeList)
+      const list = (raw || []).map(mapSpotItem).filter(s => s.code)
+      ok(res, list)
+    } else {
+      const list = await getSpotList()
+      ok(res, list.slice(0, 50))
+    }
   } catch (e) { errMsg(res, e.message) }
 })
 
@@ -192,6 +245,12 @@ router.get('/:code', async (req, res) => {
     if (stock) {
       ok(res, { ...stock, market: 'A股' })
     } else {
+      // 全市场缓存未命中（TDX 模式下常见），按单只代码直接取快照
+      try {
+        const raw = await aktools.getStockSpot(code)
+        const stock2 = (raw || []).map(mapSpotItem).find(s => s.code === code)
+        if (stock2) return ok(res, { ...stock2, market: 'A股' })
+      } catch (_) { /* 降级到 getStockInfo */ }
       try {
         const info = await aktools.getStockInfo(code)
         ok(res, { code, name: info?.[0]?.['股票简称'] || code, price: 0, market: 'A股' })
@@ -214,6 +273,105 @@ const KLINE_ROW_MAP = (m) => ({
   high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
   volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
   turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
+})
+
+// 股票元数据（详情页用）：上市日/退市日/ST/停牌/总流通股本，来自本地 stock_basic
+router.get('/:code/meta', (req, res) => {
+  try {
+    const { code } = req.params
+    const row = getDb().prepare(
+      `SELECT code, name, market, list_date, delist_date, is_st, is_suspended,
+              total_shares, float_shares, updated_at
+       FROM stock_basic WHERE code = ?`
+    ).get(code)
+    if (!row) return errMsg(res, '本地库无该股票元数据，请先同步股票列表')
+    ok(res, row)
+  } catch (e) { errMsg(res, e.message) }
+})
+
+// 股票财报（详情页用）：最近 N 季三大表+指标，来自本地 stock_financial
+router.get('/:code/financial', (req, res) => {
+  try {
+    const { code } = req.params
+    const n = Math.min(Math.max(Number(req.query.n) || 8, 1), 40)
+    const rows = getDb().prepare(
+      `SELECT code, report_date, revenue, net_profit, net_profit_excl_nonrec,
+              total_assets, net_assets, debt_ratio, operating_cashflow,
+              gross_margin, roe, roa
+       FROM stock_financial WHERE code = ? ORDER BY report_date DESC LIMIT ?`
+    ).all(code, n)
+    ok(res, rows)
+  } catch (e) { errMsg(res, e.message) }
+})
+
+// 同步单只股票财报入库（akshare 三大表+指标合并，最近 N 季）
+// 属逐只数据维护动作（详情页/数据拉取页触发）；akshare 不可用时返回提示。
+router.post('/:code/financial/sync', async (req, res) => {
+  try {
+    const { code } = req.params
+    const n = Math.min(Math.max(Number(req.query.n) || 8, 1), 40)
+    if (!akshareSource.available()) return errMsg(res, 'AKShare 服务未就绪，无法拉取财报（请到设置页启用）')
+    const rows = await akshareSource.fetchers.financial({ symbol: code, n })
+    if (!rows || !rows.length) return errMsg(res, 'akshare 财报返回空')
+    const db = getDb()
+    const now = nowLocal()
+    const upsert = db.prepare(`INSERT INTO stock_financial
+      (code, report_date, revenue, net_profit, net_profit_excl_nonrec, total_assets, net_assets,
+       debt_ratio, operating_cashflow, gross_margin, roe, roa, updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(code, report_date) DO UPDATE SET
+        revenue=excluded.revenue, net_profit=excluded.net_profit,
+        net_profit_excl_nonrec=excluded.net_profit_excl_nonrec,
+        total_assets=excluded.total_assets, net_assets=excluded.net_assets,
+        debt_ratio=excluded.debt_ratio, operating_cashflow=excluded.operating_cashflow,
+        gross_margin=excluded.gross_margin, roe=excluded.roe, roa=excluded.roa, updated_at=excluded.updated_at`)
+    let written = 0
+    db.transaction(() => {
+      for (const r of rows) {
+        if (!r.report_date) continue
+        upsert.run(code, r.report_date, r.revenue ?? null, r.net_profit ?? null,
+          r.net_profit_excl_nonrec ?? null, r.total_assets ?? null, r.net_assets ?? null,
+          r.debt_ratio ?? null, r.operating_cashflow ?? null, r.gross_margin ?? null,
+          r.roe ?? null, r.roa ?? null, now)
+        written++
+      }
+    })
+    ok(res, { written, n: rows.length }, `财报同步完成，写入 ${written} 季`)
+  } catch (e) { errMsg(res, e.message) }
+})
+
+// 股票估值指标快照（详情页用）：PE/PB/PS/PCF/股息率，来自本地 stock_indicator
+router.get('/:code/indicator', (req, res) => {
+  try {
+    const { code } = req.params
+    const row = getDb().prepare(
+      `SELECT code, trade_date, pe_ttm, pb, ps, pcf, dividend_yield, updated_at
+       FROM stock_indicator WHERE code = ?`
+    ).get(code)
+    ok(res, row || null)
+  } catch (e) { errMsg(res, e.message) }
+})
+
+// 同步单只股票估值指标入库（akshare 百度估值 5 指标取最新）
+router.post('/:code/indicator/sync', async (req, res) => {
+  try {
+    const { code } = req.params
+    if (!akshareSource.available()) return errMsg(res, 'AKShare 服务未就绪，无法拉取估值指标（请到设置页启用）')
+    const r = await akshareSource.fetchers.indicator({ symbol: code })
+    if (!r || !r.trade_date) return errMsg(res, 'akshare 估值指标返回空')
+    const db = getDb()
+    const now = nowLocal()
+    db.prepare(`INSERT INTO stock_indicator
+      (code, trade_date, pe_ttm, pb, ps, pcf, dividend_yield, updated_at)
+      VALUES (?,?,?,?,?,?,?,?)
+      ON CONFLICT(code) DO UPDATE SET
+        trade_date=excluded.trade_date, pe_ttm=excluded.pe_ttm, pb=excluded.pb,
+        ps=excluded.ps, pcf=excluded.pcf, dividend_yield=excluded.dividend_yield,
+        updated_at=excluded.updated_at`)
+      .run(code, r.trade_date, r.pe_ttm ?? null, r.pb ?? null, r.ps ?? null,
+        r.pcf ?? null, r.dividend_yield ?? null, now)
+    ok(res, r, '估值指标同步完成')
+  } catch (e) { errMsg(res, e.message) }
 })
 
 // K线数据 —— 断点续传：DolphinDB 已有部分只补缺口，不重复拉全量。

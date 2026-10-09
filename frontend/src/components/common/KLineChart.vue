@@ -239,7 +239,7 @@ function buildDataLoader() {
             startDate,
             endDate: end
           })
-          const bars = toKLineDataList(resp || [])
+          const bars = toKLineDataList(resp?.data || [])
           callback(bars, { forward: true, backward: false })
         } else if (type === 'forward') {
           // 向左分页：以当前最早时间戳为终点往前拉
@@ -253,7 +253,7 @@ function buildDataLoader() {
             startDate: startDateStr,
             endDate: endDateStr
           })
-          const bars = toKLineDataList(resp || [])
+          const bars = toKLineDataList(resp?.data || [])
           // 去掉与已有数据重叠的最后一根
           const filtered = bars.filter(b => b.timestamp < timestamp)
           callback(filtered, { forward: filtered.length >= 200, backward: false })
