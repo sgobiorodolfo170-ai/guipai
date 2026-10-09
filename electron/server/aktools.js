@@ -924,17 +924,67 @@ function parseThsIndustryRows(html) {
   return out
 }
 
+// ---- 多源调度注册 ----
+// 把现有"东财→腾讯→Tushare"复合链整体注册为 main 源（capabilities 全集），
+// 再注册新浪/网易为兜底层。公开函数改为委托 registry.dispatch，
+// 由调度器统一做空结果判定（软封空数组 → 试下一源）与健康度记忆。
+// 不改动各复合函数内部逻辑：main 返回空/抛错时，调度器自动切新浪→网易，
+// 等价于把"软封空结果"的兜底从函数内上提到调度层，且新浪无腾讯的冷启动开销。
+const registry = require('./sources/registry')
+registry.registerSource({
+  name: 'main',
+  capabilities: ['kline', 'spot', 'indexDaily', 'indexSpot', 'minute', 'limitPool', 'dropPool', 'ztPrev', 'industry', 'info', 'holding'],
+  fetchers: {
+    kline: getStockHistory,
+    spot: getStockSpot,
+    indexDaily: getIndexDailyData,
+    indexSpot: getStockIndexSpot,
+    minute: getStockMinute,
+    limitPool: getStockLimitPool,
+    dropPool: getStockDropPool,
+    ztPrev: getZtPoolPrevious,
+    industry: getStockIndustry,
+    info: getStockInfo,
+    holding: getStockHolding
+  },
+  available: () => true
+})
+registry.registerSource(require('./sources/sina'))
+// 通达信本地数据源（Path A：纯 Node 读 .day 文件，离线兜底）。
+// 直接读通达信安装目录 vipdoc\<sh|sz|bj>\lday\*.day，标准 32 字节格式，
+// 零网络零 Python，9527 只历史日K。提为 kline 首选源（registry PRIORITY 已调）。
+// 协议路径（tdx_proto，连公网 7709 取实时/分钟）因 pytdx/tdxpy 数据命令返回 None 暂缓，待协议兼容解决。
+registry.registerSource(require('./sources/tdx_local'))
+// 通达信量化 HTTP 源（Path B：tqcenter 模式，17709）。
+// 经运行中已登录 TdxW 取数，实时+全市场+K线/财报/涨跌停。提为 kline/spot/info/limitPool 首选。
+// main.js 启动时探测 17709 可达 → setAvailable(true)；TdxW 未运行时 available=false 自动降级。
+const tdxQuantSource = require('./sources/tdx_quant')
+registry.registerSource(tdxQuantSource)
+// 通达信 tqs 源（tqserver/tdxaidata，免客户端，Key 鉴权直连后端）。
+// 经 Python 桥 /tdxs_* 端点调用 tdxaidata.tqs。无需 TdxW 运行。提为 kline 最首位。
+const tdxServerSource = require('./sources/tdx_server')
+registry.registerSource(tdxServerSource)
+// 网易财经历史K线端点(chddata.html)已废弃（502/DNS失效），暂不注册；
+// 文件保留待 Phase 3 经 AKShare Python 桥接网易数据时复活。
+// registry.registerSource(require('./sources/netease'))
+// AKShare Python 桥接（Phase 3）：main.js spawn aktools_server.exe 后调 setAvailable(true) 激活；
+// 未激活时 available()=false，调度器跳过，零开销。
+const akshareSource = require('./sources/akshare')
+registry.registerSource(akshareSource)
+
 module.exports = {
-  getStockSpot,
-  getStockHistory,
-  getStockMinute,
-  getStockInfo,
-  getStockHolding,
-  getStockLimitPool,
-  getStockDropPool,
-  getStockIndustry,
-  getZtPoolPrevious,
-  getStockIndexSpot,
-  getIndexDailyData,
-  warmupUpstream
+  getStockSpot: (codes) => registry.dispatch('spot', codes),
+  getStockHistory: (p) => registry.dispatch('kline', p),
+  getStockMinute: (p) => registry.dispatch('minute', p),
+  getStockInfo: (s) => registry.dispatch('info', s),
+  getStockHolding: (p) => registry.dispatch('holding', p),
+  getStockLimitPool: (d) => registry.dispatch('limitPool', d),
+  getStockDropPool: (d) => registry.dispatch('dropPool', d),
+  getStockIndustry: () => registry.dispatch('industry'),
+  getZtPoolPrevious: (d) => registry.dispatch('ztPrev', d),
+  getStockIndexSpot: (s) => registry.dispatch('indexSpot', s),
+  getIndexDailyData: (p) => registry.dispatch('indexDaily', p),
+  warmupUpstream,
+  // 暴露调度器供数据总览页查询各源健康度
+  getSourceHealth: registry.getHealthStatus
 }
