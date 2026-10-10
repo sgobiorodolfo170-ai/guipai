@@ -129,7 +129,95 @@ const statusOf = (row) => {
   return { text: '正常', type: 'success' }
 }
 
-onMounted(fetchList)
+// ---- AKShare Python 桥接 ----
+const ak = ref({ config: { enabled: false, pythonPath: '', port: 8889 }, python: {}, running: false })
+const akLoading = ref(false)
+const akInstalling = ref(false)
+const akTesting = ref(false)
+
+const fetchAk = async () => {
+  akLoading.value = true
+  try {
+    const res = await api.get('/settings/akshare')
+    ak.value = res.data || {}
+  } catch (e) {
+    ElMessage.error('获取 AKShare 配置失败: ' + e.message)
+  } finally {
+    akLoading.value = false
+  }
+}
+
+const toggleAk = async (enabled) => {
+  try {
+    await api.put('/settings/akshare', { enabled })
+    if (enabled) {
+      ElMessage.success('已启用。服务将在应用重启时自动拉起（aktools-server.exe）')
+    } else {
+      await api.post('/settings/akshare/stop')
+      ElMessage.success('已停用')
+    }
+    await fetchAk()
+  } catch (e) {
+    ElMessage.error('操作失败: ' + e.message)
+  }
+}
+
+const saveAkPath = async () => {
+  try {
+    await api.put('/settings/akshare', { pythonPath: ak.value.config.pythonPath })
+    ElMessage.success('已保存')
+    await fetchAk()
+  } catch (e) {
+    ElMessage.error('保存失败: ' + e.message)
+  }
+}
+
+const testAk = async () => {
+  akTesting.value = true
+  try {
+    const res = await api.post('/settings/akshare/test')
+    ElMessage.success(res.msg || '服务正常')
+  } catch (e) {
+    ElMessage.error('探活失败: ' + e.message)
+  } finally {
+    akTesting.value = false
+  }
+}
+
+const installAk = async () => {
+  try {
+    await ElMessageBox.confirm(
+      '将通过 pip 安装 akshare + flask（约 1-3 分钟，下载 pandas/numpy 等依赖）。是否继续？',
+      '安装 AKShare 依赖',
+      { confirmButtonText: '开始安装', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  akInstalling.value = true
+  try {
+    // 流式响应：axios 不便逐块读，这里用 fetch 读流
+    const resp = await fetch('/api/settings/akshare/install', { method: 'POST' })
+    const reader = resp.body.getReader()
+    const dec = new TextDecoder()
+    let last = ''
+    let done = false
+    while (!done) {
+      const { value, done: d } = await reader.read()
+      done = d
+      if (value) last = dec.decode(value)
+    }
+    ElMessage.success(last.includes('安装完成') ? '安装完成' : '安装流程结束')
+    await fetchAk()
+  } catch (e) {
+    ElMessage.error('安装失败: ' + e.message)
+  } finally {
+    akInstalling.value = false
+  }
+}
+
+onMounted(() => {
+  fetchList()
+  fetchAk()
+})
 </script>
 
 <template>
@@ -220,6 +308,62 @@ onMounted(fetchList)
       </div>
     </el-card>
 
+    <!-- AKShare Python 桥接数据源 -->
+    <el-card class="setting-card" shadow="hover" v-loading="akLoading">
+      <template #header>
+        <div class="card-header">
+          <span>AKShare Python 数据源（末级兜底）</span>
+          <el-tag :type="ak.running ? 'success' : ak.config.enabled ? 'warning' : 'info'" size="small">
+            {{ ak.running ? '服务运行中' : ak.config.enabled ? '已启用(待启动)' : '未启用' }}
+          </el-tag>
+        </div>
+      </template>
+
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        东财/新浪均失败时，由 AKShare（Python）作为末级兜底取数；尤其补强涨跌停池/昨日涨停（此前仅东财+Tushare）。
+        打包版内置 aktools-server.exe 自包含；开发态需 pip install akshare flask 或构建 exe。
+      </el-alert>
+
+      <el-descriptions :column="2" border size="small" class="mb-12">
+        <el-descriptions-item label="Python">
+          <span v-if="ak.python?.pythonExe">{{ ak.python.pythonExe }} · {{ ak.python.pythonVersion }}</span>
+          <span v-else class="err-text">未检测到 Python</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="akshare">
+          <el-tag v-if="ak.python?.akshareVersion" type="success" size="small">{{ ak.python.akshareVersion }}</el-tag>
+          <el-tag v-else type="danger" size="small">未安装</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="服务端口">{{ ak.config.port }}</el-descriptions-item>
+        <el-descriptions-item label="服务状态">
+          <el-tag :type="ak.running ? 'success' : 'info'" size="small">{{ ak.running ? '运行中' : '未运行' }}</el-tag>
+        </el-descriptions-item>
+      </el-descriptions>
+
+      <el-form :inline="true" class="add-form">
+        <el-form-item label="启用">
+          <el-switch v-model="ak.config.enabled" @change="toggleAk" />
+        </el-form-item>
+        <el-form-item label="Python 路径">
+          <el-input v-model="ak.config.pythonPath" placeholder="留空自动探测 python" style="width: 240px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button size="small" @click="saveAkPath">保存路径</el-button>
+          <el-button size="small" :loading="akTesting" :disabled="!ak.running" @click="testAk">探活</el-button>
+          <el-button size="small" type="primary" plain :loading="akInstalling" :disabled="!ak.python?.pythonExe" @click="installAk">
+            pip 安装 akshare
+          </el-button>
+        </el-form-item>
+      </el-form>
+
+      <div class="tips" v-if="ak.python?.akshareError">
+        <p class="err-text">akshare 未安装：{{ ak.python.akshareError }}</p>
+        <p>点上方「pip 安装 akshare」自动安装，或手动：<code>pip install akshare flask</code></p>
+      </div>
+      <div class="tips" v-else>
+        <p>启用后，应用启动时自动拉起 aktools-server（端口 {{ ak.config.port }}），失败静默降级不影响其他源。</p>
+      </div>
+    </el-card>
+
     <!-- 编辑对话框 -->
     <el-dialog v-model="editVisible" title="编辑账号" width="480px">
       <el-form label-width="80px">
@@ -246,6 +390,7 @@ onMounted(fetchList)
 .setting-card { margin-top: 10px; }
 .card-header { display: flex; align-items: center; justify-content: space-between; }
 .add-form { margin-bottom: 4px; }
+.mb-12 { margin-bottom: 12px; }
 .stat-ok { color: #67c23a; font-weight: 600; }
 .stat-fail { color: #f56c6c; font-weight: 600; }
 .err-text { color: #f56c6c; font-size: 12px; }

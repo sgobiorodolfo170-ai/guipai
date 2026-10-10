@@ -22,6 +22,12 @@ extraResources:
   - from: dolphindb-server
     to: dolphindb-server
     filter: ["**/*", "!local8848/**", "!streamlog/**", "!tempResults/**", "!traces/**", "!dolphindb.log", "!dolphindb.dos"]
+  # AKShare Python 桥接服务 exe（PyInstaller 产物，自包含 akshare/flask）。
+  # 仅打包 dist 产物，不打包源码/构建中间件（build/、.spec、requirements）。
+  # 开发态未构建时此目录不存在，extraResources 会跳过，不影响打包（akshare 源降级不可用）。
+  - from: python/aktools_server/dist/aktools-server
+    to: aktools-server
+    filter: ["**/*"]
 # asar 关闭：dolphindb 为 ESM 包，经动态 import() 从 asar 内加载在 Electron 中不可靠；
 # 落盘可保证 CommonJS(require) 与 ESM(import) 均按开发态正常解析。
 asar: false

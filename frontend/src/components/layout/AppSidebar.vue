@@ -32,6 +32,10 @@ const menuItems = [
       {
         index: '/stocks',
         title: '股票列表'
+      },
+      {
+        index: '/stocks/boards',
+        title: '行业板块'
       }
     ]
   },

@@ -138,6 +138,23 @@ export const getHotStocks = (params = {}) => {
 }
 
 /**
+ * 获取行业板块列表（新浪源，含 label/板块名/涨跌幅/公司家数/领涨股）
+ * @returns {Promise}
+ */
+export const getBoards = () => {
+  return api.get('/boards')
+}
+
+/**
+ * 获取板块成分股
+ * @param {string} label 板块标识（来自 getBoards 的 label 字段，如 new_blhy）
+ * @returns {Promise}
+ */
+export const getBoardCons = (label) => {
+  return api.get(`/boards/${label}/cons`)
+}
+
+/**
  * 获取指数K线数据
  * @param {string} code 指数代码（如 000001 上证 / 399001 深证 / 399006 创业板）
  * @param {Object} params 查询参数 { period, startDate, endDate }

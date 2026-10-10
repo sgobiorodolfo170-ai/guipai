@@ -251,14 +251,27 @@ async function ensureSchema(dbPath) {
     `  db.createPartitionedTable(t, \`stock_zh_index_daily, \`trade_date)\n` +
     `}`
   )
-  // 个股日K表（前复权 qfq）
-// volume 为 LONG：行情源成交量（手）带小数，写入前由 kline-repository.toInt() 取整，
-// 避免 "cannot be converted to a BigInt"。改列类型需重建分区表，故统一按 LONG 落库。
+  // 个股日K表（前复权 qfq，查询用）
+  // volume 为 LONG：行情源成交量（手）带小数，写入前由 kline-repository.toInt() 取整，
+  // 避免 "cannot be converted to a BigInt"。改列类型需重建分区表，故统一按 LONG 落库。
   await execute(
     `if (!existsTable("${dbPath}", "daily_k")) {\n` +
     `  t = table(1:0, \`symbol\`trade_date\`open\`close\`high\`low\`volume\`amount\`turnover_rate\`pct_chg\`amplitude\`create_time, ` +
     `[SYMBOL, DATE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, LONG, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
     `  db.createPartitionedTable(t, \`daily_k, \`trade_date)\n` +
+    `}`
+  )
+  // 原始不复权日K表（daily_k_raw）—— 通达信 .day 导入的只读基线，不可删除/修改
+  // 1998-01-05 ~ 2026-10-08，9482只股票，~2427万条，硬编入项目
+  // 注意：此表在 dfs://tradeinsight_raw 独立库中（分区从1990起，支持历史数据）
+  const rawBounds = []
+  for (let y = 1990; y <= endYear; y++) rawBounds.push(`${y}.01.01`)
+  await execute(
+    `if (!existsDatabase("dfs://tradeinsight_raw")) { database("dfs://tradeinsight_raw", RANGE, [${rawBounds.join(',')}]) }\n` +
+    `if (!existsTable("dfs://tradeinsight_raw", "daily_k_raw")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`open\`close\`high\`low\`volume\`amount, ` +
+    `[SYMBOL, DATE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, LONG, DOUBLE]);\n` +
+    `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`daily_k_raw, \`trade_date)\n` +
     `}`
   )
   // 股票基础信息（维度表，不分区）

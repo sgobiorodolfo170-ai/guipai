@@ -106,6 +106,14 @@ const routes = [
                 }
             },
             {
+                path: 'boards',
+                name: 'StockBoards',
+                component: () => import('@/views/stock/StockBoards.vue'),
+                meta: {
+                    title: '行业板块'
+                }
+            },
+            {
                 path: ':code',
                 name: 'StockDetail',
                 component: StockDetail,

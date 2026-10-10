@@ -19,6 +19,7 @@ const lastRefreshedAt = ref('')
 const sqliteTables = computed(() => data.value?.sqlite?.tables || [])
 const ddbTables = computed(() => data.value?.dolphindb?.tables || [])
 const ddbConnected = computed(() => !!data.value?.dolphindb?.connected)
+const sources = computed(() => data.value?.sources || [])
 
 const sqliteTotalRows = computed(() => sqliteTables.value.reduce((s, t) => s + (t.rows || 0), 0))
 const ddbTotalRows = computed(() => ddbTables.value.reduce((s, t) => s + (t.rows || 0), 0))
@@ -106,20 +107,50 @@ onMounted(fetchOverview)
       <template #header>
         <div class="card-header">
           <span>业务数据库（sql.js · tradeinsight.db）</span>
-          <span class="table-count">共 {{ sqliteTables.length }} 张表 / {{ sqliteTotalRows }} 行</span>
+          <span class="table-count">共 {{ sqliteTables.length }} 张表 / {{ sqliteTotalRows }} 行 · 展开行查看字段定义</span>
         </div>
       </template>
       <el-table :data="sqliteTables" size="small" border>
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div v-if="row.fields" class="field-block">
+              <div class="field-title">字段定义（{{ row.fields.length }} 个）<span v-if="row.coverage" class="dim-text"> · 非空填充覆盖</span></div>
+              <el-table :data="row.fields" size="small" border class="field-sub">
+                <el-table-column prop="column" label="字段" width="180" />
+                <el-table-column prop="label" label="含义" width="140" />
+                <el-table-column label="说明" min-width="160">
+                  <template #default="{ row: f }">
+                    <span class="dim-text">{{ f.desc || '-' }}</span>
+                    <span v-if="f.source" class="dim-text"> · {{ f.source }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column v-if="row.coverage" label="非空数" width="110" align="right">
+                  <template #default="{ row: f }">
+                    <span v-if="row.coverage[f.column] != null">{{ row.coverage[f.column]?.toLocaleString() }} / {{ row.rows?.toLocaleString() }}</span>
+                    <span v-else class="dim-text">-</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <span v-else class="dim-text">该表未登记字段定义</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="label" label="用途" min-width="160" />
         <el-table-column prop="name" label="表名" min-width="180" />
         <el-table-column label="行数" width="110" align="right">
           <template #default="{ row }">{{ row.rows?.toLocaleString() }}</template>
         </el-table-column>
+        <el-table-column label="字段" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.fields" size="small" type="info">{{ row.fields.length }}</el-tag>
+            <span v-else class="dim-text">-</span>
+          </template>
+        </el-table-column>
       </el-table>
     </el-card>
 
     <!-- DolphinDB 表 -->
-    <el-card>
+    <el-card class="mb-16">
       <template #header>
         <div class="card-header">
           <span>时序行情库（DolphinDB · dfs://tradeinsight）</span>
@@ -127,6 +158,24 @@ onMounted(fetchOverview)
         </div>
       </template>
       <el-table :data="ddbTables" size="small" border>
+        <el-table-column type="expand">
+          <template #default="{ row }">
+            <div v-if="row.fields" class="field-block">
+              <div class="field-title">字段定义（{{ row.fields.length }} 个）</div>
+              <el-table :data="row.fields" size="small" border class="field-sub">
+                <el-table-column prop="column" label="字段" width="180" />
+                <el-table-column prop="label" label="含义" width="140" />
+                <el-table-column label="说明" min-width="160">
+                  <template #default="{ row: f }">
+                    <span class="dim-text">{{ f.desc || '-' }}</span>
+                    <span v-if="f.source" class="dim-text"> · {{ f.source }}</span>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <span v-else class="dim-text">该表未登记字段定义</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="label" label="用途" min-width="160" />
         <el-table-column prop="name" label="表名" min-width="180" />
         <el-table-column label="行数" width="120" align="right">
@@ -138,6 +187,12 @@ onMounted(fetchOverview)
         <el-table-column label="最新交易日" width="130">
           <template #default="{ row }">{{ row.latestDate || '-' }}</template>
         </el-table-column>
+        <el-table-column label="字段" width="70" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.fields" size="small" type="info">{{ row.fields.length }}</el-tag>
+            <span v-else class="dim-text">-</span>
+          </template>
+        </el-table-column>
         <el-table-column label="备注" min-width="140">
           <template #default="{ row }">
             <span v-if="row.error" class="err-text">{{ row.error }}</span>
@@ -146,6 +201,51 @@ onMounted(fetchOverview)
           </template>
         </el-table-column>
       </el-table>
+    </el-card>
+
+    <!-- 数据源健康度（置于最末） -->
+    <el-card>
+      <template #header>
+        <div class="card-header">
+          <span>行情数据源（多源互补）</span>
+          <span class="table-count">共 {{ sources.length }} 个源</span>
+        </div>
+      </template>
+      <el-table :data="sources" size="small" border>
+        <el-table-column prop="name" label="源" width="120">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.name === 'main' ? 'primary' : row.name === 'sina' ? 'success' : 'warning'">
+              {{ row.name === 'main' ? '东财·腾讯·Tushare' : row.name === 'sina' ? '新浪' : row.name === 'netease' ? '网易' : row.name }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="!row.available ? 'info' : row.healthy ? 'success' : 'danger'">
+              {{ !row.available ? '不可用' : row.healthy ? '正常' : `冷却${row.cooldownLeftSec}s` }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="覆盖数据" min-width="180">
+          <template #default="{ row }">
+            <el-tag v-for="c in row.capabilities" :key="c" size="small" class="cap-tag">{{ c }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="成功/失败" width="120" align="right">
+          <template #default="{ row }">
+            <span style="color:#67c23a">{{ row.ok }}</span> / <span style="color:#f56c6c">{{ row.fail }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="最近错误" min-width="200">
+          <template #default="{ row }">
+            <span v-if="row.lastError" class="err-text">{{ row.lastError }}</span>
+            <span v-else class="dim-text">-</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <div class="dim-text" style="margin-top:8px;font-size:12px">
+        主源(东财·腾讯·Tushare)未命中时自动切换新浪→网易；连续失败3次的源进入30s冷却。空结果不记失败（可能是真无数据）。
+      </div>
     </el-card>
   </div>
 </template>
@@ -158,4 +258,9 @@ onMounted(fetchOverview)
 .table-count { color: #86909c; font-size: 13px; }
 .err-text { color: #f56c6c; font-size: 12px; }
 .dim-text { color: #86909c; font-size: 12px; }
+.cap-tag { margin-right: 4px; }
+.field-block { padding: 8px 12px; }
+.field-title { font-size: 12px; color: #606266; margin-bottom: 6px; font-weight: 600; }
+.field-sub { background: var(--el-fill-color-lighter); }
+.field-sub :deep(.el-table__cell) { padding: 4px 0; }
 </style>

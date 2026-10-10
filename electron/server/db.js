@@ -59,6 +59,28 @@ function persist() {
   }
 }
 
+/**
+ * stock_basic 列迁移：旧库建表时无元数据列，此处按 pragma 检查补列。
+ * SQLite 无 ADD COLUMN IF NOT EXISTS，必须逐列探测后 ALTER。
+ * 新列默认允许 NULL，不破坏已有数据。
+ */
+function migrateStockBasicColumns(db) {
+  const cols = new Set(db.prepare(`PRAGMA table_info(stock_basic)`).all().map(r => r.name))
+  const additions = [
+    { name: 'list_date', def: 'TEXT' },
+    { name: 'delist_date', def: 'TEXT' },
+    { name: 'is_st', def: 'INTEGER DEFAULT 0' },
+    { name: 'is_suspended', def: 'INTEGER DEFAULT 0' },
+    { name: 'total_shares', def: 'REAL' },
+    { name: 'float_shares', def: 'REAL' }
+  ]
+  for (const c of additions) {
+    if (!cols.has(c.name)) {
+      db.exec(`ALTER TABLE stock_basic ADD COLUMN ${c.name} ${c.def}`)
+    }
+  }
+}
+
 function scheduleSave() {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
@@ -221,10 +243,38 @@ async function initDb(dataDir) {
       code TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       market TEXT NOT NULL,
+      list_date TEXT,
+      delist_date TEXT,
+      is_st INTEGER DEFAULT 0,
+      is_suspended INTEGER DEFAULT 0,
+      total_shares REAL,
+      float_shares REAL,
       updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_sb_market ON stock_basic(market);
+    CREATE TABLE IF NOT EXISTS stock_financial (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL, report_date TEXT NOT NULL,
+      revenue REAL, net_profit REAL, net_profit_excl_nonrec REAL,
+      total_assets REAL, net_assets REAL, debt_ratio REAL,
+      operating_cashflow REAL,
+      gross_margin REAL, roe REAL, roa REAL,
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(code, report_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_sf_code_date ON stock_financial(code, report_date);
+    CREATE TABLE IF NOT EXISTS stock_indicator (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      code TEXT NOT NULL UNIQUE,
+      trade_date TEXT,
+      pe_ttm REAL, pb REAL, ps REAL, pcf REAL, dividend_yield REAL,
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_si_code ON stock_indicator(code);
   `)
+
+  // ---- stock_basic 列迁移：旧库已建表无新列时补列（SQLite 无 ADD COLUMN IF NOT EXISTS）----
+  migrateStockBasicColumns(db)
 
   persist()
 
