@@ -7,6 +7,10 @@ const fs = require('fs')
 const net = require('net')
 const { startServer, stopServer } = require('./server')
 const ddb = require('./dolphindb/client')
+const settings = require('./server/settings')
+const akshareSource = require('./server/sources/akshare')
+const tdxQuantSource = require('./server/sources/tdx_quant')
+const tdxServerSource = require('./server/sources/tdx_server')
 const { resolveDevServerUrl } = require('./dev-port')
 
 // ============================================================
@@ -114,6 +118,171 @@ function stopDolphinDB() {
 }
 
 // ============================================================
+// AKShare Python 桥接服务进程管理（镜像 DolphinDB 模式）
+// ============================================================
+
+/** 定位 AKShare 服务：优先打包 exe，次选开发态已构建 exe，最后开发态直跑 server.py */
+function resolveAkshareServer() {
+  // 1) 打包态 exe
+  if (app.isPackaged) {
+    const exe = path.join(process.resourcesPath, 'aktools-server', 'aktools-server.exe')
+    if (fs.existsSync(exe)) return { type: 'exe', exe }
+  }
+  // 2) 开发态已构建 exe（npm run build:akshare-server 产物）
+  const devExe = path.join(__dirname, '..', 'python', 'aktools_server', 'dist', 'aktools-server', 'aktools-server.exe')
+  if (fs.existsSync(devExe)) return { type: 'exe', exe: devExe }
+  // 3) 开发态直跑 server.py（需 dev 机 pip install akshare flask）
+  const py = path.join(__dirname, '..', 'python', 'aktools_server', 'server.py')
+  if (fs.existsSync(py)) return { type: 'py', script: py }
+  return null
+}
+
+/** 定位 Python 解释器：settings 配置优先，否则探测 python / python3 */
+function resolvePythonExe() {
+  const cfg = settings.getAkshareConfig()
+  if (cfg.pythonPath && fs.existsSync(cfg.pythonPath)) return cfg.pythonPath
+  // 同步探测：spawnSync 快速判断是否存在（不阻塞主流程）
+  try {
+    const { spawnSync } = require('child_process')
+    for (const c of ['python', 'python3']) {
+      const r = spawnSync(c, ['--version'], { windowsHide: true, timeout: 3000 })
+      if (r.status === 0) return c
+    }
+  } catch (_) { /* 探测失败走兜底 */ }
+  return 'python'
+}
+
+let akshareProcess = null
+
+/** 启动 AKShare 服务（设置启用时）。失败静默置 unavailable，不阻断启动。 */
+async function startAkshareServer() {
+  if (!settings.isAkshareEnabled()) {
+    console.log('[akshare] 未启用，跳过')
+    return
+  }
+  const cfg = settings.getAkshareConfig()
+  const port = cfg.port || 8889
+
+  if (await isPortListening(port)) {
+    console.log(`[akshare] 端口 ${port} 已在监听，复用现有实例`)
+    akshareSource.setAvailable(true, port)
+    return
+  }
+
+  const target = resolveAkshareServer()
+  if (!target) {
+    console.warn('[akshare] 未找到 server.py 或已构建 exe，跳过（开发态需 pip install akshare flask）')
+    return
+  }
+
+  try {
+    if (target.type === 'exe') {
+      console.log('[akshare] 启动 exe:', target.exe)
+      akshareProcess = spawn(target.exe, ['--port', String(port)], {
+        cwd: path.dirname(target.exe),
+        stdio: 'ignore',
+        windowsHide: true
+      })
+    } else {
+      const pyExe = resolvePythonExe()
+      console.log(`[akshare] 启动 ${pyExe} ${target.script} --port ${port}`)
+      akshareProcess = spawn(pyExe, [target.script, '--port', String(port)], {
+        cwd: path.dirname(target.script),
+        stdio: 'ignore',
+        windowsHide: true
+      })
+    }
+
+    akshareProcess.on('exit', (code) => {
+      console.log('[akshare] 服务进程退出 code=', code)
+      akshareProcess = null
+      akshareSource.setAvailable(false)
+    })
+
+    const ready = await waitForPort(port, 15000)
+    if (ready) {
+      console.log(`[akshare] 服务就绪 (port ${port})`)
+      akshareSource.setAvailable(true, port)
+    } else {
+      console.warn('[akshare] 服务启动超时，标记不可用')
+      akshareSource.setAvailable(false)
+    }
+  } catch (e) {
+    console.warn('[akshare] 启动失败:', e.message)
+    akshareSource.setAvailable(false)
+  }
+}
+
+/** 停止 AKShare 服务 */
+function stopAkshareServer() {
+  if (akshareProcess) {
+    try { akshareProcess.kill() } catch (_) {}
+    akshareProcess = null
+    console.log('[akshare] 服务进程已停止')
+  }
+  akshareSource.setAvailable(false)
+  tdxServerSource.setAvailable(false)
+}
+
+// ============================================================
+// 通达信量化 HTTP 接口（tqcenter 17709）可用性探测
+// 不启动进程（TdxW 由用户运行），只探测 17709 是否在监听 + 能应答 → setAvailable。
+// ============================================================
+
+async function probeTdxQuant() {
+  const cfg = settings.getTdxConfig()
+  const port = cfg.quantPort || 17709
+  if (!(await isPortListening(port))) {
+    console.log('[tdx_quant] 端口 17709 未监听（TdxW 未运行或未开启TQ），跳过')
+    tdxQuantSource.setAvailable(false)
+    return
+  }
+  // 探活：POST get_trading_dates，应答正常即可用
+  try {
+    const h = await tdxQuantSource.health()
+    if (h.ok) {
+      console.log('[tdx_quant] 量化接口就绪 (port 17709) — K线/实时/财报/涨跌停经已登录 TdxW')
+      tdxQuantSource.setAvailable(true, port)
+    } else {
+      console.warn('[tdx_quant] 探活失败:', h.error)
+      tdxQuantSource.setAvailable(false)
+    }
+  } catch (e) {
+    console.warn('[tdx_quant] 探活异常:', e.message)
+    tdxQuantSource.setAvailable(false)
+  }
+}
+
+/** 探测 tqs（tdxaidata，免客户端）可用性：Python 桥启动后调 /tdxs_health */
+async function probeTdxServer() {
+  const cfg = settings.getAkshareConfig()
+  const port = cfg.port || 8889
+  // 等待 Python 桥就绪（/tdxs_* 端点在同进程）
+  for (let i = 0; i < 8; i++) {
+    if (await isPortListening(port)) break
+    await new Promise(r => setTimeout(r, 1000))
+  }
+  if (!(await isPortListening(port))) {
+    console.log('[tdx_server] Python 桥未运行，跳过 tqs 探测')
+    tdxServerSource.setAvailable(false)
+    return
+  }
+  try {
+    const h = await tdxServerSource.health()
+    if (h && h.ok) {
+      console.log('[tdx_server] tqs 就绪 (tdxaidata+Key, 免客户端, port', port + ')')
+      tdxServerSource.setAvailable(true, port)
+    } else {
+      console.warn('[tdx_server] tqs 不可用:', h && h.error)
+      tdxServerSource.setAvailable(false)
+    }
+  } catch (e) {
+    console.warn('[tdx_server] 探测异常:', e.message)
+    tdxServerSource.setAvailable(false)
+  }
+}
+
+// ============================================================
 
 process.on('uncaughtException', (err) => {
   const logDir = path.join(app.getPath('userData'), 'logs')
@@ -183,27 +352,10 @@ function createWindow() {
   }
 }
 
-const template = [
-  { label: '文件', submenu: [
-    { label: '重新加载', accelerator: 'CmdOrCtrl+R', click: () => mainWindow && mainWindow.reload() },
-    { type: 'separator' },
-    { label: '退出', accelerator: 'CmdOrCtrl+Q', role: 'quit' }
-  ]},
-  { label: '视图', submenu: [
-    { label: '放大', role: 'zoomIn' }, { label: '缩小', role: 'zoomOut' },
-    { label: '重置缩放', role: 'resetZoom' }, { type: 'separator' },
-    { label: '全屏', role: 'togglefullscreen' }, { label: '开发者工具', role: 'toggleDevTools' }
-  ]},
-  { label: '帮助', submenu: [
-    { label: '关于 龟派', click: () => dialog.showMessageBox(mainWindow, {
-      type: 'info', title: '关于', message: '龟派 桌面版',
-      detail: `版本 ${app.getVersion()}\nElectron ${process.versions.electron}\nNode.js ${process.versions.node}`
-    })}
-  ]}
-]
-
 app.whenReady().then(async () => {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
+  // 移除原生菜单栏（文件/视图/帮助）：桌面应用无需系统菜单栏。
+  // 开发者工具仍可由 F12 / Ctrl+Shift+I 打开（Chromium 默认快捷键，不依赖菜单）。
+  Menu.setApplicationMenu(null)
 
   // ===== DolphinDB 引擎启动（随包分发，自动拉起）=====
   await startDolphinDB()
@@ -232,6 +384,17 @@ app.whenReady().then(async () => {
     console.warn('[main] DolphinDB 连接失败:', e.message)
   })
 
+  // ===== AKShare Python 桥接服务（设置启用时才起，失败静默）=====
+  startAkshareServer().catch((e) => {
+    console.warn('[main] AKShare 服务启动失败:', e.message)
+  })
+
+  // ===== 通达信量化 HTTP 接口（17709）探测，TdxW 运行时激活 tdx_quant 源 =====
+  probeTdxQuant().catch(() => {})
+
+  // ===== 通达信 tqs（tdxaidata，免客户端）探测，Python 桥起后探 /tdxs_health =====
+  probeTdxServer().catch(e => console.error('[tdx_server] PROBE FAIL:', e.message))
+
   createWindow()
 
   app.on('activate', () => {
@@ -247,4 +410,5 @@ app.on('before-quit', () => {
   stopServer()
   ddb.disconnect()
   stopDolphinDB()
+  stopAkshareServer()
 })

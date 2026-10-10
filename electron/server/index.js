@@ -98,11 +98,13 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/sim-training', trainingRoutes)
   app.use('/api/kline', klineRoutes)
   app.use('/api/stocks', stockRoutes)
+  app.use('/api/boards', require('./routes/boards'))
   app.use('/api/market', marketRoutes)
   app.use('/api/watchlist', watchlistRoutes)
   app.use('/api/notes', noteRoutes)
   app.use('/api/templates', templateRoutes)
   app.use('/api/data-pull', dataPullRoutes)
+  app.use('/api/settings/akshare', require('./routes/akshare'))
 
   app.use((err, req, res, next) => {
     console.error('[server] error:', err.message)

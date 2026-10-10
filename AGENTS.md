@@ -23,6 +23,10 @@ adapted: 2026-09-23
 >   3. 流程裁剪：单人项目，PR 评审 → 自审提交；Graph Engineering → 裁剪（模块 <20）
 >   4. 术语本地化：项目命名为「龟派」，提交前缀用 `feat/fix/refactor`，版本号用 SemVer
 >   5. 验收流程固化：**每次完成编码任务后，必须自动运行 `npm run build`（工作目录 `frontend/`）作为验收信号**，构建通过即视为任务完成。此规则替代未配置的 lint/typecheck，是质量护栏在本项目的落地执行项，无需用户再次提示。
+>   6. 数据库字段变更对齐规则：**每当 sql.js / DolphinDB 的表字段有新增、修改或删除，必须同步更新以下两处，保持数据总览与库结构一致**（遗漏即视为变更未完成）：
+>      - `electron/server/routes/data-mgmt.js` 的 `FIELD_DEFS`（字段定义：表 → [{column,label,desc,source}]）与 `SQLITE_COVERAGE`（关键字段非空统计清单）；新增表还需在 `SQLITE_TABLE_LABELS` 或 `DDB_TABLES` 登记中文用途。
+>      - `frontend/src/views/admin/DataOverview.vue` 的字段展开行渲染（字段已由后端 `fields` 字段驱动，无需逐表改模板；但新增表若需特殊展示要调整）。
+>      - 验证：`npm run build` 通过 + 打开「数据管理 → 数据总览」展开该表行，确认字段定义与库实际列一致。
 > - **是否含架构性变更**：否（所有调整均在架构骨架内进行填充与裁剪）
 
 # AI Agent 开发规范与方法论

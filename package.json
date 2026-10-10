@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "node electron/dev-runner.js",
     "build:frontend": "npm --prefix frontend run build",
+    "build:akshare-server": "cd python/aktools_server && call build.bat",
     "build": "npm run build:frontend && electron-builder --win",
     "start": "cross-env NODE_ENV=production electron ."
   },

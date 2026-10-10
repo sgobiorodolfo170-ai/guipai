@@ -14,6 +14,8 @@ const path = require('path')
 
 let settingsPath = null
 let tushareTokens = [] // [{ id, name, token, enabled, createdAt }]
+let akshareConfig = { enabled: false, pythonPath: '', port: 8889 } // AKShare Python 桥接配置
+let tdxConfig = { installPath: '', protoPort: 7709, quantPort: 17709 } // 通达信：installPath(空则自动探测)、protoPort(公网LHR)、quantPort(tqcenter HTTP API)
 
 /** 由 Express startServer 调用：指定数据目录并加载持久化设置。 */
 function init(dataDir) {
@@ -22,6 +24,22 @@ function init(dataDir) {
     const s = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'))
     if (Array.isArray(s.tushareTokens)) {
       tushareTokens = s.tushareTokens.filter(t => t && t.token)
+    }
+    // AKShare 配置（合并默认值，避免旧 settings.json 无此字段时缺键）
+    if (s.akshareConfig && typeof s.akshareConfig === 'object') {
+      akshareConfig = {
+        enabled: s.akshareConfig.enabled === true,
+        pythonPath: String(s.akshareConfig.pythonPath || '').trim(),
+        port: Number(s.akshareConfig.port) || 8889
+      }
+    }
+    // 通达信配置
+    if (s.tdxConfig && typeof s.tdxConfig === 'object') {
+      tdxConfig = {
+        installPath: String(s.tdxConfig.installPath || '').trim(),
+        protoPort: Number(s.tdxConfig.protoPort) || 7709,
+        quantPort: Number(s.tdxConfig.quantPort) || 17709
+      }
     }
     // 旧版单 token 字段迁移：tushareToken 字符串 → 并入数组
     if (typeof s.tushareToken === 'string' && s.tushareToken) {
@@ -38,7 +56,7 @@ function init(dataDir) {
 function save() {
   if (!settingsPath) return
   try {
-    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens }, null, 2))
+    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens, akshareConfig, tdxConfig }, null, 2))
   } catch (e) {
     console.error('[settings] persist failed:', e.message)
   }
@@ -94,6 +112,34 @@ function getTushareToken() {
 }
 function isTushareConfigured() { return getEnabledTokens().length > 0 }
 
+// ---- AKShare Python 桥接配置 ----
+
+function getAkshareConfig() { return { ...akshareConfig } }
+
+function updateAkshareConfig(patch) {
+  if (!patch || typeof patch !== 'object') return akshareConfig
+  if (patch.enabled !== undefined) akshareConfig.enabled = patch.enabled === true
+  if (patch.pythonPath !== undefined) akshareConfig.pythonPath = String(patch.pythonPath || '').trim()
+  if (patch.port !== undefined) akshareConfig.port = Math.min(Math.max(Number(patch.port) || 8889, 1024), 65535)
+  save()
+  return { ...akshareConfig }
+}
+
+function isAkshareEnabled() { return akshareConfig.enabled === true }
+
+// ---- 通达信配置 ----
+
+function getTdxConfig() { return { ...tdxConfig } }
+
+function updateTdxConfig(patch) {
+  if (!patch || typeof patch !== 'object') return tdxConfig
+  if (patch.installPath !== undefined) tdxConfig.installPath = String(patch.installPath || '').trim()
+  if (patch.protoPort !== undefined) tdxConfig.protoPort = Math.min(Math.max(Number(patch.protoPort) || 7709, 1), 65535)
+  if (patch.quantPort !== undefined) tdxConfig.quantPort = Math.min(Math.max(Number(patch.quantPort) || 17709, 1), 65535)
+  save()
+  return { ...tdxConfig }
+}
+
 module.exports = {
   init,
   getTushareTokens,
@@ -102,5 +148,10 @@ module.exports = {
   updateTushareToken,
   removeTushareToken,
   getTushareToken,
-  isTushareConfigured
+  isTushareConfigured,
+  getAkshareConfig,
+  updateAkshareConfig,
+  isAkshareEnabled,
+  getTdxConfig,
+  updateTdxConfig
 }
