@@ -86,11 +86,11 @@ const props = defineProps({
   /** 显示画线工具栏 */
   showDrawingTools: { type: Boolean, default: false },
   /** 显示指标栏（主图MA + 副图MACD/KDJ切换） */
-  showIndicatorBar: { type: Boolean, default: true },
-  /** 主图均线周期列表 */
-  maPeriods: { type: Array, default: () => [5, 10, 20, 30] },
-  /** 默认副图指标 */
-  defaultSubIndicator: { type: String, default: 'MACD' },
+  showIndicatorBar: { type: Boolean, default: false },
+  /** 主图均线周期列表（空数组=不显示MA） */
+  maPeriods: { type: Array, default: () => [] },
+  /** 默认副图指标（'NONE'=不创建副图指标） */
+  defaultSubIndicator: { type: String, default: 'NONE' },
   /** 自定义 dataLoader（覆盖默认 API 调用，给实战训练渐进揭示用） */
   customDataLoader: { type: Object, default: null },
   /** 主题 'light'|'dark' */

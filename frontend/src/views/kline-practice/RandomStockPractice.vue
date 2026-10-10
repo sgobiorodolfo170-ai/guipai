@@ -26,9 +26,8 @@
                 :show-period-switcher="false"
                 :show-adjust-switcher="false"
                 :show-drawing-tools="true"
-                :show-indicator-bar="true"
+                :show-indicator-bar="false"
                 :show-volume="true"
-                :ma-periods="[5, 10, 30, 120]"
                 height="710px"
             />
           </el-card>
@@ -380,9 +379,11 @@ const customDataLoader = {
 }
 
 // 触发图表重载数据（渐进揭示每一步后调用）
+// 用 rebuild() 替代 resetData()：完整销毁+重建图表实例，
+// 对 customDataLoader 更可靠（resetData 在 v10 对自定义 loader 可能不重触发 getBars）
 const updateChart = () => {
   nextTick(() => {
-    klineRef.value?.resetData()
+    klineRef.value?.rebuild()
   })
 }
 
@@ -462,7 +463,7 @@ const fetchRandomKlineData = async () => {
     const result = await getRandomKlineData(trainingDays.value)
 
     if (result.code === 200) {
-      stockInfo.value = result.data.stockInfo
+      stockInfo.value = { code: result.data.code, codeName: result.data.codeName }
       klineData.value = result.data.klineData
       currentIndex.value = TRAINING_START_INDEX // 从第200天开始显示
       tradeProgress.value.total = result.data.klineData.length

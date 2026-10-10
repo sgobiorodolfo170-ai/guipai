@@ -237,26 +237,32 @@ router.get('/realtime', async (req, res) => {
 })
 
 // 股票详情
+// 三级降级：全市场缓存 → 按单只代码取快照 → getStockInfo。
+// 关键：getSpotList() 失败时不能中断流程，需 fall through 到 per-code 取数。
 router.get('/:code', async (req, res) => {
   try {
     const { code } = req.params
-    const list = await getSpotList()
+    // 1. 全市场缓存（命中则最快）
+    let list = []
+    try {
+      list = await getSpotList()
+    } catch (_) { /* TDX 全市场不可用，降级到逐股取 */ }
     const stock = list.find(s => s.code === code)
     if (stock) {
-      ok(res, { ...stock, market: 'A股' })
-    } else {
-      // 全市场缓存未命中（TDX 模式下常见），按单只代码直接取快照
-      try {
-        const raw = await aktools.getStockSpot(code)
-        const stock2 = (raw || []).map(mapSpotItem).find(s => s.code === code)
-        if (stock2) return ok(res, { ...stock2, market: 'A股' })
-      } catch (_) { /* 降级到 getStockInfo */ }
-      try {
-        const info = await aktools.getStockInfo(code)
-        ok(res, { code, name: info?.[0]?.['股票简称'] || code, price: 0, market: 'A股' })
-      } catch {
-        errMsg(res, '未找到股票信息')
-      }
+      return ok(res, { ...stock, market: 'A股' })
+    }
+    // 2. 按单只代码直接取快照（TDX per-code 快路径）
+    try {
+      const raw = await aktools.getStockSpot(code)
+      const stock2 = (raw || []).map(mapSpotItem).find(s => s.code === code)
+      if (stock2) return ok(res, { ...stock2, market: 'A股' })
+    } catch (_) { /* 降级到 getStockInfo */ }
+    // 3. 基础信息兜底
+    try {
+      const info = await aktools.getStockInfo(code)
+      ok(res, { code, name: info?.[0]?.['股票简称'] || code, price: 0, market: 'A股' })
+    } catch {
+      errMsg(res, '未找到股票信息')
     }
   } catch (e) { errMsg(res, e.message) }
 })

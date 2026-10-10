@@ -10,9 +10,12 @@ function ok(res, data, msg = '成功') { res.json({ code: 200, msg, data }) }
 function errMsg(res, msg) { res.json({ code: 500, msg }) }
 
 // 市场概况
+// 双层缓存：正常缓存 60s（命中直接返回）；"上次成功"兜底缓存 7200s（当前拉取失败时返回旧数据，
+// 避免休市/源不可用导致页面空白）。空结果不落正常缓存，但可落兜底缓存。
 router.get('/overview', async (req, res) => {
+  const cacheKey = 'market:overview'
+  const fallbackKey = 'market:overview:fallback'
   try {
-    const cacheKey = 'market:overview'
     const cached = cache.get(cacheKey)
     if (cached) return ok(res, cached)
 
@@ -22,9 +25,23 @@ router.get('/overview', async (req, res) => {
       price: Number(m['最新价']) || 0, change: Number(m['涨跌额']) || 0,
       changePercent: Number(m['涨跌幅']) || 0
     }))
-    cache.set(cacheKey, overview, 60)
-    ok(res, overview)
-  } catch (e) { errMsg(res, e.message) }
+    if (overview.length) {
+      cache.set(cacheKey, overview, 60)
+      cache.set(fallbackKey, overview, 7200)
+      ok(res, overview)
+    } else {
+      // 空结果：优先兜底缓存，无则返回空
+      const fallback = cache.get(fallbackKey)
+      ok(res, fallback || [], fallback ? '成功(兜底缓存)' : '成功')
+    }
+  } catch (e) {
+    // 拉取失败：返回兜底缓存，避免页面空白
+    const fallback = cache.get(fallbackKey)
+    if (fallback) {
+      return ok(res, fallback, '成功(兜底缓存)')
+    }
+    errMsg(res, e.message)
+  }
 })
 
 // 热门股票 (按成交额排序)
