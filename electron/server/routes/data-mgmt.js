@@ -45,12 +45,13 @@ const SQLITE_TABLE_LABELS = {
 
 /** DolphinDB 各表及日期列（stock_basic 无日期列） */
 const DDB_TABLES = [
-  { name: 'daily_k', label: '个股日K(前复权)', dateCol: 'trade_date' },
-  { name: 'stock_limit_pool', label: '涨跌停池', dateCol: 'trade_date' },
-  { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date' },
-  { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date' },
-  { name: 'stock_basic', label: '股票基础信息', dateCol: null },
-  { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date' }
+  { name: 'daily_k', label: '个股日K(前复权)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'daily_k_raw', label: '原始日K(不复权,只读基线)', dateCol: 'trade_date', db: 'dfs://tradeinsight_raw' },
+  { name: 'stock_limit_pool', label: '涨跌停池', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'stock_basic', label: '股票基础信息', dateCol: null, db: 'dfs://tradeinsight' },
+  { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date', db: 'dfs://tradeinsight' }
 ]
 
 /**
@@ -167,14 +168,14 @@ router.get('/overview', async (req, res) => {
     } catch (_) { /* 取不到文件大小不影响其他数据 */ }
 
     // ---- DolphinDB：未连接时快速返回，避免每次打开总览页都等连接超时 ----
-    const ddbTables = DDB_TABLES.map(t => ({ name: t.name, label: t.label, dateCol: t.dateCol, fields: DDB_FIELD_DEFS[t.name] || null, rows: null, latestDate: null }))
+    const ddbTables = DDB_TABLES.map(t => ({ name: t.name, label: t.label, dateCol: t.dateCol, db: t.db, fields: DDB_FIELD_DEFS[t.name] || null, rows: null, latestDate: null }))
     const connected = ddb.isConnected()
     if (connected) {
       await Promise.all(ddbTables.map(async (t) => {
         try {
           const datePart = t.dateCol ? `, max(${t.dateCol}) as latestDate` : ''
           const r = await ddb.execute(
-            `select count(*) as rows${datePart} from loadTable("dfs://tradeinsight", "${t.name}")`
+            `select count(*) as rows${datePart} from loadTable("${t.db}", "${t.name}")`
           )
           if (Array.isArray(r) && r.length) {
             t.rows = Number(r[0].rows) || 0
