@@ -221,6 +221,7 @@
                   :show-indicator-bar="false"
                   :show-volume="true"
                   :ma-periods="[]"
+                  :default-sub-indicator="'NONE'"
                   height="250px"
               />
               <div class="stock-info">

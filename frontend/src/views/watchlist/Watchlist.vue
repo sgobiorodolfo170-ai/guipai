@@ -195,23 +195,23 @@ const showStockChart = (row) => {
         @selection-change="selectedStocks = $event.map(item => item.code)"
       >
         <el-table-column type="selection" width="55" />
-        <el-table-column prop="code" label="代码" width="100" />
-        <el-table-column prop="name" label="名称" width="150" />
-        <el-table-column label="现价" width="100">
+        <el-table-column prop="code" label="代码" width="100" sortable />
+        <el-table-column prop="name" label="名称" width="150" sortable />
+        <el-table-column label="现价" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).price || 0) - (getRealTimeData(b.code).price || 0)">
           <template #default="{ row }">
             <span class="stock-price" :class="getChangeClass(getRealTimeData(row.code).change)">
               {{ formatPrice(getRealTimeData(row.code).price || row.price) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="涨跌额" width="100">
+        <el-table-column label="涨跌额" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).change || 0) - (getRealTimeData(b.code).change || 0)">
           <template #default="{ row }">
             <span :class="getChangeClass(getRealTimeData(row.code).change)">
               {{ formatChange(getRealTimeData(row.code).change || 0) }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="涨跌幅" width="100">
+        <el-table-column label="涨跌幅" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).changePercent || 0) - (getRealTimeData(b.code).changePercent || 0)">
           <template #default="{ row }">
             <span :class="getChangeClass(getRealTimeData(row.code).change)">
               {{ formatPercent(getRealTimeData(row.code).changePercent || 0) }}
@@ -219,7 +219,7 @@ const showStockChart = (row) => {
           </template>
         </el-table-column>
         <el-table-column prop="note" label="备注" />
-        <el-table-column prop="addTime" label="添加时间" width="150" />
+        <el-table-column prop="addTime" label="添加时间" width="150" sortable />
         <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button

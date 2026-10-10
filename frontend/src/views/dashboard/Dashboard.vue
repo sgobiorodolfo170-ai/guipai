@@ -22,9 +22,10 @@ const stats = ref({
 })
 
 onMounted(async () => {
+  // 1. 立即从 localStorage 加载上次缓存的指数数据（避免页面空白）
+  loadCachedMarketData()
   loading.value = true
   try {
-    // 获取基础数据
     await Promise.all([
       fetchMarketOverview(),
       fetchStats()
@@ -36,21 +37,41 @@ onMounted(async () => {
   }
 })
 
+/** 从 localStorage 读取上次缓存的指数数据，立即渲染（stale-while-revalidate） */
+const loadCachedMarketData = () => {
+  try {
+    const cached = localStorage.getItem('dashboard_market_data')
+    if (cached) {
+      marketData.value = JSON.parse(cached)
+    }
+  } catch (_) { /* ignore parse errors */ }
+}
+
+/** 将指数数据写入 localStorage（供下次启动 stale 展示） */
+const saveMarketDataToCache = () => {
+  try {
+    localStorage.setItem('dashboard_market_data', JSON.stringify(marketData.value))
+  } catch (_) { /* ignore quota errors */ }
+}
+
 const fetchMarketOverview = async () => {
   try {
     await stockStore.fetchMarketOverview()
     const list = stockStore.marketOverview?.data || []
-    // 按名称/代码映射三大指数到本地展示
     const find = (kw) => list.find(m =>
       (m.name || '').includes(kw) || String(m.code || '').startsWith(kw)
     )
     const sh = find('上证') || find('000001')
     const sz = find('深证') || find('399001')
     const cy = find('创业') || find('399006')
-    marketData.value = {
-      shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0 },
-      shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0 },
-      chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 }
+    // 仅当新数据有值时才更新（否则保持缓存数据不变）
+    if (sh || sz || cy) {
+      marketData.value = {
+        shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0 },
+        shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0 },
+        chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 }
+      }
+      saveMarketDataToCache()
     }
   } catch (error) {
     console.error('获取市场概况失败:', error)

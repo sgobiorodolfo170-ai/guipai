@@ -3,6 +3,8 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useStockStore } from '@/store/stock.store'
 import { useWatchlistStore } from '@/store/watchlist.store'
+import { getStockRealtime } from '@/services/stock.service'
+import { formatPrice, formatPercent, formatChange } from '@/utils/stock'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
@@ -14,6 +16,7 @@ const loading = ref(false)
 const syncing = ref(false)
 const searchKeyword = ref(route.query.search || '')
 const stockList = ref([])
+const realtimeMap = ref({}) // code -> realtime data
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
@@ -59,11 +62,51 @@ const fetchStockList = async () => {
     const response = await stockStore.fetchStockList(params)
     stockList.value = stockStore.stockList
     total.value = response?.data?.total ?? stockList.value.length
+
+    // 拉取当前页股票的实时行情数据（价格/涨跌幅/成交额/市值）
+    await fetchRealtimeForPage()
   } catch (error) {
     console.error('获取股票列表失败:', error)
   } finally {
     loading.value = false
   }
+}
+
+/** 拉取当前页股票的实时行情，合并到 realtimeMap */
+const fetchRealtimeForPage = async () => {
+  const codes = stockList.value.map(s => s.code)
+  if (!codes.length) return
+  try {
+    const resp = await getStockRealtime(codes)
+    const list = Array.isArray(resp) ? resp : (resp?.data || [])
+    const map = {}
+    for (const item of list) {
+      if (item.code) map[item.code] = item
+    }
+    realtimeMap.value = map
+  } catch (_) {
+    // 实时数据拉取失败不影响列表展示（价格列显示 '--'）
+  }
+}
+
+/** 获取某只股票的实时数据 */
+const rt = (code) => realtimeMap.value[code] || {}
+
+/** 格式化市值 */
+const fmtMarketCap = (v) => {
+  if (v == null) return '--'
+  if (v >= 1e12) return (v / 1e12).toFixed(2) + '万亿'
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿'
+  if (v >= 1e4) return (v / 1e4).toFixed(2) + '万'
+  return String(v)
+}
+
+/** 格式化成交额 */
+const fmtTurnover = (v) => {
+  if (v == null) return '--'
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿'
+  if (v >= 1e4) return (v / 1e4).toFixed(2) + '万'
+  return String(v)
 }
 
 const handleSearch = () => {
@@ -196,11 +239,33 @@ onMounted(async () => {
         @row-click="(row) => viewStockDetail(row.code)"
         style="cursor: pointer;"
       >
-        <el-table-column prop="code" label="代码" width="110" />
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column prop="market" label="市场" width="120">
+        <el-table-column prop="code" label="代码" width="110" sortable />
+        <el-table-column prop="name" label="名称" min-width="120" sortable />
+        <el-table-column prop="market" label="市场" width="110" sortable>
           <template #default="{ row }">
             <el-tag size="small" :type="tagType(row.market)">{{ row.market }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="最新价" width="90" align="right" sortable :sort-method="(a, b) => (rt(a.code).price || 0) - (rt(b.code).price || 0)">
+          <template #default="{ row }">
+            <span>{{ formatPrice(rt(row.code).price) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="涨跌幅" width="100" align="right" sortable :sort-method="(a, b) => (rt(a.code).changePercent || 0) - (rt(b.code).changePercent || 0)">
+          <template #default="{ row }">
+            <span :class="(rt(row.code).changePercent || 0) > 0 ? 'stock-up' : (rt(row.code).changePercent || 0) < 0 ? 'stock-down' : ''">
+              {{ rt(row.code).changePercent != null ? formatPercent(rt(row.code).changePercent) : '--' }}
+            </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="成交额" width="100" align="right" sortable :sort-method="(a, b) => (rt(a.code).turnover || 0) - (rt(b.code).turnover || 0)">
+          <template #default="{ row }">
+            <span>{{ fmtTurnover(rt(row.code).turnover) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="市值" width="110" align="right" sortable :sort-method="(a, b) => (rt(a.code).totalMarketValue || 0) - (rt(b.code).totalMarketValue || 0)">
+          <template #default="{ row }">
+            <span>{{ fmtMarketCap(rt(row.code).totalMarketValue) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="120" fixed="right">
@@ -278,6 +343,14 @@ onMounted(async () => {
 
 :deep(.el-table__row:hover) {
   background-color: var(--el-fill-color-light);
+}
+
+.stock-up {
+  color: #f56c6c;
+}
+
+.stock-down {
+  color: #67c23a;
 }
 
 @media (max-width: 768px) {
