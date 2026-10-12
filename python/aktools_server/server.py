@@ -754,7 +754,18 @@ def tdxs_snapshot():
     codes = [_tqs_code(c.strip()) for c in raw.split(',') if c.strip()]
     try:
         r = _tqs.get_market_snapshot_batch(stock_list=codes)
-        return _ok(_safe(r))
+        items = _safe(r)
+        # tqs 可能返回 dict（单只/字段→值映射）或 list，统一转为 list
+        if isinstance(items, dict):
+            # 判断是单条记录（含 stock_code/code 键）还是字段→值映射
+            if 'stock_code' in items or 'code' in items or 'symbol' in items:
+                items = [items]
+            else:
+                # 字段→值映射，按 codes 顺序展开
+                items = [{k: items.get(k) for k in items} for _ in codes]
+        elif not isinstance(items, list):
+            items = []
+        return _ok(items)
     except Exception as e:
         traceback.print_exc()
         return _err(f'tqs snapshot 失败: {e}')
@@ -909,28 +920,39 @@ def _n(v):
 
 @app.route('/tdxs_index_spot')
 def tdxs_index_spot():
-    """指数实时快照。series=沪深重要指数（默认）。"""
+    """指数实时快照。series=沪深重要指数（默认）。
+    tqs 的 get_market_snapshot_batch 不支持指数代码，改用 get_market_data(count=1)
+    取最新一根 K 线作为快照（休市时返回上个交易日数据）。"""
     if not TQS_OK:
         return _err('tdxaidata 未配置', 503)
     series = request.args.get('series', '沪深重要指数').strip()
     codes = _INDEX_SERIES.get(series, _INDEX_SERIES['沪深重要指数'])
     try:
-        r = _tqs.get_market_snapshot_batch(stock_list=codes)
-        items = _safe(r)
-        if not isinstance(items, list):
-            items = []
         out = []
         for i, c in enumerate(codes):
-            raw = None
-            # r 可能是 list 或 dict(code→record)
-            if isinstance(items, list) and i < len(items):
-                raw = items[i]
-            elif isinstance(items, dict):
-                raw = items.get(c) or items.get(c.split('.')[0])
-            if raw is None:
-                # tqs 没返回这只指数，跳过
+            try:
+                # dividend_type='none' — 指数无除权概念；count=2 取最近两根以计算涨跌额/涨跌幅
+                r = _tqs.get_market_data(stock_list=[c], count=2, period='1d', dividend_type='none')
+                records = _tqs_kline_records(r, c.split('.')[0])
+                if not records:
+                    continue
+                rec = records[-1]  # 最新一根
+                name = _INDEX_NAMES.get(c, '')
+                price = _n(rec.get('收盘'))
+                chg = _n(rec.get('涨跌额'))
+                pct = _n(rec.get('涨跌幅'))
+                out.append({
+                    '序号': i + 1, '代码': c.split('.')[0], '名称': name,
+                    '最新价': price, '涨跌幅': pct, '涨跌额': chg,
+                    '成交量': _n(rec.get('成交量')), '成交额': _n(rec.get('成交额')),
+                    '振幅': _n(rec.get('振幅')), '最高': _n(rec.get('最高')),
+                    '最低': _n(rec.get('最低')), '今开': _n(rec.get('开盘')),
+                    '昨收': None, '量比': None, '换手率': None
+                })
+            except Exception as ex:
+                # 单只指数失败不影响其余，但记录日志
+                print(f'[tdxs_index_spot] {c} failed: {str(ex)[:80]}')
                 continue
-            out.append(_map_snapshot(raw, i, _INDEX_NAMES.get(c, '')))
         return _ok(out)
     except Exception as e:
         traceback.print_exc()

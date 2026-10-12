@@ -53,7 +53,8 @@ router.get('/hot', async (req, res) => {
     if (cached) return ok(res, cached.slice(0, Number(limit)))
 
     const raw = await aktools.getStockSpot()
-    const list = (raw || []).map(m => ({
+    const rawArr = Array.isArray(raw) ? raw : (raw ? [raw] : [])
+    const list = rawArr.map(m => ({
       code: m['代码'], name: m['名称'],
       price: Number(m['最新价']) || 0,
       changePercent: Number(m['涨跌幅']) || 0,
