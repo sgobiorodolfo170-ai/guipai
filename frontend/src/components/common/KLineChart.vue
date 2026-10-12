@@ -165,7 +165,9 @@ function buildStyles() {
       vertical: { color: gridColor }
     },
     candle: {
-      type: 'candle_solid',
+      // candle_down: 阳线(上涨)空心描边、阴线(下跌)实心填充
+      // A股惯例：红涨空心阳线、绿跌实心阴线
+      type: 'candle_down',
       tooltip: { showRule: 'always' },
       bar: {
         upColor: up,
