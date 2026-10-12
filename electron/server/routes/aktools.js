@@ -210,26 +210,146 @@ router.get('/stock/spot', async (req, res) => {
   }
 })
 
-// ==================== C3-C4 端点（暂保留 withCache，后续 C4 改为 DB-first） ====================
-router.get('/stock/minute', (req, res) => {
-  const p = req.query
-  const params = { ...p, start_date: p.start_date || p.startDate, end_date: p.end_date || p.endDate }
-  const cacheKey = `aktools:stock:minute:${p.symbol}:${p.period}:${params.start_date || ''}:${params.end_date || ''}`
-  withCache(cacheKey, 60, () => aktools.getStockMinute(params))(req, res)
-})
-router.get('/stock/holding', (req, res) => {
-  const p = req.query
-  withCache(`aktools:stock:holding:${p.date}:${p.indicator}:${p.symbol}`, 10000, () => aktools.getStockHolding(p))(req, res)
-})
-router.get('/stock/ztPoolPrevious', (req, res) => {
-  const { date } = req.query
-  withCache(`aktools:stock:ztPoolPrevious:${date}`, 60, () => aktools.getZtPoolPrevious(date))(req, res)
-})
-router.get('/stock/indexSpot', (req, res) => {
+// ==================== C4: indexSpot/minute/holding/ztPrev DB-first ====================
+const indexSpotRepo = require('../../dolphindb/index-spot-repository')
+const minuteRepo = require('../../dolphindb/minute-repository')
+const holdingRepo = require('../../dolphindb/holding-repository')
+
+// /stock/indexSpot → DB-first from stock_index_spot
+router.get('/stock/indexSpot', async (req, res) => {
   const { symbol } = req.query
   const valid = ['沪深重要指数', '上证系列指数', '深证系列指数', '指数成份', '中证系列指数']
   if (!valid.includes(symbol)) return res.json({ code: 400, msg: '参数错误' })
-  withCache(`aktools:stock:indexSpot:${symbol}`, 60, () => aktools.getStockIndexSpot(symbol), { cacheEmpty: false })(req, res)
+  const cacheKey = `ddb:indexSpot:${symbol}`
+  const cached = cache.get(cacheKey)
+  if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  try {
+    let data = await indexSpotRepo.getIndexSpot()
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 60)
+      return res.json({ code: 200, msg: '成功', data })
+    }
+    const raw = await aktools.getStockIndexSpot(symbol)
+    if (raw && raw.length > 0) {
+      const today = new Date().toISOString().slice(0, 10)
+      await indexSpotRepo.insertIndexSpot(raw, today)
+      data = await indexSpotRepo.getIndexSpot()
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 60)
+        return res.json({ code: 200, msg: '成功(已入库)', data })
+      }
+    }
+    res.json({ code: 200, msg: '成功(空数据)', data: raw || [] })
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    res.json({ code: 500, msg: e.message })
+  }
+})
+
+// /stock/minute → DB-first from minute_k
+router.get('/stock/minute', async (req, res) => {
+  const p = req.query
+  const params = { ...p, start_date: p.start_date || p.startDate, end_date: p.end_date || p.endDate }
+  const cacheKey = `ddb:minute:${p.symbol}:${params.start_date || ''}:${params.end_date || ''}:${p.period}`
+  const cached = cache.get(cacheKey)
+  if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  try {
+    const tradeDate = params.start_date || new Date().toISOString().slice(0, 10)
+    let data = await minuteRepo.getMinuteK(p.symbol, tradeDate, p.period)
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 60)
+      return res.json({ code: 200, msg: '成功', data })
+    }
+    const raw = await aktools.getStockMinute(params)
+    if (raw && raw.length > 0) {
+      await minuteRepo.insertMinuteK(raw, p.symbol, p.period)
+      data = await minuteRepo.getMinuteK(p.symbol, tradeDate, p.period)
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 60)
+        return res.json({ code: 200, msg: '成功(已入库)', data })
+      }
+    }
+    res.json({ code: 200, msg: '成功(空数据)', data: raw || [] })
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    res.json({ code: 500, msg: e.message })
+  }
+})
+
+// /stock/holding → DB-first from stock_holding
+router.get('/stock/holding', async (req, res) => {
+  const p = req.query
+  const cacheKey = `ddb:holding:${p.symbol}:${p.date}`
+  const cached = cache.get(cacheKey)
+  if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  try {
+    let data = await holdingRepo.getHolding(p.date, p.symbol)
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 86400)
+      return res.json({ code: 200, msg: '成功', data })
+    }
+    const raw = await aktools.getStockHolding(p)
+    if (raw && raw.length > 0) {
+      const rows = converter.convertHolding(raw, p.date)
+      await holdingRepo.insertHolding(rows, p.date, p.symbol)
+      data = await holdingRepo.getHolding(p.date, p.symbol)
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 86400)
+        return res.json({ code: 200, msg: '成功(已入库)', data })
+      }
+    }
+    res.json({ code: 200, msg: '成功(空数据)', data: raw || [] })
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    res.json({ code: 500, msg: e.message })
+  }
+})
+
+// /stock/ztPoolPrevious → DB-first from zt_pool_previous
+router.get('/stock/ztPoolPrevious', async (req, res) => {
+  const { date } = req.query
+  const cacheKey = `ddb:ztPrev:${date}`
+  const cached = cache.get(cacheKey)
+  if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  try {
+    const d = String(date).replace(/-/g, '.')
+    if (ddb.isConnected()) {
+      const r = await ddb.execute(`select * from loadTable("dfs://tradeinsight", "zt_pool_previous") where trade_date=${d}`)
+      const data = Array.isArray(r) ? r : []
+      if (data.length > 0) {
+        cache.set(cacheKey, data, 300)
+        return res.json({ code: 200, msg: '成功', data })
+      }
+    }
+    const raw = await aktools.getZtPoolPrevious(date)
+    if (raw && raw.length > 0 && ddb.isConnected()) {
+      const rows = converter.convertZtPrevious(raw, date)
+      await ddb.execute(`t = loadTable("dfs://tradeinsight", "zt_pool_previous"); delete from t where trade_date=${String(date).replace(/-/g, '.')}`)
+      const ZT_COLS = [
+        { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
+        { name: 'name', type: 'symbol' }, { name: 'latest_price', type: 'double' },
+        { name: 'limit_price', type: 'double' }, { name: 'pct_chg', type: 'double' },
+        { name: 'amount', type: 'double' }, { name: 'circulation_mv', type: 'double' },
+        { name: 'total_mv', type: 'double' }, { name: 'turnover_rate', type: 'double' },
+        { name: 'amplitude', type: 'double' }, { name: 'speed', type: 'double' },
+        { name: 'last_limit_time', type: 'string' }, { name: 'consecutive_limit', type: 'int' },
+        { name: 'industry', type: 'string' }, { name: 'limit_stats', type: 'string' }
+      ]
+      await ddb.insertRows('zt_pool_previous', ZT_COLS, rows)
+      if (ddb.isConnected()) {
+        const r2 = await ddb.execute(`select * from loadTable("dfs://tradeinsight", "zt_pool_previous") where trade_date=${String(date).replace(/-/g, '.')}`)
+        const data = Array.isArray(r2) ? r2 : []
+        if (data.length > 0) {
+          cache.set(cacheKey, data, 300)
+          return res.json({ code: 200, msg: '成功(已入库)', data })
+        }
+      }
+    }
+    res.json({ code: 200, msg: '成功(空数据)', data: raw || [] })
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    res.json({ code: 500, msg: e.message })
+  }
 })
 
 // ==================== 启动预热 ====================
