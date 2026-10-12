@@ -16,6 +16,7 @@ let settingsPath = null
 let tushareTokens = [] // [{ id, name, token, enabled, createdAt }]
 let akshareConfig = { enabled: false, pythonPath: '', port: 8889 } // AKShare Python 桥接配置
 let tdxConfig = { installPath: '', protoPort: 7709, quantPort: 17709 } // 通达信：installPath(空则自动探测)、protoPort(公网LHR)、quantPort(tqcenter HTTP API)
+let tdxKeys = [] // [{ id, name, key, enabled, createdAt }] — 通达信数据服务 Key 多账号
 
 /** 由 Express startServer 调用：指定数据目录并加载持久化设置。 */
 function init(dataDir) {
@@ -41,6 +42,10 @@ function init(dataDir) {
         quantPort: Number(s.tdxConfig.quantPort) || 17709
       }
     }
+    // 通达信数据服务 Key 多账号
+    if (Array.isArray(s.tdxKeys)) {
+      tdxKeys = s.tdxKeys.filter(k => k && k.key)
+    }
     // 旧版单 token 字段迁移：tushareToken 字符串 → 并入数组
     if (typeof s.tushareToken === 'string' && s.tushareToken) {
       if (!tushareTokens.some(t => t.token === s.tushareToken)) {
@@ -56,7 +61,7 @@ function init(dataDir) {
 function save() {
   if (!settingsPath) return
   try {
-    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens, akshareConfig, tdxConfig }, null, 2))
+    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens, akshareConfig, tdxConfig, tdxKeys }, null, 2))
   } catch (e) {
     console.error('[settings] persist failed:', e.message)
   }
@@ -140,6 +145,47 @@ function updateTdxConfig(patch) {
   return { ...tdxConfig }
 }
 
+// ---- 通达信数据服务 Key 多账号 ----
+
+function getTdxKeys() { return tdxKeys.slice() }
+
+function getEnabledTdxKey() {
+  const k = tdxKeys.find(k => k.enabled && k.key)
+  return k ? k.key : null
+}
+
+function addTdxKey({ name, key }) {
+  key = String(key || '').trim()
+  if (!key) throw new Error('key 不能为空')
+  if (tdxKeys.some(k => k.key === key)) throw new Error('该 Key 已存在')
+  const acc = { id: genId(), name: String(name || '').trim() || `Key${tdxKeys.length + 1}`, key, enabled: true, createdAt: Date.now() }
+  tdxKeys.push(acc)
+  save()
+  return acc
+}
+
+function updateTdxKey(id, patch) {
+  const acc = tdxKeys.find(k => k.id === id)
+  if (!acc) throw new Error('Key 不存在')
+  if (patch.name !== undefined) acc.name = String(patch.name || '').trim() || acc.name
+  if (patch.enabled !== undefined) acc.enabled = !!patch.enabled
+  if (patch.key !== undefined) {
+    const nk = String(patch.key || '').trim()
+    if (!nk) throw new Error('key 不能为空')
+    if (tdxKeys.some(k => k.id !== id && k.key === nk)) throw new Error('该 Key 已被其他账号使用')
+    acc.key = nk
+  }
+  save()
+  return acc
+}
+
+function removeTdxKey(id) {
+  const i = tdxKeys.findIndex(k => k.id === id)
+  if (i === -1) throw new Error('Key 不存在')
+  tdxKeys.splice(i, 1)
+  save()
+}
+
 module.exports = {
   init,
   getTushareTokens,
@@ -153,5 +199,10 @@ module.exports = {
   updateAkshareConfig,
   isAkshareEnabled,
   getTdxConfig,
-  updateTdxConfig
+  updateTdxConfig,
+  getTdxKeys,
+  getEnabledTdxKey,
+  addTdxKey,
+  updateTdxKey,
+  removeTdxKey
 }

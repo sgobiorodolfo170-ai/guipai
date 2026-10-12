@@ -217,7 +217,95 @@ const installAk = async () => {
 onMounted(() => {
   fetchList()
   fetchAk()
+  fetchTdx()
 })
+
+// ---- 通达信 Key 多账号 ----
+const tdx = ref({ config: {}, keys: [], activeKey: null })
+const tdxLoading = ref(false)
+const tdxTestingIds = ref(new Set())
+const tdxKeyName = ref('')
+const tdxKeyVal = ref('')
+const tdxAdding = ref(false)
+
+const fetchTdx = async () => {
+  tdxLoading.value = true
+  try {
+    const res = await api.get('/settings/tdx')
+    tdx.value = res.data || {}
+  } catch (e) {
+    ElMessage.error('获取通达信配置失败: ' + e.message)
+  } finally {
+    tdxLoading.value = false
+  }
+}
+
+const addTdxKey = async () => {
+  const key = tdxKeyVal.value.trim()
+  if (!key) return ElMessage.warning('请输入 Key')
+  tdxAdding.value = true
+  try {
+    await api.post('/settings/tdx/keys', { name: tdxKeyName.value.trim(), key })
+    ElMessage.success('Key 已添加')
+    tdxKeyName.value = ''
+    tdxKeyVal.value = ''
+    await fetchTdx()
+  } catch (e) {
+    ElMessage.error('添加失败: ' + e.message)
+  } finally {
+    tdxAdding.value = false
+  }
+}
+
+const toggleTdxKey = async (row) => {
+  try {
+    await api.put(`/settings/tdx/keys/${row.id}`, { enabled: row.enabled })
+    ElMessage.success(row.enabled ? '已启用' : '已停用')
+    await fetchTdx()
+  } catch (e) {
+    row.enabled = !row.enabled
+    ElMessage.error('操作失败: ' + e.message)
+  }
+}
+
+const removeTdxKey = async (row) => {
+  try {
+    await ElMessageBox.confirm(`将删除 Key「${row.name}」（${row.keyMasked}）。是否继续？`, '确认删除', {
+      confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning'
+    })
+  } catch { return }
+  try {
+    await api.delete(`/settings/tdx/keys/${row.id}`)
+    ElMessage.success('已删除')
+    await fetchTdx()
+  } catch (e) {
+    ElMessage.error('删除失败: ' + e.message)
+  }
+}
+
+const testTdxKey = async (row) => {
+  tdxTestingIds.value.add(row.id)
+  tdxTestingIds.value = new Set(tdxTestingIds.value)
+  try {
+    const res = await api.post(`/settings/tdx/keys/${row.id}/test`)
+    ElMessage.success(res.msg || '验证通过')
+  } catch (e) {
+    ElMessage.error(`「${row.name}」测试失败: ${e.message}`)
+  } finally {
+    tdxTestingIds.value.delete(row.id)
+    tdxTestingIds.value = new Set(tdxTestingIds.value)
+  }
+}
+
+const applyTdxKey = async (row) => {
+  try {
+    const res = await api.post(`/settings/tdx/keys/${row.id}/apply`)
+    ElMessage.success(res.msg)
+    await fetchTdx()
+  } catch (e) {
+    ElMessage.error('应用失败: ' + e.message)
+  }
+}
 </script>
 
 <template>
@@ -362,6 +450,58 @@ onMounted(() => {
       <div class="tips" v-else>
         <p>启用后，应用启动时自动拉起 aktools-server（端口 {{ ak.config.port }}），失败静默降级不影响其他源。</p>
       </div>
+    </el-card>
+
+    <!-- 通达信数据源 Key 多账号 -->
+    <el-card class="setting-card" shadow="hover" v-loading="tdxLoading">
+      <template #header>
+        <div class="card-header">
+          <span>通达信数据源（tqs Key 多账号）</span>
+          <el-tag :type="tdx.keys.length > 0 ? 'success' : 'info'" size="small">
+            {{ tdx.keys.length > 0 ? `${tdx.keys.length} 个 Key` : '未配置' }}
+          </el-tag>
+        </div>
+      </template>
+
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        通达信 tqs（tdxaidata）免客户端数据服务，Key 从通达信会员中心创建。多 Key 可添加后切换。
+        活跃 Key 写入 TdxAiData.ini，切换后需重启数据服务生效。
+      </el-alert>
+
+      <el-descriptions :column="2" border size="small" class="mb-12">
+        <el-descriptions-item label="活跃Key">{{ tdx.activeKey || '未配置' }}</el-descriptions-item>
+        <el-descriptions-item label="通达信目录">{{ tdx.config?.installPath || '自动探测' }}</el-descriptions-item>
+      </el-descriptions>
+
+      <el-form :inline="true" class="add-form">
+        <el-form-item label="名称">
+          <el-input v-model="tdxKeyName" placeholder="如：主Key / 备用Key" style="width: 140px" />
+        </el-form-item>
+        <el-form-item label="Key">
+          <el-input v-model="tdxKeyVal" type="password" show-password clearable placeholder="TDX-xxxxxxxx" style="width: 280px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="tdxAdding" @click="addTdxKey">添加 Key</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-table :data="tdx.keys" size="small" border>
+        <el-table-column prop="name" label="名称" min-width="100" />
+        <el-table-column prop="keyMasked" label="Key" min-width="140" />
+        <el-table-column label="启用" width="70" align="center">
+          <template #default="{ row }">
+            <el-switch v-model="row.enabled" size="small" @change="toggleTdxKey(row)" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="220" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" :loading="tdxTestingIds.has(row.id)" @click="testTdxKey(row)">测试</el-button>
+            <el-button link type="success" size="small" @click="applyTdxKey(row)">应用为活跃</el-button>
+            <el-button link type="danger" size="small" @click="removeTdxKey(row)">删除</el-button>
+          </template>
+        </el-table-column>
+        <template #empty><span class="empty-tip">尚未添加 Key，从通达信会员中心创建数据服务 Key 后添加</span></template>
+      </el-table>
     </el-card>
 
     <!-- 编辑对话框 -->

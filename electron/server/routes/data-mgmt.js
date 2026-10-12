@@ -40,16 +40,22 @@ const SQLITE_TABLE_LABELS = {
   data_sync_status: '收盘同步状态',
   stock_basic: '股票基础信息(元数据)',
   stock_financial: '定期财报(三大表+指标)',
-  stock_indicator: '估值指标快照'
+  stock_indicator: '估值指标快照',
+  board_constituents: '板块成分股'
 }
 
 /** DolphinDB 各表及日期列（stock_basic 无日期列） */
 const DDB_TABLES = [
   { name: 'daily_k', label: '个股日K(前复权)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'daily_k_raw', label: '原始日K(不复权,只读基线)', dateCol: 'trade_date', db: 'dfs://tradeinsight_raw' },
+  { name: 'stock_spot', label: '全市场实时行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'stock_index_spot', label: '指数实时行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_limit_pool', label: '涨跌停池', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'zt_pool_previous', label: '昨日涨停池', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'minute_k', label: '分钟K线', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'stock_holding', label: '十大股东', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_basic', label: '股票基础信息', dateCol: null, db: 'dfs://tradeinsight' },
   { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date', db: 'dfs://tradeinsight' }
 ]

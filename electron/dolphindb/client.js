@@ -282,6 +282,46 @@ async function ensureSchema(dbPath) {
     `  db.createTable(t, \`stock_basic)\n` +
     `}`
   )
+  // 全市场实时行情快照（每次 cache miss 时 aktools → 写入 → 读取）
+  await execute(
+    `if (!existsTable("${dbPath}", "stock_spot")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`timestamp\`open\`close\`high\`low\`preclose\`volume\`amount\`pct_chg\`change_amount\`turnover_rate\`amplitude\`total_market_value\`circulation_market_value\`pe_ttm\`pb, ` +
+    `[SYMBOL, DATE, TIMESTAMP, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, LONG, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE]);\n` +
+    `  db.createPartitionedTable(t, \`stock_spot, \`trade_date)\n` +
+    `}`
+  )
+  // 指数实时行情快照
+  await execute(
+    `if (!existsTable("${dbPath}", "stock_index_spot")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`timestamp\`latest_price\`pct_chg\`change_amount\`volume\`amount\`high\`low\`open\`close\`preclose, ` +
+    `[SYMBOL, DATE, TIMESTAMP, DOUBLE, DOUBLE, DOUBLE, LONG, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE]);\n` +
+    `  db.createPartitionedTable(t, \`stock_index_spot, \`trade_date)\n` +
+    `}`
+  )
+  // 分钟K线（period=1 有均价无振幅；period=5/15/30/60 有振幅/涨跌幅等）
+  await execute(
+    `if (!existsTable("${dbPath}", "minute_k")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`timestamp\`period\`open\`close\`high\`low\`volume\`amount\`avg_price\`amplitude\`pct_chg\`change_amount\`turnover_rate, ` +
+    `[SYMBOL, DATE, TIMESTAMP, INT, DOUBLE, DOUBLE, DOUBLE, DOUBLE, LONG, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE]);\n` +
+    `  db.createPartitionedTable(t, \`minute_k, \`trade_date)\n` +
+    `}`
+  )
+  // 十大股东持股明细
+  await execute(
+    `if (!existsTable("${dbPath}", "stock_holding")) {\n` +
+    `  t = table(1:0, \`trade_date\`symbol\`holder_name\`holder_type\`hold_num\`hold_ratio\`hold_num_change\`hold_ratio_change\`change_type\`notice_date\`rank, ` +
+    `[DATE, SYMBOL, STRING, SYMBOL, LONG, DOUBLE, LONG, DOUBLE, SYMBOL, DATE, INT]);\n` +
+    `  db.createPartitionedTable(t, \`stock_holding, \`trade_date)\n` +
+    `}`
+  )
+  // 昨日涨停股池（独立于 stock_limit_pool，含涨停价/振幅/涨速等独有字段）
+  await execute(
+    `if (!existsTable("${dbPath}", "zt_pool_previous")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`name\`latest_price\`limit_price\`pct_chg\`amount\`circulation_mv\`total_mv\`turnover_rate\`amplitude\`speed\`last_limit_time\`consecutive_limit\`industry\`limit_stats, ` +
+    `[SYMBOL, DATE, SYMBOL, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, STRING, INT, STRING, STRING]);\n` +
+    `  db.createPartitionedTable(t, \`zt_pool_previous, \`trade_date)\n` +
+    `}`
+  )
 }
 
 module.exports = {

@@ -271,6 +271,17 @@ async function initDb(dataDir) {
       updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_si_code ON stock_indicator(code);
+
+    CREATE TABLE IF NOT EXISTS board_constituents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      board_name TEXT NOT NULL,
+      board_code TEXT,
+      stock_code TEXT NOT NULL,
+      stock_name TEXT,
+      create_time TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(board_name, stock_code)
+    );
+    CREATE INDEX IF NOT EXISTS idx_bc_board ON board_constituents(board_name);
   `)
 
   // ---- stock_basic 列迁移：旧库已建表无新列时补列（SQLite 无 ADD COLUMN IF NOT EXISTS）----
