@@ -176,8 +176,41 @@ router.get('/stock/info', dbFirst({
   }
 }))
 
-// ==================== C3-C4 端点（暂保留 withCache，后续 C3-C4 改为 DB-first） ====================
-router.get('/stock/spot', withCache('aktools:stock:spot', 60, () => aktools.getStockSpot()))
+// ==================== C3: spot DB-first (write-on-miss) ====================
+const spotRepo = require('../../dolphindb/spot-repository')
+
+// /stock/spot → DB-first from stock_spot (write-on-miss + 单飞锁)
+router.get('/stock/spot', async (req, res) => {
+  const cacheKey = 'ddb:spot:latest'
+  const cached = cache.get(cacheKey)
+  if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  try {
+    // 1. DB 读
+    let data = await spotRepo.getSpot()
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 60)
+      return res.json({ code: 200, msg: '成功', data })
+    }
+    // 2. aktools → write → re-read
+    const raw = await aktools.getStockSpot()
+    if (raw && raw.length > 0) {
+      await spotRepo.insertSpotSafe(raw)
+      data = await spotRepo.getSpot()
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 60)
+        return res.json({ code: 200, msg: '成功(已入库)', data })
+      }
+    }
+    res.json({ code: 200, msg: '成功(空数据)', data: raw || [] })
+  } catch (e) {
+    if (e.retryAfterSec) {
+      return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    }
+    res.json({ code: 500, msg: e.message })
+  }
+})
+
+// ==================== C3-C4 端点（暂保留 withCache，后续 C4 改为 DB-first） ====================
 router.get('/stock/minute', (req, res) => {
   const p = req.query
   const params = { ...p, start_date: p.start_date || p.startDate, end_date: p.end_date || p.endDate }
