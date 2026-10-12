@@ -197,24 +197,15 @@ router.post('/basic/sync', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 搜索股票（数据拉取页选股用）：优先查本地库；库为空（未同步）时回退行情源，
-// 保证数据拉取流程在首次同步前仍可用。
+// 搜索股票：仅查本地 stock_basic 库（不再回退 aktools 直返）
 router.get('/search', async (req, res) => {
   try {
     const { keyword } = req.query
     const db = getDb()
-    const countRow = db.prepare(`SELECT COUNT(*) AS c FROM stock_basic`).get()
-    if ((countRow?.c || 0) > 0) {
-      const kw = `%${String(keyword || '').trim()}%`
-      const results = db.prepare(
-        `SELECT code, name, market FROM stock_basic WHERE code LIKE ? OR name LIKE ? LIMIT 20`
-      ).all(kw, kw)
-      return ok(res, results)
-    }
-    const list = await getSpotList()
-    const results = list.filter(s =>
-      s.code.includes(keyword) || s.name.includes(keyword)
-    ).slice(0, 20)
+    const kw = `%${String(keyword || '').trim()}%`
+    const results = db.prepare(
+      `SELECT code, name, market FROM stock_basic WHERE code LIKE ? OR name LIKE ? LIMIT 20`
+    ).all(kw, kw)
     ok(res, results)
   } catch (e) { errMsg(res, e.message) }
 })
@@ -382,15 +373,7 @@ router.post('/:code/indicator/sync', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// K线数据 —— 断点续传：DolphinDB 已有部分只补缺口，不重复拉全量。
-//
-// 流程（DDB 可用时）：
-//   1. 查库内 [startDate, endDate] 已有数据
-//   2. 覆盖完整 → 直接返回（零网络调用）
-//   3. 有缺口 → 只拉缺口段，且起点回退 7 天做重叠对账
-//      （前复权锚点会随新分红漂移，重叠段以新数据为准并回写，自动修正接缝）
-//   4. 缺口拉取受限（429 类错误）→ 不报错，返回库内已有部分 + msg 注明"增量受限 N 秒后可补齐"
-// DDB 不可用时退化为网络全量（aktools 内含东财→腾讯→Tushare 多源兜底）。
+// K线数据 — DolphinDB first，DDB 不可用时不回退 aktools 直返（架构原则：前端只从 DB 读）
 router.get('/:code/kline', async (req, res) => {
   try {
     const { code } = req.params
@@ -408,13 +391,11 @@ router.get('/:code/kline', async (req, res) => {
         const existing = await klineRepo.getDailyK(code, startDate, effEnd)
         const latest = existing.length ? existing.map(r => r['日期']).sort().pop() : null
         if (!latest || latest < effEnd) {
-          // 有缺口：只补 [latest-7天, effEnd]（无存量则全量）
           const fetchStart = latest ? shiftDays(latest, -7) : startDate
           try {
             const raw = await aktools.getStockHistory({ symbol: code, period: 'daily', adjust, start_date: fetchStart, end_date: effEnd })
             if (raw && raw.length) await klineRepo.insertDailyK(raw)
           } catch (e) {
-            // 增量受限：库内有部分数据则先给部分，msg 带恢复时长提示前端
             if (e.retryAfterSec && existing.length) {
               const partial = existing.map(KLINE_ROW_MAP)
               return ok(res, partial, `部分数据（增量获取受限，约 ${e.retryAfterSec} 秒后可补齐）`)
@@ -432,25 +413,16 @@ router.get('/:code/kline', async (req, res) => {
           }
         }
       } catch (e) {
-        if (e.retryAfterSec) throw e // 受限错误继续外抛，走下方 429 响应
-        console.error('[stock] DolphinDB 断点续传失败，退化为网络全量:', e.message)
+        if (e.retryAfterSec) {
+          return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+        }
+        console.error('[stock] DolphinDB kline query failed:', e.message)
       }
     }
 
-    // 2. 无 DolphinDB 或续传失败：网络全量（aktools 内含多源兜底）
-    const raw = await aktools.getStockHistory({ symbol: code, period, adjust, start_date: startDate, end_date: endDate })
-    const kline = (raw || []).map(KLINE_ROW_MAP)
-
-    // 3. 异步回填 DolphinDB（仅 daily，非阻塞——用户无感知地积累数据）
-    if (period === 'daily' && raw && raw.length > 0) {
-      klineRepo.insertDailyK(raw).catch(e => console.error('[stock] daily_k backfill failed:', e.message))
-    }
-
-    // 空结果不落缓存：上游被拦/限流时可能返回空数组，缓存会让 K 线图在 TTL 内一直空白
-    if (kline.length) cache.set(cacheKey, kline, 300)
-    ok(res, kline)
+    // 2. DolphinDB 不可用：返回 503（不回退 aktools 直返）
+    res.json({ code: 503, msg: 'DolphinDB 不可用，K线数据暂无法获取，请确保 DolphinDB 已启动', data: [] })
   } catch (e) {
-    // 上游受限：429 + 恢复时长提示（前端据此提示"约 N 秒后重试"）
     if (e.retryAfterSec) {
       return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
     }
@@ -458,14 +430,9 @@ router.get('/:code/kline', async (req, res) => {
   }
 })
 
-// 历史数据 (同kline)
+// 历史数据 — 已合并到 kline 端点（GET /:code/kline），此端点标记废弃
 router.get('/:code/history', async (req, res) => {
-  try {
-    const { code } = req.params
-    const { period = 'daily', startDate, endDate, adjust = 'qfq' } = req.query
-    const raw = await aktools.getStockHistory({ symbol: code, period, adjust, start_date: startDate, end_date: endDate })
-    ok(res, raw)
-  } catch (e) { errMsg(res, e.message) }
+  res.json({ code: 410, msg: '此端点已废弃，请使用 GET /api/stocks/:code/kline' })
 })
 
 module.exports = router
