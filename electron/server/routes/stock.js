@@ -227,7 +227,8 @@ router.get('/realtime', async (req, res) => {
     if (codeList.length) {
       // 有具体 codes 时直接按代码取快照，避免拉全市场（TDX 模式下 5-10s vs <1s）
       const raw = await aktools.getStockSpot(codeList)
-      const list = (raw || []).map(mapSpotItem).filter(s => s.code)
+      const rawArr = Array.isArray(raw) ? raw : (raw ? [raw] : [])
+      const list = rawArr.map(mapSpotItem).filter(s => s.code)
       ok(res, list)
     } else {
       const list = await getSpotList()
@@ -254,7 +255,8 @@ router.get('/:code', async (req, res) => {
     // 2. 按单只代码直接取快照（TDX per-code 快路径）
     try {
       const raw = await aktools.getStockSpot(code)
-      const stock2 = (raw || []).map(mapSpotItem).find(s => s.code === code)
+      const rawArr = Array.isArray(raw) ? raw : (raw ? [raw] : [])
+      const stock2 = rawArr.map(mapSpotItem).find(s => s.code === code)
       if (stock2) return ok(res, { ...stock2, market: 'A股' })
     } catch (_) { /* 降级到 getStockInfo */ }
     // 3. 基础信息兜底
