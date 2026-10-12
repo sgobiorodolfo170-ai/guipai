@@ -5,6 +5,7 @@ const aktools = require('../aktools')
 const cache = require('../cache')
 const klineRepo = require('../../dolphindb/kline-repository')
 const ddb = require('../../dolphindb/client')
+const spotRepo = require('../../dolphindb/spot-repository')
 const { getDb } = require('../db')
 const akshareSource = require('../sources/akshare')
 
@@ -210,21 +211,40 @@ router.get('/search', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 实时行情
+// 实时行情 — DB-first from stock_spot
 router.get('/realtime', async (req, res) => {
-  try {
+  const cacheKey = 'ddb:spot:latest'
+  const cached = cache.get(cacheKey)
+  if (cached) {
     const { codes } = req.query
     const codeList = codes ? codes.split(',') : []
-    if (codeList.length) {
-      // 有具体 codes 时直接按代码取快照，避免拉全市场（TDX 模式下 5-10s vs <1s）
-      const raw = await aktools.getStockSpot(codeList)
-      const rawArr = Array.isArray(raw) ? raw : (raw ? [raw] : [])
-      const list = rawArr.map(mapSpotItem).filter(s => s.code)
-      ok(res, list)
-    } else {
-      const list = await getSpotList()
-      ok(res, list.slice(0, 50))
+    const list = codeList.length ? cached.filter(s => codeList.includes(s.symbol || s.code)) : cached.slice(0, 50)
+    return ok(res, list)
+  }
+  try {
+    // 1. DB 读
+    let data = await spotRepo.getSpot()
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 60)
+      const { codes } = req.query
+      const codeList = codes ? codes.split(',') : []
+      const list = codeList.length ? data.filter(s => codeList.includes(s.symbol)) : data.slice(0, 50)
+      return ok(res, list)
     }
+    // 2. aktools → write → re-read
+    const raw = await aktools.getStockSpot()
+    if (raw && raw.length > 0) {
+      await spotRepo.insertSpotSafe(raw)
+      data = await spotRepo.getSpot()
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 60)
+        const { codes } = req.query
+        const codeList = codes ? codes.split(',') : []
+        const list = codeList.length ? data.filter(s => codeList.includes(s.symbol)) : data.slice(0, 50)
+        return ok(res, list, '成功(已入库)')
+      }
+    }
+    ok(res, [])
   } catch (e) { errMsg(res, e.message) }
 })
 
