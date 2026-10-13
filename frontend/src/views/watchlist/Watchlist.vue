@@ -74,7 +74,9 @@ const fetchData = async () => {
 }
 
 // ---- 选项卡编辑（新建 / 删除分组）----
-const handleTabEdit = (action, name) => {
+// Element Plus el-tabs 的 edit 事件签名：emit("edit", paneName, action)
+// 注意参数顺序——首参为分组名（add 时为 undefined），次参为动作 'add'/'remove'
+const handleTabEdit = (name, action) => {
   if (action === 'add') {
     groupForm.value = { name: '', description: '' }
     showGroupDialog.value = true
