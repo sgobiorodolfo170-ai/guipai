@@ -7,6 +7,7 @@ const ddb = require('../../dolphindb/client')
 const spotRepo = require('../../dolphindb/spot-repository')
 const indexSpotRepo = require('../../dolphindb/index-spot-repository')
 const converter = require('../converter')
+const { safeSymbol, safeDate } = require('../../dolphindb/params')
 
 const router = express.Router()
 
@@ -114,33 +115,45 @@ router.get('/index-kline', async (req, res) => {
   try {
     const { code, period = 'daily', startDate, endDate } = req.query
     if (!code) return errMsg(res, '缺少 code 参数')
-    const cacheKey = `ddb:index-kline:${code}:${period}:${startDate || ''}:${endDate || ''}`
+    // 净化 query 拼进 DolphinDB 脚本前必须过白名单（脚本无参数绑定）
+    const sym = safeSymbol(code)
+    const sd = safeDate(startDate)
+    const ed = safeDate(endDate || new Date().toISOString().slice(0, 10))
+    if (!sym || !sd || !ed) return errMsg(res, '参数不合法')
+    const cacheKey = `ddb:index-kline:${sym}:${period}:${startDate || ''}:${endDate || ''}`
     const cached = cache.get(cacheKey)
     if (cached) return ok(res, cached, '成功(缓存)')
 
-    const today = new Date().toISOString().slice(0, 10).replace(/-/g, '')
-    const effEnd = (endDate || '').replace(/-/g, '') || today
-    const sd = (startDate || '').replace(/-/g, '')
-    const ed = effEnd
+    const IDX_TBL = `loadTable("dfs://tradeinsight", "stock_zh_index_daily")`
+    const SELECT = `select trade_date as 日期, open as 开盘, close as 收盘, high as 最高, low as 最低,` +
+      ` volume as 成交量, amount as 成交额, turnover_rate as 换手率, change as 涨跌幅` +
+      ` from ${IDX_TBL} where symbol='${sym}' and trade_date between ${sd} and ${ed} order by trade_date`
+    const toKline = (rows) => rows.map(m => ({
+      date: String(m['日期']).replace(/\./g, '-'), open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
+      high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
+      volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
+      turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
+    }))
 
+    // 1. DB 读
     if (ddb.isConnected()) {
-      const r = await ddb.execute(`select trade_date as 日期, open as 开盘, close as 收盘, high as 最高, low as 最低, volume as 成交量, amount as 成交额, turnover_rate as 换手率, change as 涨跌幅 from loadTable("dfs://tradeinsight", "stock_zh_index_daily") where symbol='${code}' and trade_date between ${sd.replace(/-/g,'.')} and ${ed.replace(/-/g,'.')} order by trade_date`)
-      if (r && Array.isArray(r) && r.length > 0) {
-        const kline = r.map(m => ({
-          date: String(m['日期']).replace(/\./g, '-'), open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
-          high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
-          volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
-          turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
-        }))
+      const r = await ddb.execute(SELECT)
+      if (Array.isArray(r) && r.length > 0) {
+        const kline = toKline(r)
         cache.set(cacheKey, kline, 300)
         return ok(res, kline)
       }
     }
 
-    // aktools → converter → write → re-read
-    const raw = await aktools.getIndexDailyData({ symbol: code, period, start_date: sd, end_date: ed })
+    // 2. 数据源 → 转换入库 → 读回
+    const raw = await aktools.getIndexDailyData({
+      symbol: code,
+      period,
+      start_date: (startDate || '').replace(/-/g, ''),
+      end_date: (endDate || '').replace(/-/g, '') || new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    })
     if (raw && raw.length > 0 && ddb.isConnected()) {
-      const rows = converter.convertIndexDaily(raw, code)
+      const rows = converter.convertIndexDaily(raw, sym)
       const IDX_COLS = [
         { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
         { name: 'open', type: 'double' }, { name: 'close', type: 'double' },
@@ -150,18 +163,12 @@ router.get('/index-kline', async (req, res) => {
         { name: 'price_change', type: 'double' }, { name: 'turnover_rate', type: 'double' },
         { name: 'create_time', type: 'timestamp' }, { name: 'update_time', type: 'timestamp' }
       ]
-      await ddb.execute(`t = loadTable("dfs://tradeinsight", "stock_zh_index_daily"); delete from t where symbol='${code}' and trade_date between ${sd.replace(/-/g,'.')} and ${ed.replace(/-/g,'.')}`)
+      await ddb.execute(`t = ${IDX_TBL}; delete from t where symbol='${sym}' and trade_date between ${sd} and ${ed}`)
       await ddb.insertRows('stock_zh_index_daily', IDX_COLS, rows)
-      // re-read
       if (ddb.isConnected()) {
-        const r2 = await ddb.execute(`select trade_date as 日期, open as 开盘, close as 收盘, high as 最高, low as 最低, volume as 成交量, amount as 成交额, turnover_rate as 换手率, change as 涨跌幅 from loadTable("dfs://tradeinsight", "stock_zh_index_daily") where symbol='${code}' and trade_date between ${sd.replace(/-/g,'.')} and ${ed.replace(/-/g,'.')} order by trade_date`)
-        if (r2 && Array.isArray(r2) && r2.length > 0) {
-          const kline = r2.map(m => ({
-            date: String(m['日期']).replace(/\./g, '-'), open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
-            high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
-            volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
-            turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
-          }))
+        const r2 = await ddb.execute(SELECT)
+        if (Array.isArray(r2) && r2.length > 0) {
+          const kline = toKline(r2)
           cache.set(cacheKey, kline, 300)
           return ok(res, kline, '成功(已入库)')
         }

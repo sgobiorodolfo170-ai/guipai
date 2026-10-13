@@ -5,6 +5,7 @@
  */
 
 const ddb = require('./client')
+const { safeSymbol, safeDate } = require('./params')
 
 const COLS = [
   { name: 'trade_date', type: 'date' },
@@ -22,14 +23,14 @@ const COLS = [
 
 const TBL = `loadTable("dfs://tradeinsight", "stock_holding")`
 
-const dd = (s) => String(s || '').replace(/-/g, '.')
-
 async function insertHolding(rawRows, tradeDate, symbol) {
   if (!rawRows || rawRows.length === 0) return 0
-  if (!ddb.isConnected()) return 0
+  const d = safeDate(tradeDate)
+  const sym = safeSymbol(symbol)
+  if (!ddb.isConnected() || !d || !sym) return 0
   const rows = rawRows.map(r => ({
-    trade_date: tradeDate,
-    symbol: r['股票代码'] || symbol,
+    trade_date: d,
+    symbol: safeSymbol(r['股票代码']) || sym,
     holder_name: r['股东名称'],
     holder_type: r['股东类型'],
     hold_num: toLong(r['期末持股-数量']),
@@ -41,16 +42,17 @@ async function insertHolding(rawRows, tradeDate, symbol) {
     rank: toInt(r['股东排名'])
   })).filter(r => r.symbol && r.holder_name)
   // 预删除该股该报告期的数据
-  const d = dd(tradeDate)
-  await ddb.execute(`t = ${TBL}; delete from t where symbol='${symbol}' and trade_date=${d}`)
+  await ddb.execute(`t = ${TBL}; delete from t where symbol='${sym}' and trade_date=${d}`)
   await ddb.insertRows('stock_holding', COLS, rows)
   return rows.length
 }
 
 async function getHolding(tradeDate, symbol) {
   if (!ddb.isConnected()) return []
-  const d = dd(tradeDate)
-  const r = await ddb.execute(`select * from ${TBL} where symbol='${symbol}' and trade_date=${d} order by rank`)
+  const d = safeDate(tradeDate)
+  const sym = safeSymbol(symbol)
+  if (!d || !sym) return []
+  const r = await ddb.execute(`select * from ${TBL} where symbol='${sym}' and trade_date=${d} order by rank`)
   return Array.isArray(r) ? r : []
 }
 

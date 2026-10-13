@@ -6,6 +6,7 @@
  */
 
 const ddb = require('./client')
+const { safeSymbol } = require('./params')
 
 const SPOT_COLS = [
   { name: 'symbol', type: 'symbol' },
@@ -97,12 +98,15 @@ async function getSpot() {
 }
 
 /**
- * 读取指定股票快照。
+ * 读取指定股票快照（最新交易日）。
+ * @returns 单行对象，无数据/非法代码/未连接返回 null（注意是 null 而非 [] —— 调用方按单对象消费）
  */
 async function getSpotByCode(code) {
-  if (!ddb.isConnected()) return []
-  const r = await ddb.execute(`select * from ${TBL} where symbol='${code}' and trade_date = (select max(trade_date) from ${TBL})`)
-  return Array.isArray(r) ? r : []
+  if (!ddb.isConnected()) return null
+  const sym = safeSymbol(code)
+  if (!sym) return null
+  const r = await ddb.execute(`select * from ${TBL} where symbol='${sym}' and trade_date = (select max(trade_date) from ${TBL})`)
+  return Array.isArray(r) && r.length ? r[0] : null
 }
 
 /**

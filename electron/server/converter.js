@@ -66,7 +66,29 @@ function convertPlateMarket(rawList, tradeDate) {
   })).filter(r => r.plate)
 }
 
-module.exports = { convertStockLimitPool, convertIndexDaily, convertPlateMarket, convertSpot }
+/** 全市场实时行情快照转换（东财中文键 → stock_spot 英文键） */
+function convertSpot(rawList, tradeDate) {
+  if (!rawList || !rawList.length) return []
+  return rawList.map(m => ({
+    symbol: toStr(m['代码']),
+    trade_date: tradeDate,
+    open: toNum(m['今开']),
+    close: toNum(m['最新价']),
+    high: toNum(m['最高']),
+    low: toNum(m['最低']),
+    preclose: toNum(m['昨收']),
+    volume: toNum(m['成交量']),
+    amount: toNum(m['成交额']),
+    pct_chg: toNum(m['涨跌幅']),
+    change_amount: toNum(m['涨跌额']),
+    turnover_rate: toNum(m['换手率']),
+    amplitude: toNum(m['振幅']),
+    total_market_value: toNum(m['总市值']),
+    circulation_market_value: toNum(m['流通市值']),
+    pe_ttm: toNum(m['市盈率-动态']),
+    pb: toNum(m['市净率'])
+  })).filter(r => r.symbol)
+}
 
 /** 指数实时行情转换 */
 function convertIndexSpot(rawList, tradeDate) {
@@ -150,4 +172,7 @@ function convertHolding(rawList, tradeDate) {
   })).filter(r => r.symbol && r.holder_name)
 }
 
-module.exports = { convertStockLimitPool, convertIndexDaily, convertPlateMarket, convertSpot, convertIndexSpot, convertMinuteK, convertZtPrevious, convertHolding }
+module.exports = {
+  convertStockLimitPool, convertIndexDaily, convertPlateMarket,
+  convertSpot, convertIndexSpot, convertMinuteK, convertZtPrevious, convertHolding
+}

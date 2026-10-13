@@ -11,6 +11,7 @@
  */
 
 const ddb = require('./client')
+const { safeSymbol, safeDate } = require('./params')
 
 // daily_k 列定义（须与 ensureSchema 列序一致）
 // volume 为 LONG：与 daily_k 建表脚本一致；写入前由 toInt() 取整以容纳行情源的小数成交量。
@@ -64,16 +65,17 @@ async function insertDailyK(rawRows) {
   if (!rawRows || rawRows.length === 0) return 0
   if (!ddbReady()) return 0 // 本机无 DolphinDB：跳过回填，避免无谓的连接尝试
   const rows = rawRows.map(r => ({
-    symbol: r['股票代码'],
+    symbol: safeSymbol(r['股票代码']) || r['股票代码'],
     trade_date: r['日期'],
     open: r['开盘'], close: r['收盘'], high: r['最高'], low: r['最低'],
     volume: toInt(r['成交量']), amount: r['成交额'],
     turnover_rate: r['换手率'], pct_chg: r['涨跌幅'], amplitude: r['振幅'],
     create_time: new Date()
-  }))
+  })).filter(r => safeSymbol(r.symbol) && safeDate(r.trade_date))
+  if (!rows.length) return 0
   // 预删除（symbol + 日期范围），保证幂等
   const symbol = rows[0].symbol
-  const dates = rows.map(r => dd(r.trade_date)).sort()
+  const dates = rows.map(r => safeDate(r.trade_date)).sort()
   await ddb.execute(`t = loadTable("dfs://tradeinsight", "daily_k"); delete from t where symbol='${symbol}' and trade_date between ${dates[0]} and ${dates[dates.length - 1]}`)
   // 插入
   return await ddb.insertRows('daily_k', DAILY_K_COLS, rows)
@@ -85,12 +87,13 @@ async function insertDailyK(rawRows) {
  */
 async function getDailyK(symbol, startDate, endDate) {
   if (!ddbReady()) return [] // 未连接 → 直接判 miss，让路由走网络兜底（避免白等 ~10s 连接超时）
-  const sd = dd(startDate), ed = dd(endDate)
+  const sym = safeSymbol(symbol), sd = safeDate(startDate), ed = safeDate(endDate)
+  if (!sym || !sd || !ed) return []
   const r = await ddb.execute(
     `select trade_date as 日期, symbol as 股票代码, open as 开盘, close as 收盘,` +
     ` high as 最高, low as 最低, volume as 成交量, amount as 成交额,` +
     ` turnover_rate as 换手率, pct_chg as 涨跌幅, amplitude as 振幅` +
-    ` from ${TBL} where symbol='${symbol}' and trade_date between ${sd} and ${ed} order by trade_date`
+    ` from ${TBL} where symbol='${sym}' and trade_date between ${sd} and ${ed} order by trade_date`
   )
   return normRows(r)
 }
@@ -101,7 +104,8 @@ async function getDailyK(symbol, startDate, endDate) {
  */
 async function getKlineAggregated(symbol, startDate, endDate, period) {
   if (!ddbReady()) return [] // 同上：未连接直接判 miss
-  const sd = dd(startDate), ed = dd(endDate)
+  const sym = safeSymbol(symbol), sd = safeDate(startDate), ed = safeDate(endDate)
+  if (!sym || !sd || !ed) return []
   let groupBy
   if (period === 'weekly') groupBy = 'year(trade_date), weekOfYear(trade_date)'
   else if (period === 'monthly') groupBy = 'year(trade_date), month(trade_date)'
@@ -112,7 +116,7 @@ async function getKlineAggregated(symbol, startDate, endDate, period) {
   const r = await ddb.execute(
     `select first(trade_date) as 日期, first(open) as 开盘, last(close) as 收盘,` +
     ` max(high) as 最高, min(low) as 最低, sum(volume) as 成交量, sum(amount) as 成交额` +
-    ` from ${TBL} where symbol='${symbol}' and trade_date between ${sd} and ${ed}` +
+    ` from ${TBL} where symbol='${sym}' and trade_date between ${sd} and ${ed}` +
     ` group by ${groupBy} order by 日期`
   )
   return normRows(r)
@@ -124,7 +128,9 @@ async function getKlineAggregated(symbol, startDate, endDate, period) {
  */
 async function getDailyKLatest(symbol) {
   if (!ddbReady()) return null
-  const r = await ddb.execute(`select max(trade_date) as latest from ${TBL} where symbol='${symbol}'`)
+  const sym = safeSymbol(symbol)
+  if (!sym) return null
+  const r = await ddb.execute(`select max(trade_date) as latest from ${TBL} where symbol='${sym}'`)
   if (!Array.isArray(r) || !r.length) return null
   return normDate(r[0].latest)
 }
@@ -132,7 +138,9 @@ async function getDailyKLatest(symbol) {
 /** 统计某股日K行数（数据完整性检查） */
 async function getDailyKCount(symbol) {
   if (!ddbReady()) return 0
-  return await ddb.count(`select count(*) as c from ${TBL} where symbol='${symbol}'`)
+  const sym = safeSymbol(symbol)
+  if (!sym) return 0
+  return await ddb.count(`select count(*) as c from ${TBL} where symbol='${sym}'`)
 }
 
 module.exports = {

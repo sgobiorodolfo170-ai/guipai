@@ -25,9 +25,12 @@ const SAMPLE_STOCKS = [
   '603160', '603259', '603288', '603501', '603799', '603833', '603899'
 ]
 
+/** ISO 日期（YYYY-MM-DD）。必须用 ISO 而非 20260615 紧凑格式：
+ *  kline-repository 靠 `dd()` 把 '-' 换成 '.' 拼 DolphinDB 日期字面量，
+ *  传紧凑数字会被 DolphinDB 解析成 LONG，导致分区列比较报 S02040。 */
 function fmt(d) {
   const y = d.getFullYear(), m = String(d.getMonth() + 1).padStart(2, '0'), day = String(d.getDate()).padStart(2, '0')
-  return `${y}${m}${day}`
+  return `${y}-${m}-${day}`
 }
 
 router.get('/random', async (req, res) => {

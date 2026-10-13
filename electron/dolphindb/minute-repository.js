@@ -5,6 +5,7 @@
  */
 
 const ddb = require('./client')
+const { safeSymbol, safeDate } = require('./params')
 
 const COLS = [
   { name: 'symbol', type: 'symbol' },
@@ -26,16 +27,16 @@ const COLS = [
 
 const TBL = `loadTable("dfs://tradeinsight", "minute_k")`
 
-const dd = (s) => String(s || '').replace(/-/g, '.')
-
 async function insertMinuteK(rawRows, symbol, period) {
   if (!rawRows || rawRows.length === 0) return 0
-  if (!ddb.isConnected()) return 0
+  const sym = safeSymbol(symbol)
+  if (!sym || !ddb.isConnected()) return 0
+  const per = Number(period) || 5
   const rows = rawRows.map(r => ({
-    symbol,
+    symbol: sym,
     trade_date: r['时间'] ? r['时间'].slice(0, 10) : new Date().toISOString().slice(0, 10),
     timestamp: r['时间'] || new Date().toISOString(),
-    period: Number(period) || 5,
+    period: per,
     open: toDouble(r['开盘']),
     close: toDouble(r['收盘']),
     high: toDouble(r['最高']),
@@ -49,9 +50,9 @@ async function insertMinuteK(rawRows, symbol, period) {
     turnover_rate: toDouble(r['换手率'])
   }))
   // 预删除该股该日该周期的数据
-  const d = rows[0]?.trade_date?.replace(/-/g, '.') || ''
+  const d = safeDate(rows[0]?.trade_date)
   if (d) {
-    await ddb.execute(`t = ${TBL}; delete from t where symbol='${symbol}' and trade_date=${d} and period=${Number(period) || 5}`)
+    await ddb.execute(`t = ${TBL}; delete from t where symbol='${sym}' and trade_date=${d} and period=${per}`)
   }
   await ddb.insertRows('minute_k', COLS, rows)
   return rows.length
@@ -59,14 +60,19 @@ async function insertMinuteK(rawRows, symbol, period) {
 
 async function getMinuteK(symbol, tradeDate, period) {
   if (!ddb.isConnected()) return []
-  const d = dd(tradeDate)
-  const r = await ddb.execute(`select * from ${TBL} where symbol='${symbol}' and trade_date=${d} and period=${Number(period) || 5} order by timestamp`)
+  const sym = safeSymbol(symbol)
+  const d = safeDate(tradeDate)
+  if (!sym || !d) return []
+  const per = Number(period) || 5
+  const r = await ddb.execute(`select * from ${TBL} where symbol='${sym}' and trade_date=${d} and period=${per} order by timestamp`)
   return Array.isArray(r) ? r : []
 }
 
 async function getMinuteKLatest(symbol) {
   if (!ddb.isConnected()) return null
-  const r = await ddb.execute(`select max(trade_date) as latest from ${TBL} where symbol='${symbol}'`)
+  const sym = safeSymbol(symbol)
+  if (!sym) return null
+  const r = await ddb.execute(`select max(trade_date) as latest from ${TBL} where symbol='${sym}'`)
   return r && r[0] ? r[0].latest : null
 }
 
