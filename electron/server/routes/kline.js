@@ -40,16 +40,30 @@ router.get('/random', async (req, res) => {
 
     const endDate = new Date()
     const startDate = new Date()
-    startDate.setDate(startDate.getDate() - days - 60)
+    // days 是「交易日」数，而日历天数约为 1.45 倍（一年约 243 个交易日 / 365 天）。
+    // 早期用 days+60 天反推，250 个交易日只回看 310 天 ≈ 207 个交易日，
+    // 必然凑不满而误报「数据库缺数据」。现按 1.5 倍并留 30 天缓冲。
+    startDate.setDate(startDate.getDate() - Math.ceil(days * 1.5) - 30)
 
     const sd = fmt(startDate), ed = fmt(endDate)
 
-    // 1. DB 读（daily_k）
+    // 1. DB 读：优先工作表 daily_k（aktools 前复权数据，字段最全）
     let rows = await klineRepo.getDailyK(symbol, sd, ed)
+    let source = 'daily_k'
 
-    // 2. 抽样校验：只要样本池个股在 daily_k 缺数据就不补抓（模拟盘场景用全量日K能覆盖样本池）
+    // 2. daily_k 覆盖不足 → 用原始基线表 daily_k_raw 兜底。
+    //    模拟盘只需连续 N 个交易日的收盘序列，raw 的不复权价足够用；
+    //    缺 turnover_rate/pct_chg/amplitude 时前端按缺失渲染，不影响撮合。
     if (!rows || rows.length < days) {
-      return res.json({ code: 500, msg: `数据库缺少 ${symbol} 的日K数据（仅 ${rows ? rows.length : 0} 条，需 ${days} 条），请先在数据管理同步历史K线` })
+      const raw = await klineRepo.getDailyKRaw(symbol, sd, ed)
+      if (raw && raw.length > rows.length) { rows = raw; source = 'daily_k_raw' }
+    }
+
+    if (!rows || rows.length < days) {
+      return res.json({
+        code: 500,
+        msg: `数据库缺少 ${symbol} 的日K数据（仅 ${rows ? rows.length : 0} 条，需 ${days} 条），请先在数据管理同步历史K线`
+      })
     }
 
     const data = rows.slice(-days)
@@ -70,7 +84,7 @@ router.get('/random', async (req, res) => {
       pctChange: Number(item['涨跌幅'])
     }))
 
-    res.json({ code: 200, msg: '成功', data: { code: symbol, codeName, klineData, source: 'daily_k' } })
+    res.json({ code: 200, msg: '成功', data: { code: symbol, codeName, klineData, source } })
   } catch (e) {
     res.json({ code: 500, msg: e.message })
   }

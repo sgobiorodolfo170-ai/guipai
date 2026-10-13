@@ -25,7 +25,9 @@ const DAILY_K_COLS = [
 ]
 
 const TBL = `loadTable("dfs://tradeinsight", "daily_k")`
-const dd = (s) => String(s || '').replace(/-/g, '.')
+// 原始基线表：独立的 dfs://tradeinsight_raw 库（1990 起 RANGE 分区，覆盖 1998 至今）。
+// 与 TBL 分开存放的理由见 README_RAW_DATA.md：raw 是不可变基线，工作表写入不应污染它。
+const RAW_TBL = `loadTable("dfs://tradeinsight_raw", "daily_k_raw")`
 
 /** DolphinDB 日期串 → ISO（2026.09.25 → 2026-09-25） */
 function normDate(v) {
@@ -135,6 +137,36 @@ async function getDailyKLatest(symbol) {
   return normDate(r[0].latest)
 }
 
+/**
+ * 读取原始日K基线表（dfs://tradeinsight_raw / daily_k_raw，TDX 不复权全量）。
+ *
+ * 用途：daily_k（工作表，只存 aktools 拉取过的前复权日K）覆盖不足时用它兜底历史区间。
+ * 仅 8 列（无 turnover_rate/pct_chg/amplitude），这三列返回 null，由前端按缺失渲染。
+ * 注意：raw 是**不复权**价，与 daily_k 的前复权口径不同，故仅作长周期兜底、不参与混算。
+ *
+ * @returns 中文键行数组，与 getDailyK 同构
+ */
+async function getDailyKRaw(symbol, startDate, endDate) {
+  if (!ddbReady()) return []
+  const sym = safeSymbol(symbol), sd = safeDate(startDate), ed = safeDate(endDate)
+  if (!sym || !sd || !ed) return []
+  const r = await ddb.execute(
+    `select trade_date as 日期, symbol as 股票代码, open as 开盘, close as 收盘,` +
+    ` high as 最高, low as 最低, volume as 成交量, amount as 成交额,` +
+    ` null as 换手率, null as 涨跌幅, null as 振幅` +
+    ` from ${RAW_TBL} where symbol='${sym}' and trade_date between ${sd} and ${ed} order by trade_date`
+  )
+  return normRows(r)
+}
+
+/** 原始基线表是否有该股数据（决定是否兜底，避免多打一次库） */
+async function hasDailyKRaw(symbol) {
+  if (!ddbReady()) return false
+  const sym = safeSymbol(symbol)
+  if (!sym) return false
+  return (await ddb.count(`select count(*) as c from ${RAW_TBL} where symbol='${sym}'`)) > 0
+}
+
 /** 统计某股日K行数（数据完整性检查） */
 async function getDailyKCount(symbol) {
   if (!ddbReady()) return 0
@@ -150,5 +182,7 @@ module.exports = {
   getKlineAggregated,
   getDailyKLatest,
   getDailyKCount,
+  getDailyKRaw,
+  hasDailyKRaw,
   DAILY_K_COLS
 }
