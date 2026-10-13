@@ -229,18 +229,24 @@ router.get('/realtime', async (req, res) => {
 router.get('/:code', async (req, res) => {
   try {
     const { code } = req.params
+    const nameOf = () => {
+      try {
+        const r = getDb().prepare('SELECT name FROM stock_basic WHERE code = ?').get(code)
+        return r && r.name ? r.name : null
+      } catch { return null }
+    }
     // 1. stock_spot 快照（按代码直查，避免拉全市场）
     let row = null
     try {
       row = await spotRepo.getSpotByCode(code)
     } catch (_) { /* DolphinDB 不可用，走基础信息兜底 */ }
-    if (row) return ok(res, { ...mapSpotRow(row), name: row.name || code, market: 'A股' })
+    if (row) return ok(res, { ...mapSpotRow(row), name: nameOf() || row.name || code, market: 'A股' })
 
     // 2. 基础信息兜底：只读本地 stock_basic，price 给 0 由前端展示 '--'
-    try {
-      const info = getDb().prepare('SELECT code, name, market FROM stock_basic WHERE code = ?').get(code)
-      if (info) return ok(res, { code, name: info.name || code, price: 0, market: info.market || 'A股' })
-    } catch (_) { /* 表未就绪 */ }
+    const info = (() => {
+      try { return getDb().prepare('SELECT code, name, market FROM stock_basic WHERE code = ?').get(code) } catch { return null }
+    })()
+    if (info) return ok(res, { code, name: info.name || code, price: 0, market: info.market || 'A股' })
     errMsg(res, '未找到股票信息，请先在数据管理同步股票列表')
   } catch (e) { errMsg(res, e.message) }
 })

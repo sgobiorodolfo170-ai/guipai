@@ -131,12 +131,22 @@ async function failover(dataType, params, order) {
       // 空结果：不记 fail（可能是真无数据），但记原因继续下一源
       reasons.push(`${name}:空`)
     } catch (e) {
-      reasons.push(`${name}:${e.message.slice(0, 60)}`)
+      reasons.push(`${name}:${String((e && e.message) || e).slice(0, 60)}`)
       lastErr = e
       markFail(name, e)
     }
   }
-  const err = lastErr || new Error(`${dataType} 各源均返回空（${reasons.join('；')}）`)
+  // 全链失败：优先抛最后一个真实异常（保留原始类型/堆栈，如 retryAfterSec 等附加属性），
+  // 但必须把各源原因聚合进 message —— 否则上层只看到最后一个源的报错，
+  // 表现为「Cannot read properties of undefined」这类无信息量错误，极难定位。
+  const reasonStr = reasons.length ? `（${reasons.join('；')}）` : ''
+  if (lastErr) {
+    lastErr.message = `${lastErr.message || '数据源失败'}${reasonStr}`
+    lastErr.reasons = reasons
+    lastErr.dataType = dataType
+    throw lastErr
+  }
+  const err = new Error(`${dataType} 各源均返回空${reasonStr}`)
   err.reasons = reasons
   err.dataType = dataType
   throw err

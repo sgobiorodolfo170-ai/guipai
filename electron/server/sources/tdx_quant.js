@@ -127,11 +127,24 @@ async function getKLine({ symbol, period = 'daily', start_date, end_date, count,
 
 /**
  * 实时快照（get_market_snapshot_batch 或 get_market_snapshot）。
- * @param codes 单代码或数组；返回 [{code,name,price,change,...}] 中文键
+ *
+ * 注意：xtquant 的 snapshot 接口是「按代码列表」查询，没有全市场快照语义。
+ * 调度器派发 spot 时 params 是普通对象（无 codes 字段），此时必须返回空数组交由下一源，
+ * 否则下面 arr 里的 params 对象会走到 c.includes 上抛 TypeError，把整个 spot
+ * failover 链的聚合错误顶掉（表现为上游报 "reading 'includes'" 而非真实原因）。
+ *
+ * @param codes 单代码 / 代码数组 / 调度器 params 对象；返回 [{...}] 中文键
  */
 async function getSnapshot(codes) {
-  const arr = Array.isArray(codes) ? codes : [codes]
-  const stockList = arr.map(c => c.includes('.') ? c : `${c}.${suffix(c)}`)
+  // 兼容调度器传 params 对象：仅当明确给出 codes 时才走本接口
+  const raw = (codes && typeof codes === 'object' && !Array.isArray(codes))
+    ? (codes.codes != null ? codes.codes : (codes.symbol != null ? [codes.symbol] : null))
+    : codes
+  const arr = (Array.isArray(raw) ? raw : (raw != null ? [raw] : []))
+    .map(c => (c == null ? null : String(c)))
+    .filter(c => c && /^\d{6}/.test(c))
+  if (arr.length === 0) return [] // 无有效代码 → 本源不提供全市场快照
+  const stockList = arr.map(c => (c.includes('.') ? c : `${c}.${suffix(c)}`))
   let result
   try {
     result = await call('get_market_snapshot_batch', { stock_list: stockList })
