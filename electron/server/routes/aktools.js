@@ -11,6 +11,20 @@ const { getDb } = require('../db')
 const router = express.Router()
 
 /**
+ * 废弃标记中间件：所有 /api/aktools/* 端点已迁移到业务路由。
+ * 响应头加 X-Deprecated + 控制台告警，便于发现遗漏的调用方。
+ * 端点仍在工作（DB-first 逻辑保留），但不再接收新功能。
+ */
+router.use((req, _res, next) => {
+  _res.setHeader('X-Deprecated', 'true')
+  _res.setHeader('X-Deprecated-Message', 'Use business routes: /api/stocks, /api/market, /api/boards, /api/limit-board-statistics')
+  if (process.env.NODE_ENV !== 'production') {
+    console.warn(`[deprecated] /api/aktools${req.url} — 请迁移到业务路由`)
+  }
+  next()
+})
+
+/**
  * DB-first with write-on-miss 模式：
  * 1. cache 命中 → 返回（缓存的数据源自 DB）
  * 2. cache miss → 查 DB → 有数据 → cache.set → 返回

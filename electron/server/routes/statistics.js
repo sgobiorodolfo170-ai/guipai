@@ -15,12 +15,16 @@
 const express = require('express')
 const ddb = require('../../dolphindb/client')
 const cache = require('../cache')
+const aktools = require('../aktools')
+const converter = require('../converter')
+const { safeDate } = require('../../dolphindb/params')
 
 const router = express.Router()
 
 const TBL = "loadTable('dfs://tradeinsight','stock_limit_pool')"
 const TBL_PLATE = "loadTable('dfs://tradeinsight','plate_market_quotation')"
 const TBL_INDEX = "loadTable('dfs://tradeinsight','stock_zh_index_daily')"
+const TBL_ZT_PREV = "loadTable('dfs://tradeinsight','zt_pool_previous')"
 
 function ok(res, data) { res.json({ code: 200, msg: '成功', data }) }
 function err(res, msg) { res.json({ code: 500, msg }) }
@@ -596,6 +600,114 @@ router.delete('/cache/clear/:date', (req, res) => {
 router.post('/cache/warmup', (req, res) => {
   cache.clear()
   ok(res, { warmed: true })
+})
+
+/** stock_limit_pool 列定义（须与 ensureSchema 列序一致） */
+const LIMIT_POOL_COLS = [
+  { name: 'data_type', type: 'symbol' }, { name: 'trade_date', type: 'date' },
+  { name: 'stock_code', type: 'symbol' }, { name: 'stock_name', type: 'symbol' },
+  { name: 'industry', type: 'string' }, { name: 'increase_rate', type: 'double' },
+  { name: 'latest_price', type: 'double' }, { name: 'turnover', type: 'long' },
+  { name: 'circulation_market_value', type: 'double' }, { name: 'total_market_value', type: 'double' },
+  { name: 'turnover_rate', type: 'double' }, { name: 'limit_funds', type: 'long' },
+  { name: 'first_limit_time', type: 'string' }, { name: 'limit_stats', type: 'string' },
+  { name: 'dynamic_pe', type: 'double' }, { name: 'limit_turnover', type: 'long' },
+  { name: 'continuous_limit', type: 'int' }, { name: 'last_limit_time', type: 'string' },
+  { name: 'blast_times', type: 'int' }, { name: 'create_time', type: 'timestamp' }
+]
+
+// ---- 涨停池 / 跌停池 / 昨日涨停（DB-first，供 Review 页迁移用） ----
+
+/** GET /limit-pool/:date — 某日涨停池全量数据（DB-first from stock_limit_pool LIMIT_UP） */
+router.get('/limit-pool/:date', async (req, res) => {
+  const { date } = req.params
+  const d = safeDate(date)
+  if (!d) return err(res, '日期参数不合法')
+  const cacheKey = `stats:limit-pool:${d}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached)
+  try {
+    if (ddb.isConnected()) {
+      const r = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_UP' order by continuous_limit desc`)
+      const rows = normRows(toRows(r))
+      if (rows.length) { cache.set(cacheKey, rows, 300); return ok(res, rows) }
+    }
+    // aktools write-on-miss
+    const raw = await aktools.getStockLimitPool(date)
+    if (raw && raw.length && ddb.isConnected()) {
+      const rows = converter.convertStockLimitPool(raw, date, 'LIMIT_UP')
+      await ddb.execute(`t = ${TBL}; delete from t where trade_date=${d} and data_type='LIMIT_UP'`)
+      await ddb.insertRows('stock_limit_pool', LIMIT_POOL_COLS, rows)
+      const r2 = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_UP' order by continuous_limit desc`)
+      const rows2 = normRows(toRows(r2))
+      if (rows2.length) { cache.set(cacheKey, rows2, 300); return ok(res, rows2) }
+    }
+    ok(res, raw || [])
+  } catch (e) { err(res, e.message) }
+})
+
+/** GET /drop-pool/:date — 某日跌停池全量数据（DB-first from stock_limit_pool LIMIT_DOWN） */
+router.get('/drop-pool/:date', async (req, res) => {
+  const { date } = req.params
+  const d = safeDate(date)
+  if (!d) return err(res, '日期参数不合法')
+  const cacheKey = `stats:drop-pool:${d}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached)
+  try {
+    if (ddb.isConnected()) {
+      const r = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_DOWN'`)
+      const rows = normRows(toRows(r))
+      if (rows.length) { cache.set(cacheKey, rows, 300); return ok(res, rows) }
+    }
+    const raw = await aktools.getStockDropPool(date)
+    if (raw && raw.length && ddb.isConnected()) {
+      const rows = converter.convertStockLimitPool(raw, date, 'LIMIT_DOWN')
+      await ddb.execute(`t = ${TBL}; delete from t where trade_date=${d} and data_type='LIMIT_DOWN'`)
+      await ddb.insertRows('stock_limit_pool', LIMIT_POOL_COLS, rows)
+      const r2 = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_DOWN'`)
+      const rows2 = normRows(toRows(r2))
+      if (rows2.length) { cache.set(cacheKey, rows2, 300); return ok(res, rows2) }
+    }
+    ok(res, raw || [])
+  } catch (e) { err(res, e.message) }
+})
+
+/** GET /zt-previous/:date — 昨日涨停数据（DB-first from zt_pool_previous） */
+router.get('/zt-previous/:date', async (req, res) => {
+  const { date } = req.params
+  const d = safeDate(date)
+  if (!d) return err(res, '日期参数不合法')
+  const cacheKey = `stats:zt-prev:${d}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached)
+  try {
+    if (ddb.isConnected()) {
+      const r = await ddb.execute(`select * from ${TBL_ZT_PREV} where trade_date=${d}`)
+      const rows = normRows(toRows(r))
+      if (rows.length) { cache.set(cacheKey, rows, 300); return ok(res, rows) }
+    }
+    const raw = await aktools.getZtPoolPrevious(date)
+    if (raw && raw.length && ddb.isConnected()) {
+      const rows = converter.convertZtPrevious(raw, date)
+      const ZT_COLS = [
+        { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
+        { name: 'name', type: 'symbol' }, { name: 'latest_price', type: 'double' },
+        { name: 'limit_price', type: 'double' }, { name: 'pct_chg', type: 'double' },
+        { name: 'amount', type: 'double' }, { name: 'circulation_mv', type: 'double' },
+        { name: 'total_mv', type: 'double' }, { name: 'turnover_rate', type: 'double' },
+        { name: 'amplitude', type: 'double' }, { name: 'speed', type: 'double' },
+        { name: 'last_limit_time', type: 'string' }, { name: 'consecutive_limit', type: 'int' },
+        { name: 'industry', type: 'string' }, { name: 'limit_stats', type: 'string' }
+      ]
+      await ddb.execute(`t = ${TBL_ZT_PREV}; delete from t where trade_date=${d}`)
+      await ddb.insertRows('zt_pool_previous', ZT_COLS, rows)
+      const r2 = await ddb.execute(`select * from ${TBL_ZT_PREV} where trade_date=${d}`)
+      const rows2 = normRows(toRows(r2))
+      if (rows2.length) { cache.set(cacheKey, rows2, 300); return ok(res, rows2) }
+    }
+    ok(res, raw || [])
+  } catch (e) { err(res, e.message) }
 })
 
 module.exports = router

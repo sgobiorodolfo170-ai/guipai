@@ -20,6 +20,7 @@ const aktools = require('../aktools')
 const cache = require('../cache')
 const ddb = require('../../dolphindb/client')
 const klineRepo = require('../../dolphindb/kline-repository')
+const { getDb } = require('../db')
 
 const router = express.Router()
 const ok = (res, data, msg = '成功') => res.json({ code: 200, msg, data })
@@ -64,16 +65,15 @@ function normCode(c) {
   return String(c || '').trim().toUpperCase().replace(/[^0-9A-Z]/g, '')
 }
 
-/** 取 code -> name 映射（来自实时行情缓存，缺失则实时取一次） */
+/** 取 code -> name 映射。
+ *  旧实现读 cache('aktools:stock:spot')，但 C5 删了该 key 的写入者，永远 miss。
+ *  改读 sql.js stock_basic：不依赖 DolphinDB / 行情源，更稳定。 */
 async function nameMap() {
-  let list = cache.get('aktools:stock:spot')
-  if (!list || !list.length) {
-    try { list = await aktools.getStockSpot() } catch (_) { return {} }
-  }
   const m = {}
-  for (const it of list || []) {
-    if (it['代码']) m[it['代码']] = it['名称']
-  }
+  try {
+    const rows = getDb().prepare('SELECT code, name FROM stock_basic').all()
+    for (const r of rows) m[r.code] = r.name
+  } catch (_) { /* stock_basic 表未就绪时返回空 map */ }
   return m
 }
 
