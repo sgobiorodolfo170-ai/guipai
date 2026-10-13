@@ -86,43 +86,6 @@ function stockBasicStats() {
   return { total: totalRow?.c || 0, byMarket }
 }
 
-function mapSpotItem(m) {
-  return {
-    code: m['代码'], name: m['名称'],
-    price: Number(m['最新价']) || 0,
-    change: Number(m['涨跌额']) || 0,
-    changePercent: Number(m['涨跌幅']) || 0,
-    volume: Number(m['成交量']) || 0,
-    turnover: Number(m['成交额']) || 0,
-    totalMarketValue: Number(m['总市值']) || 0,
-    circulationMarketValue: Number(m['流通市值']) || 0,
-    turnoverRate: Number(m['换手率']) || 0,
-    high: Number(m['最高']) || 0,
-    low: Number(m['最低']) || 0,
-    open: Number(m['开盘']) || 0,
-    amplitude: Number(m['振幅']) || 0,
-    market: 'A股'
-  }
-}
-
-// 两级缓存，各自独立 key：
-//   SPOT_RAW_KEY    —— aktools 原始行（中文列名）。与 /api/aktools/stock/spot 及启动预热 primeCache 共用，
-//                     预热写入的就是这份数据，本模块只读不写形状，避免同 key 两种结构互相污染。
-//   SPOT_MAPPED_KEY —— 映射后的列表，仅本模块使用，缓存它是为了避免每请求重复映射 5500+ 行。
-const SPOT_RAW_KEY = 'aktools:stock:spot'
-const SPOT_MAPPED_KEY = 'aktools:stock:spot:mapped'
-
-async function getSpotList() {
-  const mapped = cache.get(SPOT_MAPPED_KEY)
-  if (mapped) return mapped
-  // 优先复用预热/其它路由已缓存的原始数据，避免全市场快照重复冷调用（1.5~4s）
-  const raw = cache.get(SPOT_RAW_KEY) || await aktools.getStockSpot()
-  const list = (raw || []).map(mapSpotItem).filter(s => s.code)
-  // 空结果不落缓存：上游被拦时返回空包，缓存会让首屏"无数据"固化一个 TTL 周期
-  if (list.length) cache.set(SPOT_MAPPED_KEY, list, 60)
-  return list
-}
-
 // 股票列表 —— 只读本地 stock_basic 库，不再每次直连行情源。
 // 支持 market（沪市主板/科创板/深市主板/创业板/北交所）分类过滤、代码/名称搜索、分页。
 router.get('/', (req, res) => {
@@ -211,72 +174,74 @@ router.get('/search', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 实时行情 — DB-first from stock_spot
-router.get('/realtime', async (req, res) => {
-  const cacheKey = 'ddb:spot:latest'
-  const cached = cache.get(cacheKey)
-  if (cached) {
-    const { codes } = req.query
-    const codeList = codes ? codes.split(',') : []
-    const list = codeList.length ? cached.filter(s => codeList.includes(s.symbol || s.code)) : cached.slice(0, 50)
-    return ok(res, list)
+/**
+ * stock_spot 数据库行 → 前端契约。
+ * DB 用 snake_case 存列名（symbol/pct_chg/...），前端 StockList.vue / stock.store.js 按
+ * code/price/changePercent/turnover/totalMarketValue 取值，故在路由边界做一次显式映射，
+ * 避免把存储层字段名泄漏给前端。
+ */
+function mapSpotRow(r) {
+  return {
+    code: r.symbol,
+    name: r.name || r.symbol,
+    price: r.close != null ? Number(r.close) : 0,
+    changePercent: r.pct_chg != null ? Number(r.pct_chg) : 0,
+    turnover: r.amount != null ? Number(r.amount) : 0,
+    volume: r.volume != null ? Number(r.volume) : 0,
+    totalMarketValue: r.total_market_value != null ? Number(r.total_market_value) : 0,
+    market: 'A股'
   }
+}
+
+// 实时行情 — DB-first from stock_spot
+// 三层：内存缓存 → DolphinDB → aktools 补写后读回。任一层命中即返回，全程不直连行情源。
+router.get('/realtime', async (req, res) => {
+  const cacheKey = 'ddb:spot:realtime'
+  const { codes } = req.query
+  const codeList = codes ? String(codes).split(',') : []
   try {
-    // 1. DB 读
-    let data = await spotRepo.getSpot()
-    if (data && data.length > 0) {
-      cache.set(cacheKey, data, 60)
-      const { codes } = req.query
-      const codeList = codes ? codes.split(',') : []
-      const list = codeList.length ? data.filter(s => codeList.includes(s.symbol)) : data.slice(0, 50)
-      return ok(res, list)
+    // 1. 内存缓存
+    let cached = cache.get(cacheKey)
+    if (!cached) {
+      // 2. DolphinDB
+      cached = await spotRepo.getSpot()
+      if (cached && cached.length) cache.set(cacheKey, cached, 60)
     }
-    // 2. aktools → write → re-read
+    if (cached && cached.length) {
+      const list = (codeList.length ? cached.filter(s => codeList.includes(s.symbol)) : cached).map(mapSpotRow)
+      return ok(res, list, '成功(缓存)')
+    }
+
+    // 3. aktools → 转换入库 → 读回（保证前端只见数据库数据）
     const raw = await aktools.getStockSpot()
-    if (raw && raw.length > 0) {
-      await spotRepo.insertSpotSafe(raw)
-      data = await spotRepo.getSpot()
-      if (data && data.length > 0) {
-        cache.set(cacheKey, data, 60)
-        const { codes } = req.query
-        const codeList = codes ? codes.split(',') : []
-        const list = codeList.length ? data.filter(s => codeList.includes(s.symbol)) : data.slice(0, 50)
-        return ok(res, list, '成功(已入库)')
-      }
-    }
-    ok(res, [])
+    if (!raw || !raw.length) return ok(res, [], '成功(空数据)')
+    await spotRepo.insertSpotSafe(raw)
+    const rows = await spotRepo.getSpot()
+    if (!rows || !rows.length) return ok(res, [], '成功(入库后仍为空)')
+    cache.set(cacheKey, rows, 60)
+    const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
+    ok(res, list, '成功(已入库)')
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 股票详情
-// 三级降级：全市场缓存 → 按单只代码取快照 → getStockInfo。
-// 关键：getSpotList() 失败时不能中断流程，需 fall through 到 per-code 取数。
+// 股票详情 — DB-first from stock_spot
+// 两级降级：stock_spot 快照 → sql.js stock_basic 基础信息。不再直连行情源。
 router.get('/:code', async (req, res) => {
   try {
     const { code } = req.params
-    // 1. 全市场缓存（命中则最快）
-    let list = []
+    // 1. stock_spot 快照（按代码直查，避免拉全市场）
+    let row = null
     try {
-      list = await getSpotList()
-    } catch (_) { /* TDX 全市场不可用，降级到逐股取 */ }
-    const stock = list.find(s => s.code === code)
-    if (stock) {
-      return ok(res, { ...stock, market: 'A股' })
-    }
-    // 2. 按单只代码直接取快照（TDX per-code 快路径）
+      row = await spotRepo.getSpotByCode(code)
+    } catch (_) { /* DolphinDB 不可用，走基础信息兜底 */ }
+    if (row) return ok(res, { ...mapSpotRow(row), name: row.name || code, market: 'A股' })
+
+    // 2. 基础信息兜底：只读本地 stock_basic，price 给 0 由前端展示 '--'
     try {
-      const raw = await aktools.getStockSpot(code)
-      const rawArr = Array.isArray(raw) ? raw : (raw ? [raw] : [])
-      const stock2 = rawArr.map(mapSpotItem).find(s => s.code === code)
-      if (stock2) return ok(res, { ...stock2, market: 'A股' })
-    } catch (_) { /* 降级到 getStockInfo */ }
-    // 3. 基础信息兜底
-    try {
-      const info = await aktools.getStockInfo(code)
-      ok(res, { code, name: info?.[0]?.['股票简称'] || code, price: 0, market: 'A股' })
-    } catch {
-      errMsg(res, '未找到股票信息')
-    }
+      const info = getDb().prepare('SELECT code, name, market FROM stock_basic WHERE code = ?').get(code)
+      if (info) return ok(res, { code, name: info.name || code, price: 0, market: info.market || 'A股' })
+    } catch (_) { /* 表未就绪 */ }
+    errMsg(res, '未找到股票信息，请先在数据管理同步股票列表')
   } catch (e) { errMsg(res, e.message) }
 })
 

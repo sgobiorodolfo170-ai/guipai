@@ -13,6 +13,46 @@ const router = express.Router()
 function ok(res, data, msg = '成功') { res.json({ code: 200, msg, data }) }
 function errMsg(res, msg) { res.json({ code: 500, msg }) }
 
+/**
+ * 指数代码 → 中文名。
+ * stock_index_spot 只存 symbol（无 name 列），而前端 Dashboard.vue 靠 name 匹配
+ * '上证'/'深证'/'创业' 来定位三大指数。此处用静态映射补名，避免为了一列名称去改表结构
+ * （createPartitionedTable 有 existsTable 守卫，改列对存量库不生效，反而制造迁移分叉）。
+ */
+const INDEX_NAME_MAP = {
+  '000001': '上证指数', '000300': '沪深300', '000905': '中证500', '000016': '上证50',
+  '000852': '中证1000', '000010': '上证180', '000688': '科创50', '000688.SH': '科创50',
+  '399001': '深证成指', '399006': '创业板指', '399005': '中小100', '399106': '深证综指',
+  '399673': '创业板50', '000001.SH': '上证指数', '000300.SH': '沪深300',
+  '399001.SZ': '深证成指', '399006.SZ': '创业板指'
+}
+
+function indexName(symbol) { return INDEX_NAME_MAP[symbol] || symbol }
+
+/** stock_spot 行 → /hot 前端契约（按成交额倒序，DB 侧不预排序避免污染缓存顺序） */
+function toHot(rows) {
+  return rows
+    .filter(r => r.symbol)
+    .map(r => ({
+      code: r.symbol, name: r.name || r.symbol,
+      price: Number(r.close) || 0,
+      changePercent: Number(r.pct_chg) || 0,
+      turnover: Number(r.amount) || 0
+    }))
+    .sort((a, b) => b.turnover - a.turnover)
+}
+
+/** stock_index_spot 行 → /overview 前端契约 */
+function toOverview(rows) {
+  return rows.map(m => ({
+    code: m.symbol,
+    name: indexName(m.symbol),
+    price: Number(m.latest_price) || 0,
+    change: Number(m.change_amount) || 0,
+    changePercent: Number(m.pct_chg) || 0
+  }))
+}
+
 // 市场概况 — DB-first from stock_index_spot
 router.get('/overview', async (req, res) => {
   const cacheKey = 'ddb:indexSpot:overview'
@@ -21,10 +61,7 @@ router.get('/overview', async (req, res) => {
   try {
     let data = await indexSpotRepo.getIndexSpot()
     if (data && data.length > 0) {
-      const overview = data.map(m => ({
-        code: m.symbol, name: m.symbol, price: Number(m.latest_price) || 0,
-        change: Number(m.change_amount) || 0, changePercent: Number(m.pct_chg) || 0
-      }))
+      const overview = toOverview(data)
       cache.set(cacheKey, overview, 60)
       return ok(res, overview)
     }
@@ -35,10 +72,7 @@ router.get('/overview', async (req, res) => {
       await indexSpotRepo.insertIndexSpot(raw, today)
       data = await indexSpotRepo.getIndexSpot()
       if (data && data.length > 0) {
-        const overview = data.map(m => ({
-          code: m.symbol, name: m.symbol, price: Number(m.latest_price) || 0,
-          change: Number(m.change_amount) || 0, changePercent: Number(m.pct_chg) || 0
-        }))
+        const overview = toOverview(data)
         cache.set(cacheKey, overview, 60)
         return ok(res, overview, '成功(已入库)')
       }
@@ -56,7 +90,7 @@ router.get('/hot', async (req, res) => {
   try {
     let data = await spotRepo.getSpot()
     if (data && data.length > 0) {
-      const list = data.sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
+      const list = toHot(data)
       cache.set(cacheKey, list, 60)
       return ok(res, list.slice(0, Number(limit)))
     }
@@ -66,7 +100,7 @@ router.get('/hot', async (req, res) => {
       await spotRepo.insertSpotSafe(raw)
       data = await spotRepo.getSpot()
       if (data && data.length > 0) {
-        const list = data.sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
+        const list = toHot(data)
         cache.set(cacheKey, list, 60)
         return ok(res, list.slice(0, Number(limit)), '成功(已入库)')
       }
