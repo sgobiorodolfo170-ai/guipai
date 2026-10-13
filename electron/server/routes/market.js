@@ -106,6 +106,17 @@ router.get('/hot', async (req, res) => {
         return ok(res, list.slice(0, Number(limit)), '成功(已入库)')
       }
     }
+
+    // 上游全挂 → 从 daily_k_raw 派生收盘快照兜底
+    const derived = await spotRepo.deriveFromRaw()
+    if (derived > 0) {
+      data = await spotRepo.getSpot()
+      if (data && data.length > 0) {
+        const list = toHot(data)
+        cache.set(cacheKey, list, 60)
+        return ok(res, list.slice(0, Number(limit)), '成功(daily_k_raw 派生快照)')
+      }
+    }
     ok(res, [])
   } catch (e) { errMsg(res, e.message) }
 })

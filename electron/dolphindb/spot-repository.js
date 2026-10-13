@@ -121,4 +121,57 @@ async function getLatestSpotTimestamp() {
 function toDouble(v) { return v == null ? null : Number(v) }
 function toLong(v) { return v == null ? null : Math.abs(Math.round(Number(v))) }
 
-module.exports = { insertSpot, insertSpotSafe, getSpot, getSpotByCode, getLatestSpotTimestamp, SPOT_COLS }
+/**
+ * 从 daily_k_raw 派生全市场快照（每只股票最新一行）。
+ *
+ * 用途：stock_spot 表为空且上游行情源全挂时，用 raw 的最新收盘数据兜底，
+ * 让 /realtime /hot /:code 在离线环境下仍有数据。
+ *
+ * 限制：raw 只有 8 列（symbol/trade_date/open/close/high/low/volume/amount），
+ * 缺 pct_chg/turnover_rate/pe/pb/总市值等 10 列，这些填 null。
+ * raw 是收盘价非实时价，trade_date 是最近交易日而非今日。
+ *
+ * @returns 写入 stock_spot 的行数
+ */
+async function deriveFromRaw() {
+  if (!ddb.isConnected()) return 0
+  // context by symbol last — DolphinDB 取每 symbol 最后一行
+  const raw = await ddb.execute(
+    `select symbol, trade_date, open, close, high, low, volume, amount` +
+    ` from loadTable("dfs://tradeinsight_raw", "daily_k_raw")` +
+    ` context by symbol last`
+  )
+  if (!Array.isArray(raw) || !raw.length) return 0
+
+  const today = new Date().toISOString().slice(0, 10)
+  const now = new Date()
+  const todayDdb = today.replace(/-/g, '.')
+
+  const rows = raw.map(r => ({
+    symbol: r.symbol,
+    trade_date: today,
+    timestamp: now,
+    open: toDouble(r.open),
+    close: toDouble(r.close),
+    high: toDouble(r.high),
+    low: toDouble(r.low),
+    preclose: null,
+    volume: toLong(r.volume),
+    amount: toDouble(r.amount),
+    pct_chg: null,
+    change_amount: null,
+    turnover_rate: null,
+    amplitude: null,
+    total_market_value: null,
+    circulation_market_value: null,
+    pe_ttm: null,
+    pb: null
+  })).filter(r => r.symbol)
+
+  // 预删除今日数据（幂等）
+  await ddb.execute(`t = ${TBL}; delete from t where trade_date=${todayDdb}`)
+  await ddb.insertRows('stock_spot', SPOT_COLS, rows)
+  return rows.length
+}
+
+module.exports = { insertSpot, insertSpotSafe, getSpot, getSpotByCode, getLatestSpotTimestamp, deriveFromRaw, SPOT_COLS }

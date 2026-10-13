@@ -7,7 +7,7 @@ import {
     getStockLimit,
     getStockLimitYesterday,
     getStockSpot
-} from '@/services/aktools.service'
+} from '@/services/review.service'
 import StockDateUtil from "@/utils/StockDateUtil.js";
 import cacheStorage from "@/utils/cacheStorage.js";
 
@@ -364,16 +364,12 @@ export function useReview() {
         ]) ;
     }
 
-    //获取指数数据（上证系列指数 + 深证系列指数，合并后覆盖上证指数/深证成指/创业板指）
+    //获取指数数据（原分两次调 上证/深证，现已合并为 /market/overview 一次取回）
     const getIndexData = async () => {
         try {
-            const [shResponse, szResponse] = await Promise.all([
-                getStockIndexSpot('上证系列指数'),
-                getStockIndexSpot('深证系列指数')
-            ])
-            const shData = shResponse.code === 200 && shResponse.data ? shResponse.data : []
-            const szData = szResponse.code === 200 && szResponse.data ? szResponse.data : []
-            indexData.value = [...shData, ...szData]
+            const response = await getStockIndexSpot()
+            const data = response.code === 200 && response.data ? response.data : []
+            indexData.value = data
             return indexData.value
         } catch (error) {
             console.error('获取市场数据失败:', error)

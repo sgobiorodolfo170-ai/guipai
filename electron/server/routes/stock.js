@@ -213,14 +213,28 @@ router.get('/realtime', async (req, res) => {
     }
 
     // 3. aktools → 转换入库 → 读回（保证前端只见数据库数据）
-    const raw = await aktools.getStockSpot()
-    if (!raw || !raw.length) return ok(res, [], '成功(空数据)')
-    await spotRepo.insertSpotSafe(raw)
-    const rows = await spotRepo.getSpot()
-    if (!rows || !rows.length) return ok(res, [], '成功(入库后仍为空)')
-    cache.set(cacheKey, rows, 60)
-    const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
-    ok(res, list, '成功(已入库)')
+    let raw = await aktools.getStockSpot()
+    if (raw && raw.length) {
+      await spotRepo.insertSpotSafe(raw)
+      const rows = await spotRepo.getSpot()
+      if (rows && rows.length) {
+        cache.set(cacheKey, rows, 60)
+        const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
+        return ok(res, list, '成功(已入库)')
+      }
+    }
+
+    // 4. 上游全挂 → 从 daily_k_raw 派生收盘快照兜底
+    const derived = await spotRepo.deriveFromRaw()
+    if (derived > 0) {
+      const rows = await spotRepo.getSpot()
+      if (rows && rows.length) {
+        cache.set(cacheKey, rows, 60)
+        const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
+        return ok(res, list, '成功(daily_k_raw 派生快照)')
+      }
+    }
+    ok(res, [], '成功(空数据)')
   } catch (e) { errMsg(res, e.message) }
 })
 
@@ -411,8 +425,25 @@ router.get('/:code/kline', async (req, res) => {
       }
     }
 
-    // 2. DolphinDB 不可用：返回 503（不回退 aktools 直返）
-    res.json({ code: 503, msg: 'DolphinDB 不可用，K线数据暂无法获取，请确保 DolphinDB 已启动', data: [] })
+    // 2. daily_k 覆盖不足 → daily_k_raw 兜底（不复权，仅 8 列）
+    //    raw 是 TDX 不复权价，与 daily_k 前复权口径不同，不与 daily_k 混算。
+    //    缺 turnover_rate/pct_chg/amplitude 时前端按缺失渲染。
+    if (ddb.isConnected()) {
+      try {
+        const raw = await klineRepo.getDailyKRaw(code, startDate, effEnd)
+        if (raw && raw.length) {
+          const rows = period === 'daily' ? raw : raw // raw 不支持聚合（缺聚合列）
+          const kline = rows.map(KLINE_ROW_MAP)
+          cache.set(cacheKey, kline, 300)
+          return ok(res, kline, '成功(daily_k_raw 不复权兜底)')
+        }
+      } catch (e2) {
+        console.error('[stock] daily_k_raw fallback failed:', e2.message)
+      }
+    }
+
+    // 3. 全部失败
+    res.json({ code: 503, msg: 'K线数据不可用：daily_k 无数据、行情源不可用、daily_k_raw 也无该股', data: [] })
   } catch (e) {
     if (e.retryAfterSec) {
       return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
