@@ -1,5 +1,16 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+/**
+ * 自选股页面 —— 左右分栏 + 分组选项卡
+ *
+ * 设计理由：
+ * - 左区常驻 KLineChart，点击右区任一股票行即自动展示其 K 线，替代原 Drawer 弹窗，
+ *   看盘与看自选融为一体，减少操作跳转。
+ * - 分组由 el-tabs(type=card, editable) 承载：每个分组一个选项卡，尾部 + 号新建分组，
+ *   选项卡 × 删除分组，替代原「分组选择下拉框 + 分组管理标签卡片」，结构更扁平。
+ * - 中间分割线可拖拽，宽度持久化到 localStorage（与 Dashboard/StockBoards 的缓存策略一致），
+ *   用户布局偏好跨会话保留。
+ */
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useWatchlistStore } from '@/store/watchlist.store'
 import { useStockStore } from '@/store/stock.store'
 import { formatPrice, formatPercent, formatChange, getChangeStatus } from '@/utils/stock'
@@ -10,13 +21,27 @@ const watchlistStore = useWatchlistStore()
 const stockStore = useStockStore()
 
 const loading = ref(false)
-const selectedGroup = ref(null)
 const showGroupDialog = ref(false)
 const groupForm = ref({ name: '', description: '' })
-const selectedStocks = ref([])
+
+// 当前选中的股票（驱动左区 K 线图）
+const selectedStock = ref({ code: '', name: '' })
+// 当前激活的分组选项卡（el-tabs name，字符串）
+const activeGroupId = ref('')
+
+// ---- 分组选项卡数据 ----
+// groupedWatchlist 已按 groupId 聚合，含默认分组(id=0，仅当存在未分组股票时)
+const tabGroups = computed(() => Object.values(watchlistStore.groupedWatchlist))
 
 onMounted(() => {
+  initSplitWidth()
   fetchData()
+})
+
+onBeforeUnmount(() => {
+  // 防止组件卸载时拖拽监听未清理
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
 })
 
 const fetchData = async () => {
@@ -26,10 +51,20 @@ const fetchData = async () => {
       watchlistStore.fetchWatchlist(),
       watchlistStore.fetchWatchlistGroups()
     ])
-    
-    // 获取实时数据
+    // 获取实时行情
     if (watchlistStore.watchlistCodes.length > 0) {
       await stockStore.fetchRealtimeData(watchlistStore.watchlistCodes)
+    }
+    // 默认激活第一个分组选项卡
+    if (!activeGroupId.value && tabGroups.value.length > 0) {
+      activeGroupId.value = String(tabGroups.value[0].id)
+    }
+    // 默认选中第一个分组的第一只股票，左区不空
+    if (!selectedStock.value.code) {
+      const first = tabGroups.value.find(g => g.stocks.length > 0)
+      if (first) {
+        selectedStock.value = { code: first.stocks[0].code, name: first.stocks[0].name }
+      }
     }
   } catch (error) {
     console.error('获取自选股数据失败:', error)
@@ -38,68 +73,83 @@ const fetchData = async () => {
   }
 }
 
-import { computed } from 'vue'
-
-const filteredWatchlist = computed(() => {
-  if (!selectedGroup.value) {
-    return watchlistStore.watchlist
+// ---- 选项卡编辑（新建 / 删除分组）----
+const handleTabEdit = (action, name) => {
+  if (action === 'add') {
+    groupForm.value = { name: '', description: '' }
+    showGroupDialog.value = true
+  } else if (action === 'remove') {
+    const id = Number(name)
+    if (id === 0) return // 默认分组不可删除
+    const group = watchlistStore.groups.find(g => g.id === id)
+    deleteGroup(id, group ? group.name : '')
   }
-  return watchlistStore.watchlist.filter(item => item.groupId === selectedGroup.value)
-})
-
-const handleGroupChange = (groupId) => {
-  selectedGroup.value = groupId
 }
 
 const createGroup = async () => {
+  if (!groupForm.value.name.trim()) {
+    ElMessage.warning('请输入分组名称')
+    return
+  }
   try {
-    await watchlistStore.createGroup(groupForm.value)
+    const resp = await watchlistStore.createGroup(groupForm.value)
     showGroupDialog.value = false
+    const newGroup = resp?.data || resp
     groupForm.value = { name: '', description: '' }
+    if (newGroup && newGroup.id != null) {
+      activeGroupId.value = String(newGroup.id)
+    }
+    ElMessage.success('分组创建成功')
   } catch (error) {
     console.error('创建分组失败:', error)
+    ElMessage.error('创建分组失败')
   }
 }
 
-const deleteGroup = async (group) => {
+const deleteGroup = async (id, name) => {
+  if (id === 0) return
   try {
-    await watchlistStore.deleteGroup(group.id, group.name)
-    if (selectedGroup.value === group.id) {
-      selectedGroup.value = null
+    await ElMessageBox.confirm(
+      `确定要删除分组"${name}"吗？该分组下的股票将移到默认分组。`,
+      '删除确认',
+      { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+    )
+    await watchlistStore.deleteGroup(id)
+    ElMessage.success('分组删除成功')
+    // 切换到第一个剩余选项卡
+    const remaining = Object.keys(watchlistStore.groupedWatchlist)
+    activeGroupId.value = remaining.length > 0 ? String(remaining[0]) : ''
+  } catch (err) {
+    if (err !== 'cancel') {
+      console.error('删除分组失败:', err)
+      ElMessage.error('删除分组失败')
     }
-  } catch (error) {
-    console.error('删除分组失败:', error)
   }
 }
 
 const removeFromWatchlist = async (code) => {
   try {
     await watchlistStore.removeFromWatchlist(code)
+    ElMessage.success(`${code} 已从自选股移除`)
   } catch (error) {
     console.error('移除自选股失败:', error)
-  }
-}
-
-const batchRemove = async () => {
-  if (selectedStocks.value.length === 0) {
-    ElMessage.warning('请选择要移除的股票')
-    return
-  }
-  
-  try {
-    await watchlistStore.batchRemoveFromWatchlist(selectedStocks.value)
-    selectedStocks.value = []
-  } catch (error) {
-    console.error('批量移除失败:', error)
+    ElMessage.error('移除自选股失败')
   }
 }
 
 const refreshData = async () => {
   if (watchlistStore.watchlistCodes.length > 0) {
     await stockStore.fetchRealtimeData(watchlistStore.watchlistCodes)
+    ElMessage.success('行情已刷新')
   }
 }
 
+// ---- 行选择 → 驱动左区 K 线 ----
+const handleRowClick = (row) => {
+  selectedStock.value = { code: row.code, name: row.name }
+}
+
+// ---- 行情展示辅助 ----
 const getChangeClass = (change) => {
   const status = getChangeStatus(change)
   return `stock-${status}`
@@ -109,142 +159,158 @@ const getRealTimeData = (code) => {
   return stockStore.realtimeData[code] || {}
 }
 
-// K线图 Drawer
-const chartDrawer = ref(false)
-const chartStock = ref({ code: '', name: '' })
+// ---- 左右分栏拖拽（宽度持久化到 localStorage）----
+const SPLIT_KEY = 'watchlist_split_left'
+const MIN_LEFT = 240
+const MIN_RIGHT = 360
 
-const showStockChart = (row) => {
-  chartStock.value = { code: row.code, name: row.name }
-  chartDrawer.value = true
+const splitContainer = ref(null)
+const leftWidth = ref(420)
+let dragging = false
+let startX = 0
+let startWidth = 0
+
+const initSplitWidth = () => {
+  const saved = localStorage.getItem(SPLIT_KEY)
+  if (saved) {
+    leftWidth.value = Number(saved)
+  } else if (splitContainer.value) {
+    leftWidth.value = Math.round(splitContainer.value.clientWidth * 0.45)
+  }
+}
+
+const startDrag = (e) => {
+  dragging = true
+  startX = e.clientX
+  startWidth = leftWidth.value
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', stopDrag)
+  document.body.style.userSelect = 'none'
+}
+
+const onDrag = (e) => {
+  if (!dragging || !splitContainer.value) return
+  const dx = e.clientX - startX
+  const maxW = splitContainer.value.clientWidth - MIN_RIGHT
+  let newWidth = startWidth + dx
+  if (newWidth < MIN_LEFT) newWidth = MIN_LEFT
+  if (newWidth > maxW) newWidth = maxW
+  leftWidth.value = newWidth
+}
+
+const stopDrag = () => {
+  if (!dragging) return
+  dragging = false
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', stopDrag)
+  document.body.style.userSelect = ''
+  localStorage.setItem(SPLIT_KEY, String(leftWidth.value))
 }
 </script>
 
 <template>
   <div class="watchlist">
+    <!-- 标题行：自选股 + 刷新按钮（右） -->
     <div class="page-header">
       <h1 class="page-title">自选股</h1>
-      <p class="page-description">管理您的自选股票</p>
+      <el-button @click="refreshData" :loading="loading">
+        <el-icon><Refresh /></el-icon>
+        刷新
+      </el-button>
     </div>
-    
-    <!-- 工具栏 -->
-    <el-card class="toolbar-card">
-      <el-row :gutter="20" justify="space-between">
-        <el-col :span="12">
-          <el-select
-            v-model="selectedGroup"
-            placeholder="选择分组"
-            clearable
-            @change="handleGroupChange"
-          >
-            <el-option label="全部" :value="null" />
-            <el-option
-              v-for="group in watchlistStore.groups"
-              :key="group.id"
-              :label="group.name"
-              :value="group.id"
-            />
-          </el-select>
-        </el-col>
-        <el-col :span="12" class="text-right">
-          <el-button @click="refreshData" :loading="loading">
-            <el-icon><Refresh /></el-icon>
-            刷新
-          </el-button>
-          <el-button type="primary" @click="showGroupDialog = true">
-            <el-icon><Plus /></el-icon>
-            新建分组
-          </el-button>
-          <el-button
-            type="danger"
-            @click="batchRemove"
-            :disabled="selectedStocks.length === 0"
-          >
-            <el-icon><Delete /></el-icon>
-            批量移除
-          </el-button>
-        </el-col>
-      </el-row>
-    </el-card>
-    
-    <!-- 分组管理 -->
-    <el-card v-if="watchlistStore.groups.length > 0" class="groups-card">
-      <template #header>
-        <span>分组管理</span>
-      </template>
-      <div class="groups-list">
-        <el-tag
-          v-for="group in watchlistStore.groups"
-          :key="group.id"
-          :type="selectedGroup === group.id ? 'primary' : ''"
-          closable
-          @click="handleGroupChange(group.id)"
-          @close="deleteGroup(group)"
-          class="group-tag"
-        >
-          {{ group.name }} ({{ (watchlistStore.watchlist || []).filter(s => s.groupId === group.id).length }})
-        </el-tag>
+
+    <!-- 左右分栏：左区 K 线 | 分割线 | 右区分组选项卡 -->
+    <div class="watchlist-split" ref="splitContainer">
+      <!-- 左区：K 线图（随选中股票自动切换） -->
+      <div class="split-left" :style="{ width: leftWidth + 'px' }">
+        <div v-if="selectedStock.code" class="kline-wrap">
+          <div class="kline-title">{{ selectedStock.name }} ({{ selectedStock.code }})</div>
+          <KLineChart
+            :key="selectedStock.code"
+            :stock-code="selectedStock.code"
+            :show-period-switcher="true"
+            :show-adjust-switcher="true"
+            :show-drawing-tools="true"
+            :show-indicator-bar="true"
+            :show-volume="true"
+            height="100%"
+          />
+        </div>
+        <el-empty v-else description="点击右侧股票查看 K 线图" />
       </div>
-    </el-card>
-    
-    <!-- 自选股列表 -->
-    <el-card>
-      <el-table
-        :data="filteredWatchlist"
-        v-loading="loading"
-        stripe
-        @selection-change="selectedStocks = $event.map(item => item.code)"
-      >
-        <el-table-column type="selection" width="55" />
-        <el-table-column prop="code" label="代码" width="100" sortable />
-        <el-table-column prop="name" label="名称" width="150" sortable />
-        <el-table-column label="现价" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).price || 0) - (getRealTimeData(b.code).price || 0)">
-          <template #default="{ row }">
-            <span class="stock-price" :class="getChangeClass(getRealTimeData(row.code).change)">
-              {{ formatPrice(getRealTimeData(row.code).price || row.price) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="涨跌额" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).change || 0) - (getRealTimeData(b.code).change || 0)">
-          <template #default="{ row }">
-            <span :class="getChangeClass(getRealTimeData(row.code).change)">
-              {{ formatChange(getRealTimeData(row.code).change || 0) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="涨跌幅" width="100" sortable :sort-method="(a, b) => (getRealTimeData(a.code).changePercent || 0) - (getRealTimeData(b.code).changePercent || 0)">
-          <template #default="{ row }">
-            <span :class="getChangeClass(getRealTimeData(row.code).change)">
-              {{ formatPercent(getRealTimeData(row.code).changePercent || 0) }}
-            </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="note" label="备注" />
-        <el-table-column prop="addTime" label="添加时间" width="150" sortable />
-        <el-table-column label="操作" width="180" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              type="primary"
-              size="small"
-              @click="showStockChart(row)"
+
+      <!-- 可拖拽分割线 -->
+      <div class="split-divider" @mousedown="startDrag">
+        <div class="split-divider-handle"></div>
+      </div>
+
+      <!-- 右区：分组选项卡，每个分组一页，尾部 + 新建分组 -->
+      <div class="split-right" v-loading="loading">
+        <el-tabs
+          v-if="tabGroups.length > 0"
+          v-model="activeGroupId"
+          type="card"
+          editable
+          @edit="handleTabEdit"
+        >
+          <el-tab-pane
+            v-for="g in tabGroups"
+            :key="g.id"
+            :name="String(g.id)"
+            :label="g.name"
+            :closable="g.id !== 0"
+          >
+            <el-table
+              :data="g.stocks"
+              stripe
+              highlight-current-row
+              @row-click="handleRowClick"
+              class="watchlist-table"
             >
-              <el-icon><TrendCharts /></el-icon>
-              图表
-            </el-button>
-            <el-button
-              type="danger"
-              size="small"
-              @click="removeFromWatchlist(row.code)"
-            >
-              移除
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      
-      <!-- 空状态 -->
-      <el-empty v-if="!loading && filteredWatchlist.length === 0" description="暂无自选股" />
-    </el-card>
-    
+              <el-table-column prop="code" label="代码" width="100" sortable />
+              <el-table-column prop="name" label="名称" width="120" sortable />
+              <el-table-column label="现价" width="90" sortable :sort-method="(a, b) => (getRealTimeData(a.code).price || 0) - (getRealTimeData(b.code).price || 0)">
+                <template #default="{ row }">
+                  <span class="stock-price" :class="getChangeClass(getRealTimeData(row.code).change)">
+                    {{ formatPrice(getRealTimeData(row.code).price || row.price) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="涨跌额" width="90" sortable :sort-method="(a, b) => (getRealTimeData(a.code).change || 0) - (getRealTimeData(b.code).change || 0)">
+                <template #default="{ row }">
+                  <span :class="getChangeClass(getRealTimeData(row.code).change)">
+                    {{ formatChange(getRealTimeData(row.code).change || 0) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column label="涨跌幅" width="90" sortable :sort-method="(a, b) => (getRealTimeData(a.code).changePercent || 0) - (getRealTimeData(b.code).changePercent || 0)">
+                <template #default="{ row }">
+                  <span :class="getChangeClass(getRealTimeData(row.code).change)">
+                    {{ formatPercent(getRealTimeData(row.code).changePercent || 0) }}
+                  </span>
+                </template>
+              </el-table-column>
+              <el-table-column prop="note" label="备注" show-overflow-tooltip />
+              <el-table-column prop="addTime" label="添加时间" width="150" sortable />
+              <el-table-column label="操作" width="90" fixed="right">
+                <template #default="{ row }">
+                  <el-button
+                    type="danger"
+                    size="small"
+                    @click.stop="removeFromWatchlist(row.code)"
+                  >
+                    移除
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-tab-pane>
+        </el-tabs>
+
+        <el-empty v-else description="暂无自选股" />
+      </div>
+    </div>
+
     <!-- 新建分组对话框 -->
     <el-dialog v-model="showGroupDialog" title="新建分组" width="400px">
       <el-form :model="groupForm" label-width="80px">
@@ -260,53 +326,105 @@ const showStockChart = (row) => {
           />
         </el-form-item>
       </el-form>
-      
       <template #footer>
         <el-button @click="showGroupDialog = false">取消</el-button>
         <el-button type="primary" @click="createGroup">确定</el-button>
       </template>
     </el-dialog>
-
-    <!-- K线图 Drawer -->
-    <el-drawer
-      v-model="chartDrawer"
-      :title="`${chartStock.name} (${chartStock.code})`"
-      size="70%"
-      direction="rtl"
-    >
-      <KLineChart
-        v-if="chartDrawer && chartStock.code"
-        :stock-code="chartStock.code"
-        :show-period-switcher="true"
-        :show-adjust-switcher="true"
-        :show-drawing-tools="true"
-        :show-indicator-bar="true"
-        :show-volume="true"
-        height="100%"
-      />
-    </el-drawer>
   </div>
 </template>
 
 <style scoped>
 .watchlist {
   padding: 20px;
-}
-
-.toolbar-card,
-.groups-card {
-  margin-bottom: 20px;
-}
-
-.groups-list {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-direction: column;
+  height: calc(100vh - 180px);
 }
 
-.group-tag {
-  cursor: pointer;
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.page-title {
   margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+/* 左右分栏容器 */
+.watchlist-split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.split-left {
+  flex-shrink: 0;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 4px;
+  display: flex;
+  flex-direction: column;
+}
+
+.kline-wrap {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.kline-title {
+  padding: 8px 12px;
+  font-size: 14px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--el-border-color-light);
+  background: var(--el-fill-color-light);
+}
+
+/* 可拖拽分割线 */
+.split-divider {
+  flex-shrink: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: var(--el-border-color-light);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.split-divider:hover,
+.split-divider:active {
+  background: var(--el-color-primary-light-5);
+}
+
+.split-divider-handle {
+  width: 2px;
+  height: 32px;
+  background: var(--el-border-color);
+  border-radius: 1px;
+}
+
+/* 右区选项卡 */
+.split-right {
+  flex: 1;
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-width: 0;
+}
+
+.watchlist-table {
+  cursor: pointer;
 }
 
 .stock-price {
@@ -317,8 +435,29 @@ const showStockChart = (row) => {
 @media (max-width: 768px) {
   .watchlist {
     padding: 10px;
+    height: auto;
   }
-  
+
+  .watchlist-split {
+    flex-direction: column;
+  }
+
+  .split-left {
+    width: 100% !important;
+    height: 320px;
+  }
+
+  .split-divider {
+    width: 100%;
+    height: 6px;
+    cursor: row-resize;
+  }
+
+  .split-right {
+    flex: 1;
+    min-height: 300px;
+  }
+
   :deep(.el-table) {
     font-size: 12px;
   }

@@ -2,6 +2,7 @@
 
 | 版本号 | 日期 | 摘要 |
 | --- | --- | --- |
+| v1.11.0 | 2026-10-13 | 自选股页重构为左右分栏 + 分组选项卡：删除分组下拉框/分组管理标签卡片/副标题"管理您的自选股票"/K线 Drawer；刷新按钮移至标题行右端；右区 el-tabs(type=card,editable) 每分组一页、尾部 + 号新建分组/× 删除分组（默认组 id=0 不可删）；左区常驻 KLineChart，点击右区股票行自动切换该股 K 线（首次加载自动选中首组首股）；中间分割线可拖拽且宽度 localStorage 持久化（key watchlist_split_left），窄屏自动转上下布局；表格去掉多选列与"图表"按钮、保留行内"移除"(@click.stop 防误选)
 | v1.9.0 | 2026-10-13 | C6 废弃 aktools 路由层 + 前端迁移到业务路由 + 数据覆盖修复：新建 review.service.js 适配层（6 函数调用业务路由 + 英文键→中文键映射表），useReview.js 改 import 来源，getIndexData 从分调合并为单次；statistics.js 新增 limit-pool/drop-pool/zt-previous 3 个 DB-first 端点（write-on-miss + safeDate 净化）；aktools.js 加 X-Deprecated 废弃中间件；aktools.service.js 改为转发到 review.service；/:code/kline 加 daily_k_raw 第三级兜底（99% 股票此前 503）；data-pull.js nameMap 从死缓存键改读 sql.js stock_basic；spot-repository 新增 deriveFromRaw()（daily_k_raw 每股最新行→stock_spot 派生快照），/realtime + /hot 加 raw 派生兜底 |
 | v1.8.0 | 2026-10-13 | 数据流全链路 DB-first 重构（C1-C5）：前端只从 sql.js + DolphinDB 取数，aktools 降级为纯写路径（write-on-miss：缓存 miss → DolphinDB 读 → 未命中则行情源取数 → 转换入库 → 读回 → 响应带"已入库"标识）。新增 5 张 DolphinDB 表（stock_spot/stock_index_spot/minute_k/stock_holding/zt_pool_previous）+ sql.js board_constituents；新增 spot/index-spot/minute/holding 四个 repository；routes 层 18 个端点改造（stock 5 + market 3 + boards 2 + kline 1 + aktools 7）。数据管理「数据总览」新增 5 表登记 |
 | v1.7.1 | 2026-10-13 | 修复模拟盘 /random 不可用：daily_k 仅 9 只共 4852 行，84 只采样池抽中其余即报"缺数据"；新增 kline-repository.getDailyKRaw 读 daily_k_raw（9482 只/2427 万行）兜底，缺失的 turnover_rate/pct_chg/amplitude 以 null 返回不混算；修正回看窗口把交易日数当日历天用（250 交易日只回看 310 天≈207 交易日），改 1.5 倍+30 天缓冲 |
