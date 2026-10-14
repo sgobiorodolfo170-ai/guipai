@@ -161,6 +161,25 @@ router.post('/basic/sync', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
+// 定向补录股票基础信息（upsert）：供一次性回填/补新上市股，不入库不存在的非个股代码。
+// body: { stocks: [{code,name,market?}], listDates: [{code,list_date}] }
+// 复用 upsertStockBasics/upsertListDates（内部已按 code 幂等 upsert）。
+router.post('/basic/upsert', (req, res) => {
+  try {
+    const { stocks, listDates } = req.body || {}
+    const cleanStocks = (Array.isArray(stocks) ? stocks : [])
+      .filter(s => s && s.code && s.name)
+      .map(s => ({ code: String(s.code).trim(), name: String(s.name).trim() }))
+    const cleanDates = (Array.isArray(listDates) ? listDates : [])
+      .filter(m => m && m.code)
+      .map(m => ({ code: String(m.code).trim(), list_date: m.list_date || null, delist_date: m.delist_date || null }))
+    const written = upsertStockBasics(cleanStocks)
+    const dateUpdated = upsertListDates(cleanDates)
+    ok(res, { ...stockBasicStats(), written, dateUpdated, updatedAt: nowLocal() },
+      `补录 ${written} 只，上市日补 ${dateUpdated} 条`)
+  } catch (e) { errMsg(res, e.message) }
+})
+
 // 搜索股票：仅查本地 stock_basic 库（不再回退 aktools 直返）
 router.get('/search', async (req, res) => {
   try {
@@ -270,6 +289,19 @@ function shiftDays(dateStr, n) {
   const d = new Date(dateStr + 'T00:00:00')
   d.setDate(d.getDate() + n)
   return d.toISOString().slice(0, 10)
+}
+
+/** K线查询默认起始日：与 dfs://tradeinsight_raw 分区起点一致，覆盖通达信 1998 至今全历史。
+ *  必须显式给默认值而非留空——safeDate(undefined) 返回 null 会让库查询与 raw 兜底双双返回空，误报 503。 */
+const DEFAULT_KLINE_START = '1990-01-01'
+
+/** query 日期 → ISO 'YYYY-MM-DD'；空/非法 → fallback。
+ *  必须统一为 ISO：前端传紧凑 YYYYMMDD，而库返回 ISO，两者混用会让 `latest < effEnd`
+ *  字符串比较恒真（'2026-10-13' < '20261013'），导致每次请求都白跑一次增量拉取。
+ *  上游源（东财/腾讯/TDX）均以 replace(/\D/g,'') 归一化，接收 ISO 无损。 */
+function normDateISO(v, fallback) {
+  const s = String(v || '').trim().replace(/[^\d]/g, '')
+  return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : fallback
 }
 
 const KLINE_ROW_MAP = (m) => ({
@@ -383,20 +415,24 @@ router.get('/:code/kline', async (req, res) => {
   try {
     const { code } = req.params
     const { period = 'daily', startDate, endDate, adjust = 'qfq' } = req.query
-    const cacheKey = `stocks:kline:${code}:${period}:${adjust}:${startDate || ''}:${endDate || ''}`
+
+    // 日期全部归一为 ISO 后再比较/查询（见 normDateISO 注释）
+    const today = new Date().toISOString().slice(0, 10)
+    const effEnd = normDateISO(endDate, today)
+    const effStart = normDateISO(startDate, DEFAULT_KLINE_START)
+
+    const cacheKey = `stocks:kline:${code}:${period}:${adjust}:${effStart}:${effEnd}`
     const cached = cache.get(cacheKey)
     if (cached) return ok(res, cached, '成功(缓存)')
-
-    const today = new Date().toISOString().slice(0, 10)
-    const effEnd = endDate || today
 
     // 1. DolphinDB 断点续传
     if (ddb.isConnected()) {
       try {
-        const existing = await klineRepo.getDailyK(code, startDate, effEnd)
+        const existing = await klineRepo.getDailyK(code, effStart, effEnd)
         const latest = existing.length ? existing.map(r => r['日期']).sort().pop() : null
-        if (!latest || latest < effEnd) {
-          const fetchStart = latest ? shiftDays(latest, -7) : startDate
+        // 两侧同为 ISO 才能直接比较；latest 已覆盖 effEnd 即视为补齐，不再白拉
+        if (latest && latest < effEnd) {
+          const fetchStart = shiftDays(latest, -7)
           try {
             const raw = await aktools.getStockHistory({ symbol: code, period: 'daily', adjust, start_date: fetchStart, end_date: effEnd })
             if (raw && raw.length) await klineRepo.insertDailyK(raw)
@@ -408,9 +444,9 @@ router.get('/:code/kline', async (req, res) => {
             throw e
           }
         }
-        const all = await klineRepo.getDailyK(code, startDate, effEnd)
+        const all = await klineRepo.getDailyK(code, effStart, effEnd)
         if (all.length) {
-          const rows = period === 'daily' ? all : await klineRepo.getKlineAggregated(code, startDate, effEnd, period)
+          const rows = period === 'daily' ? all : await klineRepo.getKlineAggregated(code, effStart, effEnd, period)
           if (rows && rows.length) {
             const kline = rows.map(KLINE_ROW_MAP)
             cache.set(cacheKey, kline, 300)
@@ -430,10 +466,9 @@ router.get('/:code/kline', async (req, res) => {
     //    缺 turnover_rate/pct_chg/amplitude 时前端按缺失渲染。
     if (ddb.isConnected()) {
       try {
-        const raw = await klineRepo.getDailyKRaw(code, startDate, effEnd)
+        const raw = await klineRepo.getDailyKRaw(code, effStart, effEnd)
         if (raw && raw.length) {
-          const rows = period === 'daily' ? raw : raw // raw 不支持聚合（缺聚合列）
-          const kline = rows.map(KLINE_ROW_MAP)
+          const kline = raw.map(KLINE_ROW_MAP)
           cache.set(cacheKey, kline, 300)
           return ok(res, kline, '成功(daily_k_raw 不复权兜底)')
         }
@@ -442,8 +477,11 @@ router.get('/:code/kline', async (req, res) => {
       }
     }
 
-    // 3. 全部失败
-    res.json({ code: 503, msg: 'K线数据不可用：daily_k 无数据、行情源不可用、daily_k_raw 也无该股', data: [] })
+    // 3. 全部失败：按原因分级提示，避免"什么都不可用"这类无法操作的文案
+    if (!ddb.isConnected()) {
+      return res.json({ code: 503, msg: 'K线数据不可用：DolphinDB 未连接，请确认本机 DolphinDB 服务已启动（默认 ws://127.0.0.1:8848）', data: [] })
+    }
+    res.json({ code: 503, msg: `K线数据不可用：${code} 在 daily_k 与 daily_k_raw 均无数据（可能尚未下载该股的通达信日K，或区间内长期停牌）`, data: [] })
   } catch (e) {
     if (e.retryAfterSec) {
       return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
