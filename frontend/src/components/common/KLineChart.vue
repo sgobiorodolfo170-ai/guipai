@@ -271,38 +271,42 @@ function buildDataLoader() {
 }
 
 // ---- 指标管理 ----
+// paneId 由本组件控制（v10 不再接受 createIndicator 的第 3 个参数，必须写进 value 对象）
 const VOL_PANE = 'pane_vol'
 const SUB_PANE = 'pane_sub'
 
 function setupIndicators() {
   if (!chart) return
 
-  // 主图均线：MA 指标支持自定义周期参数
+  // 主图均线：MA 叠加在蜡烛图主 pane（'candle_pane'）上
   if (props.maPeriods && props.maPeriods.length > 0) {
     chart.createIndicator({
       name: 'MA',
-      calcParams: props.maPeriods
-    }, true, 'candle_pane')
+      calcParams: props.maPeriods,
+      paneId: 'candle_pane'
+    }, true)
   }
 
-  // 成交量副图
+  // 成交量副图（独立 pane）
   if (props.showVolume) {
-    chart.createIndicator('VOL', false, VOL_PANE)
+    chart.createIndicator({ name: 'VOL', paneId: VOL_PANE })
   }
 
-  // 技术指标副图
+  // 技术指标副图（独立 pane）
   if (props.defaultSubIndicator && props.defaultSubIndicator !== 'NONE') {
-    chart.createIndicator(props.defaultSubIndicator, false, SUB_PANE)
+    chart.createIndicator({ name: props.defaultSubIndicator, paneId: SUB_PANE })
   }
 }
 
 function switchSubIndicator(name) {
   currentSubIndicator.value = name
   if (!chart) return
-  // 先移除旧副图指标
-  chart.removeIndicator(SUB_PANE)
+  // 按 paneId 精确移除旧副图指标。
+  // 注意不能传 paneId 字符串本身：v10 的 getIndicatorsByFilter 只读 filter.paneId/name/id，
+  // 传字符串会让三者全为 undefined，match 函数恒真 → 误删 MA/VOL 等所有指标。
+  chart.removeIndicator({ paneId: SUB_PANE })
   if (name !== 'NONE') {
-    chart.createIndicator(name, false, SUB_PANE)
+    chart.createIndicator({ name, paneId: SUB_PANE })
   }
 }
 
@@ -348,9 +352,12 @@ function initChart() {
   chart = init(chartRef.value, { styles: buildStyles() })
 
   activeCode = props.stockCode
+  // setDataLoader 必须先于 setSymbol：setSymbol/setPeriod 都会触发一次 getBars(init)，
+  // 若此时仍是 v10 内置默认 loader（走外网 CDN 示例数据），离线环境必然拉取失败；
+  // setDataLoader 内部会 resetData 重新触发加载，故先装 loader 可省掉这次无效外联。
+  chart.setDataLoader(buildDataLoader())
   chart.setSymbol({ ticker: props.stockCode })
   chart.setPeriod(periodToKLine(currentPeriod.value))
-  chart.setDataLoader(buildDataLoader())
 
   // 延迟设置指标，确保主图 pane 已创建
   requestAnimationFrame(() => setupIndicators())

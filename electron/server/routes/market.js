@@ -127,9 +127,12 @@ router.get('/index-kline', async (req, res) => {
     const { code, period = 'daily', startDate, endDate } = req.query
     if (!code) return errMsg(res, '缺少 code 参数')
     // 净化 query 拼进 DolphinDB 脚本前必须过白名单（脚本无参数绑定）
+    // startDate 缺省给默认起始日而非留空：safeDate(undefined) 返回 null 会让下方
+    // 校验直接判"参数不合法"，而前端并不总是显式带 startDate。
+    const today = new Date().toISOString().slice(0, 10)
     const sym = safeSymbol(code)
-    const sd = safeDate(startDate)
-    const ed = safeDate(endDate || new Date().toISOString().slice(0, 10))
+    const sd = safeDate(startDate || '1990-01-01')
+    const ed = safeDate(endDate || today)
     if (!sym || !sd || !ed) return errMsg(res, '参数不合法')
     const cacheKey = `ddb:index-kline:${sym}:${period}:${startDate || ''}:${endDate || ''}`
     const cached = cache.get(cacheKey)
