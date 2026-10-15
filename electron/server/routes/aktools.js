@@ -367,11 +367,11 @@ router.get('/stock/ztPoolPrevious', async (req, res) => {
 })
 
 // ==================== 启动预热 ====================
+// 全市场 spot 预热已废弃：TDX-only 模式下 /tdxs_market_spot 需分批拉 5500+ 只（30~60s），
+// 启动即占住 Python 桥，会让首个 K 线请求超时。且股票列表已改读本地 stock_basic、
+// 市场概况走 indexSpot（on-demand 快速），全市场 spot 缓存非关键路径，故跳过。
 async function primeCache() {
-  try {
-    const spot = await aktools.getStockSpot()
-    if (Array.isArray(spot) && spot.length) cache.set('aktools:stock:spot', spot, 300)
-  } catch (e) { /* 忽略预热失败 */ }
+  try { /* 预留：如需预热某轻量缓存（如指数快照），在此补充 */ } catch (_) {}
 }
 
 module.exports = router

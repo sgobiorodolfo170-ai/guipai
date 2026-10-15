@@ -205,8 +205,18 @@ function buildVector(mod, c, rows) {
  * 确保行情/因子存储所需的库表存在（幂等）。
  * 当前建立最小集：dfs://tradeinsight（按 trade_date 年度 RANGE 分区）+ tick 表。
  * 流表与因子表将在后续按需补充。
+ *
+ * 快速短路：库与关键表（daily_k）已存在时只做 1 次 existsTable 往返即返回。
+ * 动机：每次 connect() 都串行跑 14+ 个 createTable if-not-exists，首次 K 线请求
+ * 会因此阻塞 10~30s 触发前端超时，进而被连接失败冷却误伤。数据表已存在时完全没必要。
  */
 async function ensureSchema(dbPath) {
+  // 快速短路：tradeinsight 库 + daily_k 表都已存在 → 跳过全套建表检查
+  try {
+    const hasTable = await execute(`existsTable("${dbPath}", "daily_k")`)
+    if (hasTable) return
+  } catch (_) { /* 库不存在或查询失败 → 走下方完整建表 */ }
+
   const startYear = 2024
   const endYear = new Date().getFullYear() + 5
   const bounds = []

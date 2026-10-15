@@ -304,6 +304,14 @@ function normDateISO(v, fallback) {
   return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : fallback
 }
 
+/** Promise 限时：超时 reject(new Error('timeout'))，供补齐缺口这类非关键网络调用防拖死路由。 */
+function withTimeout(promise, ms) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms))
+  ])
+}
+
 const KLINE_ROW_MAP = (m) => ({
   date: m['日期'], open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
   high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
@@ -410,7 +418,12 @@ router.post('/:code/indicator/sync', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// K线数据 — DolphinDB first，DDB 不可用时不回退 aktools 直返（架构原则：前端只从 DB 读）
+// K线数据 — DolphinDB first，DolphinDB 覆盖不足/不可用时回退行情源网络直取。
+// 架构说明：优先读 DB（daily_k 前复权 → daily_k_raw 不复权），两表均 miss 或 DDB
+// 未连接时，为保证前端 K 线可显示，末级回退 aktools 多源（TDX→腾讯→东财）网络直取，
+// 并把日K非阻塞回填 daily_k 供下次 DB 读命中。
+// 健壮性：daily_k 查询限时 3s——该表若存在分区/副本问题会慢/挂起，超时视为 miss
+// 直接走 daily_k_raw，避免拖死整条路由。
 router.get('/:code/kline', async (req, res) => {
   try {
     const { code } = req.params
@@ -425,63 +438,119 @@ router.get('/:code/kline', async (req, res) => {
     const cached = cache.get(cacheKey)
     if (cached) return ok(res, cached, '成功(缓存)')
 
-    // 1. DolphinDB 断点续传
+    // 1. DolphinDB daily_k（前复权）— 3s 限时，慢则降级
     if (ddb.isConnected()) {
       try {
-        const existing = await klineRepo.getDailyK(code, effStart, effEnd)
+        const existing = (await withTimeout(klineRepo.getDailyK(code, effStart, effEnd), 3000)) || []
         const latest = existing.length ? existing.map(r => r['日期']).sort().pop() : null
-        // 两侧同为 ISO 才能直接比较；latest 已覆盖 effEnd 即视为补齐，不再白拉
+        // 补齐缺口：8s 限时，返回「库内已有 merged 网络新数据」，插入非阻塞不回查
         if (latest && latest < effEnd) {
           const fetchStart = shiftDays(latest, -7)
           try {
-            const raw = await aktools.getStockHistory({ symbol: code, period: 'daily', adjust, start_date: fetchStart, end_date: effEnd })
-            if (raw && raw.length) await klineRepo.insertDailyK(raw)
+            const raw = await withTimeout(
+              aktools.getStockHistory({ symbol: code, period: 'daily', adjust, start_date: fetchStart, end_date: effEnd }),
+              8000
+            )
+            if (raw && raw.length) {
+              // 非阻塞回填，不阻塞响应
+              klineRepo.insertDailyK(raw).catch(e => console.warn(`[stock] daily_k backfill failed(${code}):`, e.message))
+              // 合并库内已有 + 新缺口，去重按日期排序直接返回
+              const byDate = new Map()
+              for (const r of existing) byDate.set(r['日期'], KLINE_ROW_MAP(r))
+              for (const r of raw) byDate.set(r['日期'], KLINE_ROW_MAP(r))
+              const merged = [...byDate.values()]
+                .filter(r => r.date >= effStart && r.date <= effEnd)
+                .sort((a, b) => (a.date < b.date ? -1 : 1))
+              if (merged.length) {
+                // 多周期：对齐按最近交易日聚合；daily 直接用合并行
+                if (period !== 'daily') {
+                  const agg = await withTimeout(klineRepo.getKlineAggregated(code, effStart, effEnd, period), 3000).catch(() => null)
+                  if (agg && agg.length) {
+                    const kline = agg.map(KLINE_ROW_MAP)
+                    cache.set(cacheKey, kline, 300)
+                    return ok(res, kline)
+                  }
+                }
+                cache.set(cacheKey, merged, 300)
+                return ok(res, merged)
+              }
+            }
           } catch (e) {
             if (e.retryAfterSec && existing.length) {
               const partial = existing.map(KLINE_ROW_MAP)
               return ok(res, partial, `部分数据（增量获取受限，约 ${e.retryAfterSec} 秒后可补齐）`)
             }
-            throw e
+            console.warn(`[stock] kline 增量补齐失败(${code})，降级返回库内已有:`, e.message)
           }
         }
-        const all = await klineRepo.getDailyK(code, effStart, effEnd)
-        if (all.length) {
-          const rows = period === 'daily' ? all : await klineRepo.getKlineAggregated(code, effStart, effEnd, period)
-          if (rows && rows.length) {
-            const kline = rows.map(KLINE_ROW_MAP)
-            cache.set(cacheKey, kline, 300)
-            return ok(res, kline)
-          }
+        // 库内已覆盖，直接返回（daily 或聚合）
+        const all = await withTimeout(
+          period === 'daily' ? Promise.resolve(existing) : klineRepo.getKlineAggregated(code, effStart, effEnd, period),
+          3000
+        )
+        if (all && all.length) {
+          const kline = all.map(KLINE_ROW_MAP)
+          cache.set(cacheKey, kline, 300)
+          return ok(res, kline)
         }
       } catch (e) {
         if (e.retryAfterSec) {
           return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
         }
-        console.error('[stock] DolphinDB kline query failed:', e.message)
+        if (e.message !== 'timeout') console.error('[stock] DolphinDB daily_k query failed:', e.message)
       }
     }
 
-    // 2. daily_k 覆盖不足 → daily_k_raw 兜底（不复权，仅 8 列）
+    // 1b. 主表限时读取未命中或超时 → daily_k 全量直接查一遍（聚合周期需要）降级路径
+    if (ddb.isConnected() && period !== 'daily') {
+      try {
+        const all = await withTimeout(klineRepo.getKlineAggregated(code, effStart, effEnd, period), 3000)
+        if (all && all.length) {
+          const kline = all.map(KLINE_ROW_MAP)
+          cache.set(cacheKey, kline, 300)
+          return ok(res, kline)
+        }
+      } catch (e) { if (e.message !== 'timeout') console.error('[stock] aggregated query failed:', e.message) }
+    }
+
+    // 2. daily_k 覆盖不足 → daily_k_raw 兜底（不复权，仅 8 列，限时 5s）
     //    raw 是 TDX 不复权价，与 daily_k 前复权口径不同，不与 daily_k 混算。
     //    缺 turnover_rate/pct_chg/amplitude 时前端按缺失渲染。
     if (ddb.isConnected()) {
       try {
-        const raw = await klineRepo.getDailyKRaw(code, effStart, effEnd)
+        const raw = await withTimeout(klineRepo.getDailyKRaw(code, effStart, effEnd), 5000)
         if (raw && raw.length) {
           const kline = raw.map(KLINE_ROW_MAP)
           cache.set(cacheKey, kline, 300)
           return ok(res, kline, '成功(daily_k_raw 不复权兜底)')
         }
-      } catch (e2) {
-        console.error('[stock] daily_k_raw fallback failed:', e2.message)
-      }
+      } catch (e2) { if (e2.message !== 'timeout') console.error('[stock] daily_k_raw fallback failed:', e2.message) }
     }
 
-    // 3. 全部失败：按原因分级提示，避免"什么都不可用"这类无法操作的文案
-    if (!ddb.isConnected()) {
-      return res.json({ code: 503, msg: 'K线数据不可用：DolphinDB 未连接，请确认本机 DolphinDB 服务已启动（默认 ws://127.0.0.1:8848）', data: [] })
+    // 3. 网络兜底：DDB 未连接或两表均无数据 → aktools 多源直取，保证前端可显示。
+    //    日K非阻塞回填 daily_k（DDB 可用时），下次请求命中 DB。
+    try {
+      const raw = await aktools.getStockHistory({ symbol: code, period, adjust, start_date: effStart, end_date: effEnd })
+      if (raw && raw.length) {
+        const kline = raw.map(KLINE_ROW_MAP)
+        if (period === 'daily' && ddb.isConnected()) {
+          klineRepo.insertDailyK(raw).catch(e => console.error('[stock] daily_k backfill failed:', e.message))
+        }
+        cache.set(cacheKey, kline, 300)
+        return ok(res, kline)
+      }
+    } catch (e) {
+      if (e.retryAfterSec) {
+        return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+      }
+      console.error('[stock] kline network fallback failed:', e.message)
     }
-    res.json({ code: 503, msg: `K线数据不可用：${code} 在 daily_k 与 daily_k_raw 均无数据（可能尚未下载该股的通达信日K，或区间内长期停牌）`, data: [] })
+
+    // 4. 全部失败：按原因分级提示，避免"什么都不可用"这类无法操作的文案
+    if (!ddb.isConnected()) {
+      return res.json({ code: 503, msg: 'K线数据不可用：DolphinDB 未连接且行情源暂不可用，请确认 DolphinDB（默认 ws://127.0.0.1:8848）与数据源服务已启动', data: [] })
+    }
+    res.json({ code: 503, msg: `K线数据不可用：${code} 在 daily_k 与 daily_k_raw 均无数据，行情源也未返回（可能尚未下载该股的通达信日K，或区间内长期停牌）`, data: [] })
   } catch (e) {
     if (e.retryAfterSec) {
       return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
