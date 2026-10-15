@@ -54,7 +54,7 @@ function toOverview(rows) {
   }))
 }
 
-// 市场概况 — DB-first from stock_index_spot
+// 市场概况 — DB-first from stock_index_spot；DDB 不可用/入库失败时直接返回网络数据，避免空白
 router.get('/overview', async (req, res) => {
   const cacheKey = 'ddb:indexSpot:overview'
   const cached = cache.get(cacheKey)
@@ -66,17 +66,22 @@ router.get('/overview', async (req, res) => {
       cache.set(cacheKey, overview, 60)
       return ok(res, overview)
     }
-    // aktools → write → re-read
+    // aktools → 直接返回网络数据（DDB 入库异步 best-effort，不阻塞展示）
     const raw = await aktools.getStockIndexSpot('沪深重要指数')
     if (raw && raw.length > 0) {
-      const today = new Date().toISOString().slice(0, 10)
-      await indexSpotRepo.insertIndexSpot(raw, today)
-      data = await indexSpotRepo.getIndexSpot()
-      if (data && data.length > 0) {
-        const overview = toOverview(data)
-        cache.set(cacheKey, overview, 60)
-        return ok(res, overview, '成功(已入库)')
+      const directOverview = raw.map(m => ({
+        code: m['代码'] || m['指数代码'], name: m['名称'] || m['指数名称'],
+        price: Number(m['最新价']) || 0,
+        change: Number(m['涨跌额']) || 0,
+        changePercent: Number(m['涨跌幅']) || 0
+      }))
+      cache.set(cacheKey, directOverview, 60)
+      // 入库 best-effort：DDB 不可用时跳过；失败不影响展示
+      if (ddb.isConnected()) {
+        const today = new Date().toISOString().slice(0, 10)
+        indexSpotRepo.insertIndexSpot(raw, today).catch(e => console.error('[market] index spot 入库失败:', e.message))
       }
+      return ok(res, directOverview)
     }
     ok(res, [])
   } catch (e) { errMsg(res, e.message) }
