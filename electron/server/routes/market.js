@@ -159,34 +159,40 @@ router.get('/index-kline', async (req, res) => {
       }
     }
 
-    // 2. 数据源 → 转换入库 → 读回
+    // 2. 数据源 → (DDB 可用时)转换入库 → 读回；DDB 不可用时直接返回网络数据，保证前端可显示
     const raw = await aktools.getIndexDailyData({
       symbol: code,
       period,
       start_date: (startDate || '').replace(/-/g, ''),
       end_date: (endDate || '').replace(/-/g, '') || new Date().toISOString().slice(0, 10).replace(/-/g, '')
     })
-    if (raw && raw.length > 0 && ddb.isConnected()) {
-      const rows = converter.convertIndexDaily(raw, sym)
-      const IDX_COLS = [
-        { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
-        { name: 'open', type: 'double' }, { name: 'close', type: 'double' },
-        { name: 'high', type: 'double' }, { name: 'low', type: 'double' },
-        { name: 'volume', type: 'double' }, { name: 'amount', type: 'double' },
-        { name: 'amplitude', type: 'double' }, { name: 'change', type: 'double' },
-        { name: 'price_change', type: 'double' }, { name: 'turnover_rate', type: 'double' },
-        { name: 'create_time', type: 'timestamp' }, { name: 'update_time', type: 'timestamp' }
-      ]
-      await ddb.execute(`t = ${IDX_TBL}; delete from t where symbol='${sym}' and trade_date between ${sd} and ${ed}`)
-      await ddb.insertRows('stock_zh_index_daily', IDX_COLS, rows)
+    if (raw && raw.length > 0) {
+      // DDB 可用时异步转换入库，供下次 DB 读命中
       if (ddb.isConnected()) {
-        const r2 = await ddb.execute(SELECT)
-        if (Array.isArray(r2) && r2.length > 0) {
-          const kline = toKline(r2)
-          cache.set(cacheKey, kline, 300)
-          return ok(res, kline, '成功(已入库)')
-        }
+        try {
+          const rows = converter.convertIndexDaily(raw, sym)
+          const IDX_COLS = [
+            { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
+            { name: 'open', type: 'double' }, { name: 'close', type: 'double' },
+            { name: 'high', type: 'double' }, { name: 'low', type: 'double' },
+            { name: 'volume', type: 'double' }, { name: 'amount', type: 'double' },
+            { name: 'amplitude', type: 'double' }, { name: 'change', type: 'double' },
+            { name: 'price_change', type: 'double' }, { name: 'turnover_rate', type: 'double' },
+            { name: 'create_time', type: 'timestamp' }, { name: 'update_time', type: 'timestamp' }
+          ]
+          await ddb.execute(`t = ${IDX_TBL}; delete from t where symbol='${sym}' and trade_date between ${sd} and ${ed}`)
+          await ddb.insertRows('stock_zh_index_daily', IDX_COLS, rows)
+        } catch (e) { console.error('[market] index-kline 入库失败:', e.message) }
       }
+      // 直接映射返回网络数据（DDB 入库是加分项，不应阻塞展示）
+      const kline = raw.map(m => ({
+        date: String(m['日期']).replace(/\./g, '-'), open: Number(m['开盘']) || 0, close: Number(m['收盘']) || 0,
+        high: Number(m['最高']) || 0, low: Number(m['最低']) || 0,
+        volume: Number(m['成交量']) || 0, amount: Number(m['成交额']) || 0,
+        turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
+      }))
+      cache.set(cacheKey, kline, 300)
+      return ok(res, kline)
     }
 
     res.json({ code: 503, msg: '数据不可用', data: [] })

@@ -59,6 +59,17 @@ router.get('/random', async (req, res) => {
       if (raw && raw.length > rows.length) { rows = raw; source = 'daily_k_raw' }
     }
 
+    // 3. DDB 不可用或库内无该股 → 网络兜底（aktools 多源 TDX→腾讯→东财），保证实战训练可用。
+    if (!rows || rows.length < days) {
+      const aktools = require('../aktools')
+      try {
+        const raw = await aktools.getStockHistory({ symbol, period: 'daily', adjust: 'qfq', start_date: sd.replace(/-/g, ''), end_date: ed.replace(/-/g, '') })
+        if (raw && raw.length >= days) { rows = raw; source = 'network' }
+      } catch (e) {
+        console.warn('[kline] random 网络兜底失败:', e.message)
+      }
+    }
+
     if (!rows || rows.length < days) {
       return res.json({
         code: 500,
