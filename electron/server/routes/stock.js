@@ -6,6 +6,9 @@ const cache = require('../cache')
 const klineRepo = require('../../dolphindb/kline-repository')
 const ddb = require('../../dolphindb/client')
 const spotRepo = require('../../dolphindb/spot-repository')
+const minuteRepo = require('../../dolphindb/minute-repository')
+const holdingRepo = require('../../dolphindb/holding-repository')
+const converter = require('../converter')
 const { getDb } = require('../db')
 const akshareSource = require('../sources/akshare')
 
@@ -555,6 +558,67 @@ router.get('/:code/kline', async (req, res) => {
     if (e.retryAfterSec) {
       return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
     }
+    errMsg(res, e.message)
+  }
+})
+
+// 分钟K线 — DB-first from minute_k（write-on-miss）
+router.get('/:code/minute', async (req, res) => {
+  const { code } = req.params
+  const { period = 5, startDate, endDate } = req.query
+  const sd = startDate || endDate || new Date().toISOString().slice(0, 10)
+  const cacheKey = `ddb:minute:${code}:${sd}:${period}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached, '成功(缓存)')
+  try {
+    let data = await minuteRepo.getMinuteK(code, sd, period)
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 60)
+      return ok(res, data)
+    }
+    const raw = await aktools.getStockMinute({ symbol: code, period, start_date: sd, end_date: endDate || sd })
+    if (raw && raw.length > 0) {
+      await minuteRepo.insertMinuteK(raw, code, period)
+      data = await minuteRepo.getMinuteK(code, sd, period)
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 60)
+        return ok(res, data, '成功(已入库)')
+      }
+    }
+    ok(res, raw || [])
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
+    errMsg(res, e.message)
+  }
+})
+
+// 十大股东持股 — DB-first from stock_holding（write-on-miss）
+router.get('/:code/holding', async (req, res) => {
+  const { code } = req.params
+  const { date } = req.query
+  if (!date) return errMsg(res, '缺少 date 参数（财报截止日，如 20230930）')
+  const cacheKey = `ddb:holding:${code}:${date}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached, '成功(缓存)')
+  try {
+    let data = await holdingRepo.getHolding(date, code)
+    if (data && data.length > 0) {
+      cache.set(cacheKey, data, 86400)
+      return ok(res, data)
+    }
+    const raw = await aktools.getStockHolding({ symbol: code, date })
+    if (raw && raw.length > 0) {
+      const rows = converter.convertHolding(raw, date)
+      await holdingRepo.insertHolding(rows, date, code)
+      data = await holdingRepo.getHolding(date, code)
+      if (data && data.length > 0) {
+        cache.set(cacheKey, data, 86400)
+        return ok(res, data, '成功(已入库)')
+      }
+    }
+    ok(res, raw || [])
+  } catch (e) {
+    if (e.retryAfterSec) return res.json({ code: 429, msg: `${e.message}，请约 ${e.retryAfterSec} 秒后重试`, data: { retryAfterSec: e.retryAfterSec } })
     errMsg(res, e.message)
   }
 })

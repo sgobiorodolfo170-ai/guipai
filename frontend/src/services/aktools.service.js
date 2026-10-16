@@ -23,9 +23,8 @@ export {
   getStockLimitYesterday
 }
 
-// 以下函数在前端无直接引用（grep 确认）。getStockHistory/getStockInfo 已重定向到业务路由；
-// getStockMinute/getStockHolding 暂无业务路由对应，仍走废弃的 aktools 路由（后端已 DB-first）。
-// TODO: 在 stock.js 新建 GET /:code/minute 和 GET /:code/holding 业务端点后，改为重定向。
+// 以下函数在前端无直接引用（grep 确认）。getStockHistory/getStockInfo 已重定向到业务路由。
+// C6 收尾：getStockMinute/getStockHolding 也已重定向到新建的业务路由 /:code/minute, /:code/holding。
 import api from '@/utils/api'
 
 export const getStockHistory = (params) => {
@@ -34,8 +33,8 @@ export const getStockHistory = (params) => {
 }
 
 export const getStockMinute = (params) => {
-  console.warn('[deprecated] getStockMinute — 暂无业务路由对应，仍走 aktools')
-  return api.get('/aktools/stock/minute', { params })
+  console.warn('[deprecated] getStockMinute — 请使用 GET /api/stocks/:code/minute')
+  return api.get(`/stocks/${params.symbol}/minute`, { params })
 }
 
 export const getStockInfo = (symbol) => {
@@ -44,6 +43,6 @@ export const getStockInfo = (symbol) => {
 }
 
 export const getStockHolding = (params) => {
-  console.warn('[deprecated] getStockHolding — 暂无业务路由对应，仍走 aktools')
-  return api.get('/aktools/stock/holding', { params })
+  console.warn('[deprecated] getStockHolding — 请使用 GET /api/stocks/:code/holding')
+  return api.get(`/stocks/${params.symbol}/holding`, { params })
 }
