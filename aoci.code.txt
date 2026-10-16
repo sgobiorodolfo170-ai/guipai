@@ -112,7 +112,7 @@ DateRangeSelector.vue[DU6M]: F:日期范围选择器：起止日期/快速选择
 ===G:/pj/pj--ing/111111/guipai/frontend/src/components/common/===
 ErrorBoundary.vue[CR7T]: F:组件错误边界：onErrorCaptured 捕获渲染错误展示降级 UI 并上报主进程日志 | R:code:frontend/src/App.vue | A:- | S:必须 return false 阻止错误上抛否则冒泡到 errorHandler 整树卸载；window.tradeinsight.logError 上报 renderer-error.log；retry 自增 reloadKey 重建子树
 HistoryDataModal.vue[DU7M]: F:指标历史弹窗：30 天概览统计/ECharts 趋势图/每日表格（环比红涨绿跌） | R:code:frontend/src/services/limitBoardStatistics.service.js | A:- | S:按 dataType 分支映射 valueField 与数量/百分比格式；图表容器按需渲染
-KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、左滑分页加载更早数据、自定义数据源与指数支持 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:candle.type 须为合法枚举（candle_up_stroke 等 6 种），非法值被库内 switch 静默跳过致蜡烛不绘制；蜡烛与 VOL 量柱配色须显式覆盖红涨绿跌——库默认西式反色，指标柱色源自 indicator.bars[0]（样式深合并）；setDataLoader 须先于 setSymbol；左滑分页锚定最早 timestamp，日期本地手拼（toISOString 东八区偏移）
+KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、默认六条均线 MA5/10/20/60/120/250（图例可点击显隐）、左滑分页加载更早数据、自定义数据源与指数支持、OHLCV 悬停悬浮窗（自定义 HTML，中文标签、鼠标右下定位） | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js,code:frontend/src/utils/stock.js | A:- | S:candle.type 非法值静默不绘制；蜡烛与 VOL 柱配色须覆盖红涨绿跌；setDataLoader 须先于 setSymbol；分页锚最早 timestamp，日期手拼防时区；MA 六条色板按序须≥6 防回绕，库图例清空自绘，显隐 overrideIndicator lines 置透明；内置 tooltip 置 none；索引取 convertFromPixel(x) 并 clamp；定位靠 mousemove，轴/分隔条无回调
 SliderFilter.vue[DU6T]: F:滑动筛选器：动态选项/滑块动画/v-model 双向绑定 | R:- | A:- | S:options 至少 2 项且每项需 label+value；滑块宽度按选项数等分
 StockCard.vue[DU6S]: F:股票卡片：价格/涨跌/最高最低/成交量展示，点击详情与自选切换事件 | R:code:frontend/src/utils/stock.js | A:- | S:-
 
@@ -193,7 +193,7 @@ NoteDetail.vue[DU5T]: F:笔记详情/编辑/创建页：按路由与 mode 分发
 NoteList.vue[DU7S]: F:笔记列表页：盈亏汇总/过滤栏(关键词/股票/方向/标签)/卡片列表/浮动盈亏补算/提醒轮询 | R:code:frontend/src/composables/useNotes.js,code:frontend/src/components/note/StockNoteSummary.vue | A:- | S:挂载并行拉列表/股票/标签/汇总后启动提醒轮询并补算浮动盈亏；过滤变化重新拉取
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/review/===
-Review.vue[DU9L]: F:复盘页：指数概览/涨停池分类卡片/市场时段筛选/历史数据弹窗/缓存刷新 | R:code:frontend/src/composables/useReview.js,code:frontend/src/components/common/HistoryDataModal.vue | A:- | S:标题日期取最近交易日；刷新按钮强制拉最新并写缓存；迷你K线点击展开
+Review.vue[DU9L]: F:复盘页：指数概览/涨停池分类卡片/市场时段筛选/历史数据弹窗/缓存刷新 | R:code:frontend/src/composables/useReview.js,code:frontend/src/components/common/HistoryDataModal.vue,code:frontend/src/components/common/KLineChart.vue | A:- | S:标题日期取最近交易日；刷新按钮强制拉最新并写缓存；迷你K线点击展开
 ReviewBF.vue[DU7L]: F:北交所实时行情看板：平均/最高涨跌幅、总成交额、市盈率、换手率统计与图表 | R:- | A:- | S:独立备用复盘看板，当前路由未挂载
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/settings/===
