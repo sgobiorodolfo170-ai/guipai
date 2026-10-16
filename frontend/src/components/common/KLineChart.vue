@@ -165,14 +165,23 @@ function buildStyles() {
       vertical: { color: gridColor }
     },
     candle: {
-      // candle_down: 阳线(上涨)空心描边、阴线(下跌)实心填充
+      // candle_up_stroke: 阳线(上涨)空心描边、阴线(下跌)实心填充
       // A股惯例：红涨空心阳线、绿跌实心阴线
-      type: 'candle_down',
+      // type 必须为 KLineCharts 合法枚举（candle_solid|candle_stroke|candle_up_stroke|
+      // candle_down_stroke|ohlc|area）；非法值会让蜡烛层 switch 无命中，静默不绘制任何蜡烛
+      type: 'candle_up_stroke',
       tooltip: { showRule: 'always' },
       bar: {
         upColor: up,
         downColor: down,
-        noChangeColor: '#888'
+        noChangeColor: '#888',
+        // 空心蜡烛只描边，边界/影线颜色须显式设置，否则沿用库默认的西式绿涨红跌
+        upBorderColor: up,
+        downBorderColor: down,
+        noChangeBorderColor: '#888',
+        upWickColor: up,
+        downWickColor: down,
+        noChangeWickColor: '#888'
       },
       priceMark: {
         last: {
