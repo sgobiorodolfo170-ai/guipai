@@ -1,13 +1,17 @@
 'use strict'
 
 /**
- * E2E：sync(涨停池, 直连东财 push2ex) → DolphinDB → statistics → delete → 校验。
+ * E2E：sync(涨停池, 直连东财 push2ex) → DolphinDB → statistics → 清理 → 校验。
  * 不依赖 AKTools/Python/mock；涨停池走 push2ex（不受 push2 集群限流影响）。
- * 断言基于 sync 返回的 successCount（真实数据，非硬编码）。
+ * 断言基于 sync 返回的写入行数（真实数据，非硬编码）。
+ *
+ * 说明：原 /sync-status/manual/* 端点已随「收盘数据同步」改版移除，涨停池同步改走
+ * 新的 market-sync 模块（syncPoolByType），删除改为直连 DDB。
  *
  * 前置：DolphinDB(8848) + Express(8080) 已运行。
  */
 const ddb = require('./client')
+const { syncPoolByType } = require('../server/market-sync')
 
 const DATE = '2026-09-25'
 const dd = (s) => String(s).replace(/-/g, '.')
@@ -34,11 +38,11 @@ async function main() {
   await ddb.execute(`t = ${TBL}; delete from t where trade_date=${dd(DATE)}`)
   ddb.disconnect()
 
-  console.log('\n--- 1. POST sync LIMIT_UP（直连东财涨停池 push2ex）---')
-  const syncRes = await http('POST', `/sync-status/manual/sync?tradeDate=${DATE}&dataType=LIMIT_UP`)
-  console.log('sync result:', JSON.stringify(syncRes.data))
-  const N = syncRes.data && syncRes.data.successCount
-  chk('sync.success', syncRes.data && syncRes.data.success, 1)
+  console.log('\n--- 1. sync LIMIT_UP（market-sync.syncPoolByType，直连东财涨停池 push2ex）---')
+  const syncRes = await syncPoolByType(DATE, 'LIMIT_UP')
+  console.log('sync result:', JSON.stringify(syncRes))
+  const N = syncRes.status === 'ok' ? syncRes.rows : 0
+  chk('sync.ok', syncRes.status === 'ok' ? 1 : 0, 1)
   if (!N || N < 1) {
     console.log('sync 未获取到涨停池数据（东财可能当日无数据或限流），终止')
     process.exit(1)
@@ -62,10 +66,12 @@ async function main() {
   const cmp = (await http('GET', `/limit-board-statistics/comparison/${DATE}`)).data
   chk('cmp.limitUpCount', cmp.limitUpCount, N)
 
-  console.log(`\n--- 5. DELETE sync LIMIT_UP（断言 deleted=${N}）---`)
-  const del = (await http('DELETE', `/sync-status/manual/delete?tradeDate=${DATE}&dataType=LIMIT_UP`)).data
-  console.log('delete:', JSON.stringify(del))
-  chk('sync.delete.deleted', del.deleted, N)
+  console.log(`\n--- 5. 直连 DDB 清理 LIMIT_UP（删除当日数据）---`)
+  await ddb.connect()
+  const cntBefore = await ddb.count(`select count(*) as c from ${TBL} where trade_date=${dd(DATE)} and data_type='LIMIT_UP'`)
+  await ddb.execute(`t = ${TBL}; delete from t where trade_date=${dd(DATE)} and data_type='LIMIT_UP'`)
+  ddb.disconnect()
+  chk('cleanup.deleted', cntBefore, N)
 
   console.log('\n--- 6. 删除后校验 ---')
   await ddb.connect()

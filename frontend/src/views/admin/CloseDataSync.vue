@@ -1,345 +1,527 @@
 <script setup>
 /**
- * 收盘数据同步管理 —— 涨停/跌停/板块/指数日K 四类收盘数据的落库管理。
+ * 收盘数据同步 —— 全市场数据同步 + 数据可视化（全新设计，替代原四类收盘同步页）。
  *
  * 功能分区：
- *   1. 近 7 天状态矩阵：日期 × 数据类型，一眼看出哪天缺哪类（成功/失败/跳过/未同步）
- *   2. 单日操作：按日期+类型 同步 / 强制重刷 / 删除
- *   3. 完整收盘：一键同步某天全部 4 类
- *   4. 区间批量：补历史数据用，自动跳过周末与已同步日期；单次上限 62 天
+ *   1. 全市场数据同步：一次「开始」= 全市场个股日K（写入 daily_k，前复权，幂等）
+ *      + 四类收盘数据（涨停/跌停/板块/指数日K）。后台任务 + 实时进度轮询（1.5s）。
+ *   2. 数据可视化（ECharts）：
+ *      - 数据完整性：近 N 天 daily_k 覆盖率 / 按市场覆盖拆分 / 四类收盘数据存在性
+ *      - 数据验证：当日 daily_k 异常分类计数（OHLC 冲突、非正价格、字段缺失）
+ *      - 数据进度：进行中任务实时面板 + 最近任务历史
  *
- * 注意：区间批量是长请求（单日×4类 最坏 ~3s），必须用长超时 + skipRetry，
- *       否则 axios 15s 默认超时后会自动重试 → 与在途任务并发压源。
+ * 后端契约见 electron/server/market-sync.js（/api/market-sync/*）。
  */
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as echarts from 'echarts'
 import api from '@/utils/api'
 
-// ---- 数据类型定义（与后端 sync.js DATA_TYPES 一致） ----
-const DATA_TYPES = [
-  { code: 'LIMIT_UP', label: '涨停板' },
-  { code: 'LIMIT_DOWN', label: '跌停板' },
-  { code: 'PLATE_MARKET', label: '板块行情' },
-  { code: 'INDEX_DAILY', label: '指数日K' }
+// ---- 全市场同步：配置 ----
+const today = () => new Date().toISOString().slice(0, 10)
+const syncDate = ref(today())
+const adjust = ref('qfq')
+const concurrency = ref(3)
+const includePools = ref(true)
+const force = ref(false)
+const starting = ref(false)
+
+// ---- 全市场同步：状态 ----
+const status = ref(null)
+const statusLoading = ref(false)
+const progressTimer = ref(null)
+
+const ddbConnected = computed(() => !!status.value?.ddb?.connected)
+const running = computed(() => !!status.value?.running)
+const progressPercent = computed(() => status.value?.percent ?? 0)
+const phaseLabel = computed(() => status.value?.phaseLabel || (status.value?.running ? '准备中…' : '未开始'))
+
+/** 秒 → HH:MM:SS */
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(sec || 0))
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
+  const p = n => String(n).padStart(2, '0')
+  return `${p(h)}:${p(m)}:${p(x)}`
+}
+
+const POOL_LABELS = [
+  { key: 'limit_up', label: '涨停池' },
+  { key: 'limit_down', label: '跌停池' },
+  { key: 'plate', label: '板块行情' },
+  { key: 'index', label: '指数日K' }
 ]
 
-// ---- 状态矩阵 ----
-const matrixLoading = ref(false)
-const matrixDays = ref(7)
-const statusRows = ref([])  // data_sync_status 行
-
-const today = () => new Date().toISOString().slice(0, 10)
-const fmtDate = (d) => d.toISOString().slice(0, 10)
-
-/** 最近 N 个自然日（倒序） */
-const recentDates = computed(() => {
-  const out = []
-  for (let i = 0; i < matrixDays.value; i++) {
-    const d = new Date()
-    d.setDate(d.getDate() - i)
-    out.push(fmtDate(d))
-  }
-  return out
-})
-
-/** 状态查找：trade_date + data_type → status（1成功/2失败/3跳过/undefined未同步） */
-const statusMap = computed(() => {
-  const m = {}
-  for (const r of statusRows.value) {
-    const date = String(r.trade_date || '').slice(0, 10)
-    m[`${date}|${r.data_type}`] = r
-  }
-  return m
-})
-const cellOf = (date, type) => statusMap.value[`${date}|${type}`]
-
-const STATUS_TAG = {
-  1: { text: '成功', type: 'success' },
-  2: { text: '失败', type: 'danger' },
-  3: { text: '跳过', type: 'info' }
-}
-
-const fetchMatrix = async () => {
-  matrixLoading.value = true
+const fetchStatus = async () => {
+  statusLoading.value = true
   try {
-    const res = await api.get('/sync-status/recent', { params: { days: matrixDays.value } })
-    statusRows.value = res.data || []
+    const res = await api.get('/market-sync/status')
+    status.value = res.data || null
   } catch (e) {
-    ElMessage.error('获取同步状态失败: ' + e.message)
+    // 仅静默失败一次，避免断连时刷屏；进度轮询由 running 判断兜底
   } finally {
-    matrixLoading.value = false
+    statusLoading.value = false
   }
 }
 
-// ---- 单日操作 ----
-const singleDate = ref(today())
-const singleType = ref('LIMIT_UP')
-const singleBusy = ref(false)
-
-const syncOne = async (force) => {
-  if (!singleDate.value) return ElMessage.warning('请选择日期')
-  singleBusy.value = true
-  try {
-    const res = await api.post('/sync-status/manual/sync', {}, {
-      params: { tradeDate: singleDate.value, dataType: singleType.value, forceUpdate: force ? 'true' : 'false' }
-    })
-    const r = res.data || {}
-    if (r.success) ElMessage.success(r.message)
-    else ElMessage.warning(r.message)
-    await fetchMatrix()
-  } catch (e) {
-    ElMessage.error('同步失败: ' + e.message)
-  } finally {
-    singleBusy.value = false
+/** 运行中 → 1.5s 轮询进度；空闲 → 停表 */
+const managePolling = () => {
+  if (progressTimer.value) { clearInterval(progressTimer.value); progressTimer.value = null }
+  if (running.value) {
+    progressTimer.value = setInterval(fetchStatus, 1500)
   }
 }
+watch(running, managePolling)
 
-const deleteOne = async () => {
-  if (!singleDate.value) return ElMessage.warning('请选择日期')
-  const typeLabel = DATA_TYPES.find(t => t.code === singleType.value)?.label
+const startSync = async () => {
+  if (starting.value) return
+  if (!ddbConnected.value) return ElMessage.warning('DolphinDB 未连接，无法写入。请先在数据总览重连 DolphinDB')
+  if (!syncDate.value) return ElMessage.warning('请选择目标日期')
   try {
     await ElMessageBox.confirm(
-      `将删除 ${singleDate.value} 的「${typeLabel}」数据（仅删库内数据，同步状态记录保留）。是否继续？`,
-      '确认删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
-    )
-  } catch { return }
-  singleBusy.value = true
-  try {
-    const res = await api.delete('/sync-status/manual/delete', {
-      params: { tradeDate: singleDate.value, dataType: singleType.value }
-    })
-    ElMessage.success(`已删除 ${res.data?.deleted ?? 0} 条`)
-    await fetchMatrix()
-  } catch (e) {
-    ElMessage.error('删除失败: ' + e.message)
-  } finally {
-    singleBusy.value = false
-  }
-}
-
-// ---- 完整收盘 ----
-const fullDate = ref(today())
-const fullBusy = ref(false)
-const fullSync = async () => {
-  if (!fullDate.value) return ElMessage.warning('请选择日期')
-  fullBusy.value = true
-  try {
-    const res = await api.post('/sync-status/manual/full-sync', {}, {
-      params: { tradeDate: fullDate.value }
-    })
-    const rows = res.data || []
-    const okCount = rows.filter(r => r.status === 1).length
-    ElMessage.success(`完整收盘完成：${okCount}/${rows.length} 类成功`)
-    await fetchMatrix()
-  } catch (e) {
-    ElMessage.error('完整收盘失败: ' + e.message)
-  } finally {
-    fullBusy.value = false
-  }
-}
-
-// ---- 区间批量 ----
-const rangeValue = ref(null)   // [startDate, endDate]
-const rangeType = ref('')      // '' = 全部类型
-const rangeForce = ref(false)
-const rangeBusy = ref(false)
-const rangeSummary = ref(null)
-const rangeResults = ref([])
-
-const rangeValid = computed(() =>
-  Array.isArray(rangeValue.value) && rangeValue.value.length === 2 &&
-  rangeValue.value[0] && rangeValue.value[1] && rangeValue.value[0] <= rangeValue.value[1]
-)
-
-const RANGE_TIMEOUT_MS = 240000 // 区间批量是长请求：62 天上限 × 单日×4类最坏 ~3s
-const RANGE_SLICE_DAYS = 60     // 后端单次上限 62 天，前端按 60 天切片循环调用
-
-const rangeSync = async () => {
-  if (!rangeValid.value) return ElMessage.warning('请选择有效日期区间')
-  const [start, end] = rangeValue.value
-  try {
-    await ElMessageBox.confirm(
-      `将对 ${start} ~ ${end} 区间同步「${rangeType.value ? DATA_TYPES.find(t => t.code === rangeType.value)?.label : '全部 4 类'}」。` +
-      `${rangeForce.value ? '（强制重刷：先删除已有数据）' : '（已同步的日期自动跳过）'} 是否继续？`,
-      '确认区间同步', { confirmButtonText: '开始', cancelButtonText: '取消', type: 'warning' }
+      `将启动「全市场数据同步」：\n` +
+      `目标日期：${syncDate.value}（个股日K按当日拉取，前复权）\n` +
+      `并发数：${concurrency.value}（全市场约 5000+ 只，预计需半小时以上，可随时停止后续拉）\n` +
+      `${force.value ? '（已勾选强制重刷：四类收盘数据已存在也重新拉取）' : '（未勾选强制：四类收盘数据已存在的日期自动跳过）'}\n` +
+      `是否继续？`,
+      '确认启动全市场同步',
+      { confirmButtonText: '开始同步', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
 
-  rangeBusy.value = true
-  rangeSummary.value = null
-  rangeResults.value = []
+  starting.value = true
   try {
-    // 超过 60 天的区间按片循环，避免单次请求超过服务端 62 天上限
-    const slices = []
-    let cur = new Date(start + 'T00:00:00')
-    const endD = new Date(end + 'T00:00:00')
-    while (cur <= endD) {
-      const sliceEnd = new Date(cur)
-      sliceEnd.setDate(sliceEnd.getDate() + RANGE_SLICE_DAYS - 1)
-      if (sliceEnd > endD) sliceEnd.setTime(endD.getTime())
-      slices.push([fmtDate(cur), fmtDate(sliceEnd)])
-      cur = new Date(sliceEnd)
-      cur.setDate(cur.getDate() + 1)
-    }
-
-    const agg = { total: 0, ok: 0, skipped: 0, error: 0 }
-    for (const [s, e] of slices) {
-      const res = await api.post('/sync-status/manual/sync-range', {}, {
-        params: {
-          startDate: s, endDate: e,
-          dataType: rangeType.value || undefined,
-          forceUpdate: rangeForce.value ? 'true' : 'false'
-        },
-        timeout: RANGE_TIMEOUT_MS,
-        skipRetry: true
-      })
-      const d = res.data || {}
-      for (const r of d.results || []) rangeResults.value.push(r)
-      if (d.summary) {
-        agg.total += d.summary.total; agg.ok += d.summary.ok
-        agg.skipped += d.summary.skipped; agg.error += d.summary.error
-      }
-    }
-    rangeSummary.value = agg
-    ElMessage.success(`区间同步完成：成功 ${agg.ok}、跳过 ${agg.skipped}、失败 ${agg.error}`)
-    await fetchMatrix()
+    const res = await api.post('/market-sync/start', {
+      date: syncDate.value,
+      adjust: adjust.value,
+      concurrency: concurrency.value,
+      includePools: includePools.value,
+      force: force.value
+    })
+    ElMessage.success(res.msg || '任务已启动')
+    await fetchStatus()
+    managePolling()
   } catch (e) {
-    ElMessage.error('区间同步失败: ' + e.message)
+    ElMessage.error('启动失败: ' + e.message)
   } finally {
-    rangeBusy.value = false
+    starting.value = false
   }
 }
 
-onMounted(fetchMatrix)
+const stopSync = async () => {
+  if (!running.value) return
+  try {
+    const res = await api.post('/market-sync/stop')
+    ElMessage.info(res.msg || '已请求停止，将在当前批次结束后停止')
+    await fetchStatus()
+  } catch (e) {
+    ElMessage.error('停止失败: ' + e.message)
+  }
+}
+
+const lastCompleted = computed(() => status.value?.lastCompleted || null)
+
+// ---- 数据可视化：完整性 ----
+const completenessDays = ref(10)
+const completeness = ref(null)
+const completeLoading = ref(false)
+
+const coverageDates = computed(() => (completeness.value?.byDate || []).map(d => d.date))
+const coverageCovered = computed(() => (completeness.value?.byDate || []).map(d => d.covered))
+const coverageRate = computed(() => (completeness.value?.byDate || []).map(d => d.percent))
+const marketBreakdown = computed(() => completeness.value?.marketBreakdown || [])
+const pools = computed(() => completeness.value?.pools || { limitUp: 0, limitDown: 0, plate: 0, index: 0 })
+
+const completenessStats = computed(() => {
+  const c = completeness.value
+  const todayItem = (c?.byDate || []).find(d => d.date === (c?.date || today())) || (c?.byDate || [])[0]
+  return {
+    expected: c?.expected ?? 0,
+    date: todayItem?.date || '-',
+    covered: todayItem?.covered ?? 0,
+    percent: todayItem?.percent ?? 0
+  }
+})
+
+// ---- 数据可视化：验证 ----
+const validateDate = ref(today())
+const validateData = ref(null)
+const validateLoading = ref(false)
+
+const validateChecks = computed(() => validateData.value?.checks || [])
+const validateTotal = computed(() => validateData.value?.total ?? 0)
+const validateIssues = computed(() => validateData.value?.issues ?? 0)
+const validateRate = computed(() => validateData.value?.rate ?? 0)
+
+// ---- 自动刷新 ----
+const autoRefresh = ref(false)
+let autoTimer = null
+
+const fetchCompleteness = async () => {
+  completeLoading.value = true
+  try {
+    const res = await api.get('/market-sync/completeness', { params: { days: completenessDays.value, date: today() } })
+    completeness.value = res.data || null
+  } catch (e) {
+    ElMessage.error('获取完整性数据失败: ' + e.message)
+  } finally {
+    completeLoading.value = false
+  }
+}
+
+const fetchValidate = async () => {
+  validateLoading.value = true
+  try {
+    const res = await api.get('/market-sync/validate', { params: { date: validateDate.value } })
+    validateData.value = res.data || null
+  } catch (e) {
+    ElMessage.error('获取验证数据失败: ' + e.message)
+  } finally {
+    validateLoading.value = false
+  }
+}
+
+const refreshVisual = async () => {
+  await Promise.all([fetchCompleteness(), fetchValidate()])
+}
+
+watch(autoRefresh, (on) => {
+  if (autoTimer) { clearInterval(autoTimer); autoTimer = null }
+  if (on) autoTimer = setInterval(refreshVisual, 10000)
+})
+
+// ---- ECharts ----
+const completenessChartRef = ref(null)
+const marketChartRef = ref(null)
+const validateChartRef = ref(null)
+let completenessChart = null
+let marketChart = null
+let validateChart = null
+
+const PALETTE = ['#409eff', '#67c23a', '#e6a23c', '#909399', '#f56c6c', '#7958d6']
+
+function ensureInit(instRef, elRef) {
+  const el = elRef.value
+  if (!el) return null
+  if (instRef !== null) return instRef
+  const inst = echarts.init(el)
+  return inst
+}
+
+const renderCompletenessChart = async () => {
+  await nextTick()
+  completenessChart = ensureInit(completenessChart, completenessChartRef)
+  if (!completenessChart) return
+  completenessChart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['覆盖股票数', '覆盖率'], top: 0 },
+    grid: { left: '3%', right: '6%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: coverageDates.value },
+    yAxis: [
+      { type: 'value', name: '股票数' },
+      { type: 'value', name: '覆盖率', max: 100, axisLabel: { formatter: '{value}%' } }
+    ],
+    series: [
+      { name: '覆盖股票数', type: 'bar', data: coverageCovered.value, barMaxWidth: 26, itemStyle: { color: PALETTE[0] } },
+      { name: '覆盖率', type: 'line', yAxisIndex: 1, data: coverageRate.value, smooth: true, symbol: 'circle', itemStyle: { color: PALETTE[1] } }
+    ]
+  }, { notMerge: true })
+}
+
+const renderMarketChart = async () => {
+  await nextTick()
+  marketChart = ensureInit(marketChart, marketChartRef)
+  if (!marketChart) return
+  const m = marketBreakdown.value
+  marketChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+    legend: { data: ['已覆盖', '缺失'], top: 0 },
+    grid: { left: '3%', right: '4%', bottom: '8%', containLabel: true },
+    xAxis: { type: 'value' },
+    yAxis: { type: 'category', data: m.map(x => x.market), inverse: true },
+    series: [
+      { name: '已覆盖', type: 'bar', stack: 'm', data: m.map(x => x.covered), itemStyle: { color: PALETTE[0] } },
+      { name: '缺失', type: 'bar', stack: 'm', data: m.map(x => x.missing), itemStyle: { color: '#e8ecf0' }, label: { show: true, position: 'right', formatter: p => `${(m[p.dataIndex]?.percent ?? 0)}%`, fontSize: 11, color: '#606266' } }
+    ]
+  }, { notMerge: true })
+}
+
+const renderValidateChart = async () => {
+  await nextTick()
+  validateChart = ensureInit(validateChart, validateChartRef)
+  if (!validateChart) return
+  const checks = validateChecks.value
+  validateChart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: { left: '3%', right: '4%', bottom: '3%', containLabel: true },
+    xAxis: { type: 'category', data: checks.map(c => c.label) },
+    yAxis: { type: 'value', name: '异常行数' },
+    series: [{
+      name: '异常行数', type: 'bar', data: checks.map(c => c.count || 0),
+      barMaxWidth: 40,
+      itemStyle: { color: p => (p.value > 0 ? '#f56c6c' : '#67c23a') }
+    }]
+  }, { notMerge: true })
+}
+
+const handleResize = () => {
+  completenessChart?.resize()
+  marketChart?.resize()
+  validateChart?.resize()
+}
+
+watch([coverageDates, coverageCovered, coverageRate], () => { if (completeness.value && Object.keys(completeness.value).length) renderCompletenessChart() })
+watch(marketBreakdown, () => { if (marketBreakdown.value.length) renderMarketChart() })
+watch(validateChecks, () => { if (validateChecks.value.length) renderValidateChart() })
+
+// ---- 生命周期 ----
+onMounted(async () => {
+  window.addEventListener('resize', handleResize)
+  await fetchStatus()
+  managePolling()
+  await refreshVisual()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize)
+  if (progressTimer.value) clearInterval(progressTimer.value)
+  if (autoTimer) clearInterval(autoTimer)
+  completenessChart?.dispose()
+  marketChart?.dispose()
+  validateChart?.dispose()
+})
 </script>
 
 <template>
   <div class="close-data-sync">
-    <!-- 状态矩阵 -->
+    <!-- ======== 1. 全市场数据同步 ======== -->
     <el-card class="mb-16">
       <template #header>
         <div class="card-header">
-          <span>同步状态矩阵（最近 {{ matrixDays }} 天）</span>
-          <div>
-            <el-radio-group v-model="matrixDays" size="small" @change="fetchMatrix">
-              <el-radio-button :value="7">7 天</el-radio-button>
-              <el-radio-button :value="14">14 天</el-radio-button>
-              <el-radio-button :value="30">30 天</el-radio-button>
-            </el-radio-group>
-            <el-button size="small" style="margin-left: 8px" @click="fetchMatrix">刷新</el-button>
-          </div>
+          <span>全市场数据同步</span>
+          <el-button size="small" :loading="statusLoading" @click="fetchStatus">刷新状态</el-button>
         </div>
       </template>
-      <el-table :data="recentDates" size="small" border v-loading="matrixLoading" max-height="420">
-        <el-table-column label="日期" width="110">
-          <template #default="{ row }">{{ row }}</template>
-        </el-table-column>
-        <el-table-column v-for="t in DATA_TYPES" :key="t.code" :label="t.label" min-width="110" align="center">
-          <template #default="{ row }">
-            <template v-if="cellOf(row, t.code)">
-              <el-tag
-                size="small"
-                :type="STATUS_TAG[cellOf(row, t.code).status]?.type || 'info'"
-                :title="cellOf(row, t.code).message"
-              >
-                {{ STATUS_TAG[cellOf(row, t.code).status]?.text || '未知' }}
-                <template v-if="cellOf(row, t.code).success_count">·{{ cellOf(row, t.code).success_count }}</template>
-              </el-tag>
-            </template>
-            <span v-else class="dim">未同步</span>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-card>
 
-    <!-- 单日操作 -->
-    <el-card class="mb-16">
-      <template #header><span>单日操作</span></template>
-      <el-form :inline="true">
-        <el-form-item label="日期">
-          <el-date-picker v-model="singleDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
+      <el-descriptions :column="4" border size="small" v-loading="statusLoading">
+        <el-descriptions-item label="DolphinDB">
+          <el-tag size="small" :type="ddbConnected ? 'success' : 'danger'">
+            {{ ddbConnected ? '已连接' : '未连接' }}
+          </el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="daily_k 总行数">{{ status?.ddb?.totalRows?.toLocaleString() ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="daily_k 覆盖股票数">{{ status?.ddb?.totalSymbols?.toLocaleString() ?? '-' }}</el-descriptions-item>
+        <el-descriptions-item label="最新交易日">{{ status?.ddb?.latestDate || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <el-alert
+        v-if="!ddbConnected"
+        type="warning"
+        :closable="false"
+        class="mt-12"
+        title="DolphinDB 未启动：全市场数据同步无法写入 daily_k / 涨跌停池 / 板块 / 指数日K。请启动本机 DolphinDB（默认 ws://127.0.0.1:8848）后刷新状态。"
+      />
+
+      <el-form class="mt-16" :inline="true" label-width="90px">
+        <el-form-item label="目标日期">
+          <el-date-picker v-model="syncDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :disabled="running" />
         </el-form-item>
-        <el-form-item label="数据类型">
-          <el-select v-model="singleType" style="width: 130px">
-            <el-option v-for="t in DATA_TYPES" :key="t.code" :value="t.code" :label="t.label" />
+        <el-form-item label="复权方式">
+          <el-select v-model="adjust" style="width: 110px" :disabled="running">
+            <el-option label="前复权" value="qfq" />
+            <el-option label="后复权" value="hfq" />
           </el-select>
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="singleBusy" @click="syncOne(false)">同步</el-button>
-          <el-button :loading="singleBusy" @click="syncOne(true)">强制重刷</el-button>
-          <el-button type="danger" plain :loading="singleBusy" @click="deleteOne">删除</el-button>
+        <el-form-item label="并发数">
+          <el-input-number v-model="concurrency" :min="1" :max="8" controls-position="right" :disabled="running" />
+          <span class="form-hint">只并发</span>
         </el-form-item>
-      </el-form>
-      <div class="hint">「同步」在数据已存在时自动跳过；「强制重刷」先删后写；「删除」只清库内数据，状态记录保留以便追溯。</div>
-    </el-card>
-
-    <!-- 完整收盘 -->
-    <el-card class="mb-16">
-      <template #header><span>完整收盘任务</span></template>
-      <el-form :inline="true">
-        <el-form-item label="日期">
-          <el-date-picker v-model="fullDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" />
+        <el-form-item label="四类收盘">
+          <el-switch v-model="includePools" :disabled="running" active-text="同步" />
+        </el-form-item>
+        <el-form-item label="强制重刷">
+          <el-checkbox v-model="force" :disabled="running">四类数据已存在也重拉</el-checkbox>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" :loading="fullBusy" @click="fullSync">一键收盘（同步全部 4 类）</el-button>
-        </el-form-item>
-      </el-form>
-      <div class="hint">每日收盘后执行一次，把涨停/跌停/板块/指数日K 全部落库。已有数据的类型自动跳过。</div>
-    </el-card>
-
-    <!-- 区间批量 -->
-    <el-card>
-      <template #header><span>区间批量同步（补历史数据）</span></template>
-      <el-form :inline="true">
-        <el-form-item label="日期区间">
-          <el-date-picker
-            v-model="rangeValue" type="daterange" value-format="YYYY-MM-DD"
-            range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期"
-          />
-        </el-form-item>
-        <el-form-item label="数据类型">
-          <el-select v-model="rangeType" style="width: 130px">
-            <el-option value="" label="全部 4 类" />
-            <el-option v-for="t in DATA_TYPES" :key="t.code" :value="t.code" :label="t.label" />
-          </el-select>
-        </el-form-item>
-        <el-form-item>
-          <el-checkbox v-model="rangeForce">强制重刷</el-checkbox>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="rangeBusy" :disabled="rangeBusy || !rangeValid" @click="rangeSync">
-            开始区间同步
+          <el-button type="primary" :loading="starting" :disabled="running || !ddbConnected" @click="startSync">
+            开始同步
           </el-button>
+          <el-button type="danger" plain :disabled="!running" @click="stopSync">停止</el-button>
         </el-form-item>
       </el-form>
       <div class="hint">
-        周末自动跳过（不请求上游）；节假日无数据记为「跳过」而非失败；已同步的日期不重复同步（勾选强制重刷除外）。
-        单次服务端上限 62 天，更长区间由前端自动切片串行。
+        一次「开始」依次执行：全市场个股日K（当日，逐只写入 daily_k，幂等）→ 涨停池 → 跌停池 → 板块行情 → 指数日K。
+        全市场约 5000+ 只，预计耗时较长；随时可「停止」，恢复后再点「开始」续拉（已完成的股票不重复写入）。
       </div>
 
-      <template v-if="rangeSummary">
-        <el-descriptions :column="4" border size="small" class="mt-12">
-          <el-descriptions-item label="处理条目">{{ rangeSummary.total }}</el-descriptions-item>
-          <el-descriptions-item label="成功">{{ rangeSummary.ok }}</el-descriptions-item>
-          <el-descriptions-item label="跳过">{{ rangeSummary.skipped }}</el-descriptions-item>
-          <el-descriptions-item label="失败">{{ rangeSummary.error }}</el-descriptions-item>
+      <!-- 实时进度 -->
+      <div class="progress-block mt-16" v-if="status">
+        <el-progress
+          :percentage="progressPercent"
+          :status="!running && progressPercent === 100 ? 'success' : undefined"
+          :stroke-width="20"
+          :striped="running"
+        />
+        <el-descriptions v-if="running || progressPercent > 0" :column="8" border size="small" class="mt-12">
+          <el-descriptions-item label="当前阶段">
+            <el-tag size="small" :type="running ? 'primary' : 'info'">{{ phaseLabel }}</el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="已处理">{{ status.done }} / {{ status.total }}</el-descriptions-item>
+          <el-descriptions-item label="成功">{{ status.ok }}</el-descriptions-item>
+          <el-descriptions-item label="无数据">{{ status.empty }}</el-descriptions-item>
+          <el-descriptions-item label="失败">{{ status.error }}</el-descriptions-item>
+          <el-descriptions-item label="累计写入">{{ status.rows }} 行</el-descriptions-item>
+          <el-descriptions-item label="速度">{{ status.rate ?? 0 }} 只/s</el-descriptions-item>
+          <el-descriptions-item label="预计剩余">{{ running ? fmtDuration(status.etaSec) : '-' }}</el-descriptions-item>
         </el-descriptions>
+        <div v-if="status.startedAt" class="dim mt-8">
+          已运行 {{ fmtDuration(status.elapsedSec) }} · 目标日期 {{ status.date || '-' }}（并发 {{ status.concurrency }}）
+        </div>
+        <el-alert
+          v-if="status.message"
+          :title="status.message"
+          type="warning"
+          :closable="false"
+          class="mt-8"
+        />
+        <!-- 四类收盘结果 -->
+        <div v-if="status.pools && Object.values(status.pools).some(Boolean)" class="pool-result mt-12">
+          <span class="pool-title">四类收盘数据：</span>
+          <el-tag
+            v-for="p in POOL_LABELS"
+            :key="p.key"
+            size="small"
+            class="pool-tag"
+            :type="!status.pools[p.key] ? 'info' : status.pools[p.key].status === 'ok' ? 'success' : status.pools[p.key].status === 'skipped' ? 'warning' : status.pools[p.key].status === 'empty' ? 'info' : 'danger'"
+          >
+            {{ p.label }}：
+            <template v-if="!status.pools[p.key]">-</template>
+            <template v-else>
+              {{ status.pools[p.key].status === 'ok' ? `${status.pools[p.key].rows} 行` : status.pools[p.key].status === 'skipped' ? '已存在' : status.pools[p.key].status === 'empty' ? '无数据' : '失败' }}
+            </template>
+          </el-tag>
+        </div>
+        <!-- 最近一次完成摘要 -->
+        <el-descriptions v-if="lastCompleted" :column="6" border size="small" class="mt-12">
+          <el-descriptions-item label="上次任务">
+            {{ lastCompleted.date }} · {{ new Date(lastCompleted.endedAt).toLocaleTimeString('zh-CN', { hour12: false }) }} 完成
+          </el-descriptions-item>
+          <el-descriptions-item label="成功">{{ lastCompleted.ok }}</el-descriptions-item>
+          <el-descriptions-item label="无数据">{{ lastCompleted.empty }}</el-descriptions-item>
+          <el-descriptions-item label="失败">{{ lastCompleted.error }}</el-descriptions-item>
+          <el-descriptions-item label="写入">{{ lastCompleted.rows }} 行</el-descriptions-item>
+          <el-descriptions-item label="结果">{{ lastCompleted.message || '-' }}</el-descriptions-item>
+        </el-descriptions>
+      </div>
+    </el-card>
+
+    <!-- ======== 2. 数据可视化 ======== -->
+    <el-card class="mb-16">
+      <template #header>
+        <div class="card-header">
+          <span>数据可视化</span>
+          <div class="header-actions">
+            <el-switch v-model="autoRefresh" active-text="自动刷新(10s)" />
+            <el-button size="small" style="margin-left: 8px" :loading="completeLoading || validateLoading" @click="refreshVisual">
+              刷新数据
+            </el-button>
+          </div>
+        </div>
       </template>
 
-      <el-table v-if="rangeResults.length" :data="rangeResults" size="small" border max-height="320" class="mt-12">
-        <el-table-column prop="date" label="日期" width="110" />
-        <el-table-column label="类型" width="110">
-          <template #default="{ row }">{{ DATA_TYPES.find(t => t.code === row.dataType)?.label || row.dataType }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag size="small" :type="row.status === 'ok' ? 'success' : row.status === 'skipped' ? 'info' : 'danger'">
-              {{ row.status === 'ok' ? '成功' : row.status === 'skipped' ? '跳过' : '失败' }}
-            </el-tag>
+      <!-- 2.1 数据完整性 -->
+      <div class="viz-section">
+        <div class="section-title">数据完整性</div>
+        <el-row :gutter="12" class="stat-row">
+          <el-col :span="6"><el-statistic title="全市场股票数" :value="completenessStats.expected" /></el-col>
+          <el-col :span="6"><el-statistic title="当日已覆盖" :value="completenessStats.covered" /></el-col>
+          <el-col :span="6">
+            <el-statistic title="当日覆盖率" :value="completenessStats.percent" suffix="%" />
+          </el-col>
+          <el-col :span="6">
+            <div class="stat-mini">
+              <span class="stat-mini-label">对应日期</span>
+              <span class="stat-mini-value">{{ completenessStats.date }}</span>
+            </div>
+          </el-col>
+        </el-row>
+
+        <el-row :gutter="12" class="chart-row">
+          <el-col :xs="24" :md="16">
+            <div ref="completenessChartRef" class="chart-box"></div>
+          </el-col>
+          <el-col :xs="24" :md="8">
+            <div class="board-card">
+              <div class="section-subtitle">四类收盘数据（当日）</div>
+              <div class="board-item" v-for="(label, key) in { limitUp: '涨停池', limitDown: '跌停池', plate: '板块行情', index: '指数日K' }" :key="key">
+                <span>{{ label }}</span>
+                <el-tag size="small" :type="(pools[key] || 0) > 0 ? 'success' : 'info'" class="board-tag">
+                  {{ (pools[key] || 0) > 0 ? `${(pools[key] || 0).toLocaleString()} 条` : '未同步' }}
+                </el-tag>
+              </div>
+              <div class="dim">近 {{ completenessDays }} 天每日覆盖率 · 板块卡显示所选日四类收盘数据是否已落库</div>
+            </div>
+          </el-col>
+        </el-row>
+
+        <div class="chart-row">
+          <div class="chart-box short" ref="marketChartRef"></div>
+        </div>
+      </div>
+
+      <!-- 2.2 数据验证 -->
+      <div class="viz-section">
+        <div class="section-title">数据验证</div>
+        <div class="validate-toolbar">
+          <el-date-picker v-model="validateDate" type="date" value-format="YYYY-MM-DD" placeholder="选择校验日期" style="width: 160px" />
+          <el-button size="small" type="primary" :loading="validateLoading" @click="fetchValidate">校验</el-button>
+          <span v-if="validateData && validateData.connected === false" class="dim">（{{ validateData.message }}）</span>
+        </div>
+        <el-row :gutter="12" class="stat-row" v-if="validateData">
+          <el-col :span="8"><el-statistic title="当日行数" :value="validateTotal" /></el-col>
+          <el-col :span="8"><el-statistic title="异常行数" :value="validateIssues" /></el-col>
+          <el-col :span="8"><el-statistic title="异常率" :value="validateRate" suffix="%" /></el-col>
+        </el-row>
+        <div class="chart-box" ref="validateChartRef"></div>
+        <div class="dim" v-if="validateData">
+          校验规则：最高<最低 / 最高<开盘或收盘 / 最低>开盘或收盘 / 收盘≤0 / 开盘≤0 / 成交量<0 / 涨跌幅缺失 / 成交额缺失或为负。绿色=该类别无异常。
+        </div>
+      </div>
+
+      <!-- 2.3 数据进度 -->
+      <div class="viz-section">
+        <div class="section-title">数据进度</div>
+        <div class="dim mb-8">
+          实时进度见上方「全市场数据同步」卡片；此处列出最近完成的全市场同步任务记录（进程内保留最近 10 次）。
+        </div>
+        <el-table :data="status?.history || []" size="small" border max-height="260">
+          <el-table-column label="完成时间" width="170">
+            <template #default="{ row }">
+              {{ row.endedAt ? new Date(row.endedAt).toLocaleString('zh-CN', { hour12: false }) : '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="date" label="目标日期" width="110" />
+          <el-table-column label="股票数" width="90" align="right">
+            <template #default="{ row }">{{ row.total?.toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column label="成功" width="80" align="right">
+            <template #default="{ row }"><span style="color:#67c23a">{{ row.ok }}</span></template>
+          </el-table-column>
+          <el-table-column label="无数据" width="80" align="right">
+            <template #default="{ row }">{{ row.empty }}</template>
+          </el-table-column>
+          <el-table-column label="失败" width="80" align="right">
+            <template #default="{ row }"><span style="color:#f56c6c">{{ row.error }}</span></template>
+          </el-table-column>
+          <el-table-column label="写入行数" width="90" align="right">
+            <template #default="{ row }">{{ row.rows?.toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column label="结果" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.message || '-' }}</template>
+          </el-table-column>
+          <template #empty>
+            <span class="dim">暂无已完成的同步任务</span>
           </template>
-        </el-table-column>
-        <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
-      </el-table>
+        </el-table>
+      </div>
     </el-card>
   </div>
 </template>
@@ -347,8 +529,32 @@ onMounted(fetchMatrix)
 <style scoped>
 .close-data-sync { padding: 20px; }
 .mb-16 { margin-bottom: 16px; }
+.mb-8 { margin-bottom: 8px; }
+.mt-8 { margin-top: 8px; }
 .mt-12 { margin-top: 12px; }
+.mt-16 { margin-top: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
-.hint { margin-top: 8px; color: #86909c; font-size: 12px; }
-.dim { color: #c9cdd4; font-size: 12px; }
+.header-actions { display: flex; align-items: center; }
+.form-hint { margin-left: 6px; color: #86909c; font-size: 12px; }
+.hint { margin-top: 6px; color: #86909c; font-size: 12px; }
+.dim { color: #86909c; font-size: 12px; }
+.progress-block { padding-top: 4px; }
+.pool-result { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.pool-title { font-size: 13px; color: #606266; }
+.pool-tag { }
+.viz-section { margin-bottom: 26px; }
+.section-title { font-size: 15px; font-weight: 600; color: #303133; margin-bottom: 12px; }
+.section-subtitle { font-size: 13px; font-weight: 600; color: #606266; margin-bottom: 10px; }
+.stat-row { margin-bottom: 14px; }
+.stat-mini { line-height: 32px; }
+.stat-mini-label { color: #909399; font-size: 13px; margin-right: 8px; }
+.stat-mini-value { font-size: 18px; font-weight: 600; }
+.chart-row { margin-bottom: 12px; }
+.chart-box { width: 100%; height: 300px; }
+.chart-box.short { height: 240px; }
+.board-card { padding: 8px 12px; border: 1px solid var(--el-border-color-light); border-radius: 6px; }
+.board-item { display: flex; justify-content: space-between; align-items: center; padding: 7px 2px; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }
+.board-item:last-child { border-bottom: none; }
+.board-tag { }
+.validate-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 </style>

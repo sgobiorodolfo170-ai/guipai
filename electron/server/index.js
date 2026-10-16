@@ -8,7 +8,6 @@ const { initDb, closeDb } = require('./db')
 const settings = require('./settings')
 const aktoolsRoutes = require('./routes/aktools')
 const statisticsRoutes = require('./routes/statistics')
-const syncRoutes = require('./routes/sync')
 const trainingRoutes = require('./routes/training')
 const klineRoutes = require('./routes/kline')
 const stockRoutes = require('./routes/stock')
@@ -17,6 +16,7 @@ const watchlistRoutes = require('./routes/watchlist')
 const noteRoutes = require('./routes/note')
 const templateRoutes = require('./routes/template')
 const dataPullRoutes = require('./routes/data-pull')
+const marketSyncRoutes = require('./market-sync')
 
 let server = null
 
@@ -94,7 +94,6 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/aktools', aktoolsRoutes)
   app.use('/api/data-mgmt', require('./routes/data-mgmt'))
   app.use('/api/limit-board-statistics', statisticsRoutes)
-  app.use('/api/sync-status', syncRoutes)
   app.use('/api/sim-training', trainingRoutes)
   app.use('/api/kline', klineRoutes)
   app.use('/api/stocks', stockRoutes)
@@ -104,6 +103,7 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/notes', noteRoutes)
   app.use('/api/templates', templateRoutes)
   app.use('/api/data-pull', dataPullRoutes)
+  app.use('/api/market-sync', marketSyncRoutes.router)
   app.use('/api/settings/akshare', require('./routes/akshare'))
 
   // ---- 通达信 Key 多账号管理（与 Tushare 同模式）----

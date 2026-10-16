@@ -78,14 +78,6 @@ const routes = [
                 meta: {
                     title: '收盘数据同步'
                 }
-            },
-            {
-                path: 'stock-data-pull',
-                name: 'StockDataPull',
-                component: () => import('@/views/admin/StockDataPull.vue'),
-                meta: {
-                    title: '股票数据拉取'
-                }
             }
         ]
     },

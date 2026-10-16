@@ -120,7 +120,8 @@ VITE_DEV_PORT=5174
 - `/api/health` - 健康检查
 - `/api/aktools/*` - AKTools 行情（指数、涨跌停池、行业、K线、个股实时行情）
 - `/api/limit-board-statistics/*` - 涨跌停板统计分析
-- `/api/sync-status/*` - 数据同步状态
+- `/api/market-sync/*` - 全市场数据同步（个股日K/四类收盘）与数据可视化（完整性/验证/进度）
+- `/api/data-pull/*` - 股票往期日K数据拉取（分批次）
 - `/api/sim-training/*` - 模拟训练
 - `/api/kline/*` - K线数据
 - `/api/stocks/*` - 自选股等
