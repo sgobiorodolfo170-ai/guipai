@@ -112,7 +112,7 @@ DateRangeSelector.vue[DU6M]: F:日期范围选择器：起止日期/快速选择
 ===G:/pj/pj--ing/111111/guipai/frontend/src/components/common/===
 ErrorBoundary.vue[CR7T]: F:组件错误边界：onErrorCaptured 捕获渲染错误展示降级 UI 并上报主进程日志 | R:code:frontend/src/App.vue | A:- | S:必须 return false 阻止错误上抛否则冒泡到 errorHandler 整树卸载；window.tradeinsight.logError 上报 renderer-error.log；retry 自增 reloadKey 重建子树
 HistoryDataModal.vue[DU7M]: F:指标历史弹窗：30 天概览统计/ECharts 趋势图/每日表格（环比红涨绿跌） | R:code:frontend/src/services/limitBoardStatistics.service.js | A:- | S:按 dataType 分支映射 valueField 与数量/百分比格式；图表容器按需渲染
-KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、左滑分页加载更早数据、自定义数据源与指数支持 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:candle.type 须为合法枚举（candle_up_stroke 等 6 种），非法值被库内 switch 静默跳过致蜡烛不绘制；空心描边/影线色须显式设置（默认西式绿涨红跌）；setDataLoader 须先于 setSymbol；customDataLoader 供实战训练渐进揭示；副图仅 VOL；左滑分页锚定最早 timestamp，日期本地手拼（toISOString 东八区偏移）
+KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、左滑分页加载更早数据、自定义数据源与指数支持 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:candle.type 须为合法枚举（candle_up_stroke 等 6 种），非法值被库内 switch 静默跳过致蜡烛不绘制；蜡烛与 VOL 量柱配色须显式覆盖红涨绿跌——库默认西式反色，指标柱色源自 indicator.bars[0]（样式深合并）；setDataLoader 须先于 setSymbol；左滑分页锚定最早 timestamp，日期本地手拼（toISOString 东八区偏移）
 SliderFilter.vue[DU6T]: F:滑动筛选器：动态选项/滑块动画/v-model 双向绑定 | R:- | A:- | S:options 至少 2 项且每项需 label+value；滑块宽度按选项数等分
 StockCard.vue[DU6S]: F:股票卡片：价格/涨跌/最高最低/成交量展示，点击详情与自选切换事件 | R:code:frontend/src/utils/stock.js | A:- | S:-
 
