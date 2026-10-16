@@ -1,0 +1,228 @@
+#AOCI-CODE-VOLUME: 1
+
+===G:/pj/pj--ing/111111/guipai/===
+.gitattributes[FG3T]: F:强制所有文本文件以 LF 检出，保证跨平台 checkout 与 AOCI 基线字节一致 | R:- | A:- | S:-
+.gitignore[FG4T]: F:定义依赖/构建产物/日志/本地数据忽略规则；opencode.json 为机器绑定集成配置不入库 | R:- | A:- | S:opencode.json 是 AOCI 的 MCP 接入配置，本地存在但不入库
+AGENTS.md[SG9L]: F:定义龟派项目 AI Agent 开发规范与方法论（目标前置/自审/质量护栏/Loop Engineering） | R:- | A:- | S:每次编码任务后必须运行 frontend 下 npm run build 作为验收信号；sql.js/DolphinDB 表字段变更必须同步 electron/server/routes/data-mgmt.js 的 FIELD_DEFS/SQLITE_COVERAGE 与 frontend/src/views/admin/DataOverview.vue
+CHANGELOG.md[SG6T]: F:SemVer 版本迭代记录表，一行一条版本摘要 | R:- | A:- | S:-
+electron-builder.yml[FV7T]: F:Electron 打包配置（NSIS/DMG、extraResources 携带 dolphindb-server 与 aktools-server） | R:code:electron/main.js | A:- | S:asar=false 因 dolphindb ESM 经动态 import 从 asar 加载不可靠；npmRebuild=false 因无原生模块需重编译
+package-lock.json[FG3L]: F:根依赖锁文件（Electron/electron-builder/dolphindb/sql.js/express 等） | R:- | A:- | S:手工修改无效，必须经 npm install 生成
+package.json[FV6T]: F:根工程：dev(dev-runner)/build(build:frontend+electron-builder)/build:akshare-server 脚本，生产依赖 electron main 用 | R:code:electron/main.js | A:- | S:dependencies 为 Electron 运行时需（express/cors/sql.js/dolphindb），electron-builder 打包只纳入此段；build:akshare-server 调 build.bat
+
+===G:/pj/pj--ing/111111/guipai/electron/===
+dev-port.js[XV5T]: F:开发端口唯一来源（GP_DEV_PORT/VITE_DEV_PORT 环境变量 > frontend/.env > 默认5174） | R:code:electron/dev-runner.js,code:electron/main.js | A:- | S:三处消费方必须收敛到此文件，防止改漏一处误连他人 dev server
+dev-runner.js[XV6T]: F:同时拉起 vite dev server 与 electron，从起始端口向后扫描 20 个空闲端口避免撞端口 | R:code:electron/dev-port.js | A:- | S:端口冲突会让 Electron 误加载本机其他项目页面，故必用 --strictPort + 探测
+main.js[EG9L]: F:Electron 主进程入口：窗口生命周期/DolphinDB 与 AKShare 子进程管理/IPC ddb 桥/内嵌 Express 服务 | R:code:electron/preload.js,code:electron/dolphindb/client.js,code:electron/server/index.js | A:- | S:单实例锁（requestSingleInstanceLock）；DolphinDB 数据目录放 userData/dolphindb-data 跨更新保留；uncaughtException 写 crash.log 并弹错不静默
+preload.js[MU6T]: F:contextBridge 暴露 window.tradeinsight：版本信息/ddb status·execute·invoke/logError | R:code:electron/main.js | A:- | S:contextIsolation 开启、nodeIntegration=false，渲染进程仅能经此白名单 API 访问主进程
+
+===G:/pj/pj--ing/111111/guipai/electron/dolphindb/===
+client.js[ID8M]: F:DolphinDB WebSocket 客户端：连接管理/execute/invoke/批量 insertRows/upsertRows/ensureSchema 幂等建表 | R:code:electron/dolphindb/kline-repository.js,code:electron/dolphindb/spot-repository.js | A:- | S:dolphindb 为 ESM 包须动态 import，且在 import 前必须对 node:worker_threads.markAsUncloneable 打 no-op polyfill（Electron 内置 Node 20.18 缺该 API）；连接失败进入 30s 冷却避免每次查询白等 ~10s；ensureSchema 以 daily_k 存在性快速短路，避免每次连接跑 14+ 条建表阻塞首请求
+e2e.js[TQ6T]: F:涨停池同步→统计接口→清理的端到端冒烟，基于 sync 返回真实行数断言 | R:code:electron/server/market-sync.js | A:- | S:前置条件 DolphinDB(8848)+Express(8080) 已运行；使用真实行情数据非 mock
+holding-repository.js[PD5T]: F:十大股东持股明细仓库：insertHolding（预删+插入）/getHolding | R:code:electron/dolphindb/client.js,code:electron/dolphindb/params.js | A:- | S:-
+import-tdx.js[ID6T]: F:通达信 .day 导入 CLI 封装：full/verify/incremental/refresh 模式与区间参数 | R:code:electron/dolphindb/tdx-import.js | A:- | S:raw 基线截止 2026-10-08，其后新交易日走 aktools 网络增量；verify 模式只读不写
+index-spot-repository.js[PD5T]: F:指数实时行情快照仓库：insertIndexSpot（预删当日+插入）/getIndexSpot | R:code:electron/dolphindb/client.js | A:- | S:-
+kline-repository.js[PD8S]: F:K线仓库：日K幂等写入/查询/周月季年聚合/getDailyKRaw 原始基线兜底 | R:code:electron/dolphindb/client.js,code:electron/dolphindb/params.js | A:- | S:ddbReady() 未连接时快速短路返回 miss 让路由走网络兜底，避免白等 ~10s 连接超时；daily_k_raw 为不复权基线仅作长周期兜底不参与混算；volume 写入前取整以兼容行情源小数
+minute-repository.js[PD6T]: F:分钟K线仓库：insertMinuteK（预删该股该日该周期+插入）/getMinuteK/getMinuteKLatest | R:code:electron/dolphindb/client.js,code:electron/dolphindb/params.js | A:- | S:-
+params.js[SS8T]: F:safeSymbol/safeDate/safeNum 白名单净化 DolphinDB 查询参数 | R:code:electron/dolphindb/kline-repository.js | A:- | S:DolphinDB 脚本无参数绑定，用户可控 symbol/date 必须经此模块否则 query 可注入任意脚本片段；宁可返回 null 判 miss 也不放行可疑值
+smoke.js[TQ5T]: F:client.js 真机冒烟：连接/建表/写入/count/聚合/清理全链路，用 SMOKE_TEST 临时行不污染数据 | R:code:electron/dolphindb/client.js | A:- | S:-
+spot-repository.js[PD8S]: F:全市场实时行情快照仓库：write-on-miss 写入/读取/deriveFromRaw 离线兜底 | R:code:electron/dolphindb/client.js,code:electron/dolphindb/params.js | A:- | S:并发写入须走 insertSpotSafe 单飞锁防止互相预删；getSpotByCode 无数据返回 null 而非 []（调用方按单对象消费）；deriveFromRaw 用 daily_k_raw 每股末行派生快照且缺失 10 列填 null
+tdx-import.js[ID7M]: F:通达信 .day 二进制解析与导入 daily_k_raw 库，支持幂等重跑/缺口校验/分批写入 | R:code:electron/dolphindb/client.js | A:- | S:isIndexFile 须按市场判指数（sh000001 上证指数 vs sz000001 平安银行、sh88 开头可转债/基金），否则撞 symbol 致 K 线混叠；.day 32 字节定长记录 open/close<=0 行丢弃
+
+===G:/pj/pj--ing/111111/guipai/electron/server/===
+_e2e_run.js[XQ6T]: F:独立启动 Express 服务供 E2E 使用（不依赖 Electron 主进程） | R:code:electron/server/index.js | A:- | S:数据目录默认 C:/Users/Administrator/AppData/Local/Temp/guipai-e2e-data，可用 E2E_DATA_DIR 覆盖
+aktools.js[IN9L]: F:行情数据访问层：128 东财直连 11 类接口 + 腾讯/同花顺/Tushare 跨厂商兜底 + 多源调度注册 | R:code:electron/server/routes/aktools.js,code:electron/server/sources/registry.js,code:electron/server/tushare.js | A:- | S:东财 /api/qt/* 被 WAF RST 时需切厂商兜底；getBuffer 带重试退避；spot 60s 记忆化+在途去重；warmupUpstream 用长超时打热上游避免首请求卡 3-10s
+cache.js[CD5T]: F:进程内 TTL 内存缓存：set/get/del/delByPattern（*通配）/clear | R:code:electron/server/index.js | A:- | S:-
+col-defs.js[PD6T]: F:DolphinDB 三表（stock_limit_pool/plate_market_quotation/stock_zh_index_daily）列定义共享模块 + normDate | R:code:electron/server/market-sync.js,code:electron/server/routes/aktools.js | A:- | S:列顺序必须与 ensureSchema 中 DFS 表列序一致，tableInsert 按位置匹配；已迁移表不再由旧 sync.js 使用
+converter.js[KD7T]: F:行情源中文键行→DolphinDB 英文列行转换：涨跌停池/指数日K/板块/spot/指数spot/分钟K/昨日涨停/股东持股 | R:code:electron/server/routes/aktools.js,code:electron/server/market-sync.js | A:- | S:fmtTime 需 6 位数字串；convertStockLimitPool 按 dataType 分支取不同中文字段（LIMIT_UP vs 其他）
+db.js[PD8M]: F:sql.js 内存库初始化/持久化（2s 定时落盘）/PreparedStatement 包装/全部建表与列迁移 | R:code:electron/server/index.js,code:electron/server/routes/note.js | A:- | S:写操作经 run 包装触发 scheduleSave；migrateNoteSchema 会 DROP 旧 note 表（清除旧数据，用户已授权）；stock_basic 缺列用逐列探测 ALTER 补列
+index.js[EN8M]: F:Express 服务装配：CORS/健康检查/crash 日志/Tushare 与 TDX Key 账号设置/全部业务路由挂载/启动预热 | R:code:electron/server/routes/aktools.js,code:electron/server/routes/statistics.js,code:electron/server/routes/note.js | A:- | S:server.listen 回调内做上游预热（best-effort 不阻塞）；TDX Key 测试需临时写入 ini 并恢复原 Key
+market-sync.js[PB8M]: F:全市场数据同步单飞任务（个股日K并发池+四类收盘）+ 完整性/验证查询路由 | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js,code:electron/server/col-defs.js | A:- | S:内存态单飞锁防并发压源；连续触发限流达 20 只自动暂停；日K并发默认 3 上限 8；syncPool 先删当日再插保证幂等
+settings.js[CC7M]: F:应用设置模块：Tushare 多账号/AKShare 配置/通达信配置与 Key 多账号，settings.json 持久化 | R:code:electron/server/index.js,code:electron/server/tushare.js | A:- | S:旧版单 tushareToken 字段读取时自动迁移为「默认账号」并立即落盘；token/key 存取只负责 CRUD 不实现选号冷却策略
+tushare.js[IN8M]: F:Tushare Pro 客户端：多账号池轮询+故障转移/限频冷却，limit_list_d 涨跌停/daily+adj_factor 前复权日K | R:code:electron/server/settings.js,code:electron/server/aktools.js | A:- | S:错误分类（无效token停用/限频60s/网络10s/无权限不冷却）决定换号策略；无 pro_bar 接口须 daily+adj_factor 自算前复权且锚点取最新因子非区间末日；amount 千元→元 ×1000
+
+===G:/pj/pj--ing/111111/guipai/electron/server/routes/===
+akshare.js[EU6T]: F:AKShare Python 桥设置路由：配置读写/探活/启停标记/安装/探测本机 Python+akshare | R:code:electron/server/settings.js,code:electron/server/sources/akshare.js | A:- | S:进程 spawn 在 main.js；/install 流式输出 pip 日志；/start 仅标记启用需重启生效
+aktools.js[EB8M]: F:废弃的 /api/aktools 路由：X-Deprecated 标记中间件 + DB-first write-on-miss 适配层 | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js,code:electron/dolphindb/spot-repository.js | A:- | S:DB-first 四层（cache→DB→source+write→re-read）；429 携带 retryAfterSec 由前端提示；所有端点已迁移到业务路由仅保留兼容
+boards.js[EB6T]: F:行业板块路由：板块列表+成分股，DB-first write-on-miss（DDB 板块行情 + sql.js board_constituents） | R:code:electron/server/sources/akshare.js,code:electron/server/converter.js | A:- | S:板块成分单板块全量替换先删后插；DolphinDB 不可用时仅返回源数据不缓存防脏数据
+data-mgmt.js[ED7T]: F:数据总览：sql.js 表行数/文件大小/DDB 表计数与最新日期/各源健康度 + 字段定义与覆盖统计 | R:code:electron/server/db.js,code:electron/dolphindb/client.js | A:- | S:AGENTS.md 规定字段变更必须同步 FIELD_DEFS/SQLITE_COVERAGE/SQLITE_TABLE_LABELS 与 DataOverview.vue；已迁移表从 sql.js 隐藏
+data-pull.js[EW6M]: F:个股日K往期拉取：分批次墙钟预算截断/单飞锁/串行+可配间隔/幂等写入 daily_k | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js | A:- | S:150s 墙钟预算防失控并发压源；单批上限 50 只/跨度 7300 天；未连库时允许只拉不写；前端需用 >预算 超时禁重试
+kline.js[EA6T]: F:摸箱训练随机K线：硬编码样本池随机选股，DB(daily_k→raw)→网络三级兜底 | R:code:electron/dolphindb/kline-repository.js,code:electron/server/aktools.js | A:- | S:回看窗口按交易日×1.5+30天缓冲防误报缺数据；日期必须用 ISO 不能传紧凑格式
+market.js[EB7T]: F:市场路由：/overview 指数概览 /hot 热门股 /index-kline 指数K线，均 DB-first | R:code:electron/dolphindb/spot-repository.js,code:electron/dolphindb/index-spot-repository.js,code:electron/server/aktools.js | A:- | S:指数名用静态映射补（stock_index_spot 无 name 列）；query 拼 DDB 前必须 safeSymbol/safeDate 净化；index-kline startDate 缺省给 1990-01-01
+note.js[EB9M]: F:股票笔记全套 CRUD/标签/汇总/提醒轮询/导出：结构化交易字段+富文本+K线块 | R:code:electron/server/db.js | A:- | S:cost 服务端计算 buy/add=价×量+手续费；tags/kline_blocks/JSON 字符串存返回解析；价格提醒仅返回配置由前端取现价判定；静态 GET 需先于 /:id 注册
+statistics.js[KB9L]: F:涨跌停统计分析全套端点：基础/详情/对比/质量/行业/连板/时间/封单/反弹/情绪/分位 | R:code:electron/dolphindb/client.js,code:electron/server/cache.js | A:- | S:扫描聚合在 DDB（iif/sum/group by），比率/次日自连接/分桶/分位数在 JS 侧规避方言差异；DDB 日期以 2025.09.24 返回须归一 ISO；几处 sql.js 版表已迁移 DDB
+stock.js[EB9L]: F:股票路由：列表/搜索/实时/详情/K线(断点续传+多级兜底)/财报/估值，元数据落 sql.js stock_basic | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js,code:electron/dolphindb/spot-repository.js | A:- | S:日期统一归一 ISO 防字符串比较恒真；kline 查询 3s 限时超时降级；raw 不复权价不与 daily_k 前复权混算；缺口回补前移 7 天防复权锚点漂移
+template.js[EU7S]: F:复盘模板：CRUD/复制/分享(shareCode)/公共模板/分类/用模板建笔记 | R:code:electron/server/db.js | A:- | S:fields JSON 数组字符串存储返回时解析；isOwner 由 user_id===1 判定；share 后 is_public 一并置 1
+training.js[EU5T]: F:模拟盘训练：本地用户自动创建/提交成绩(盈亏率/超额率)/历史/详情 | R:code:electron/server/db.js | A:- | S:无 id 用户时自动建 local 用户（无登录桌面版）；提交同时更新 user 汇总交易计数与模拟资产
+watchlist.js[EU8M]: F:自选股全套 CRUD：股票/分组/备注/价格提醒，sql.js 持久化 | R:code:electron/server/db.js | A:- | S:统一归属本地用户 user_id=1；删除分组时将股票移回默认分组 0；静态路径需在 /:code 前注册或靠顺序避免被截获
+
+===G:/pj/pj--ing/111111/guipai/electron/server/sources/===
+_smoke.js[TQ5T]: F:数据源真机冒烟：新浪/网易 K线与指数日K、调度器 failover、新浪 spot，手动运行 | R:code:electron/server/sources/registry.js,code:electron/server/sources/sina.js,code:electron/server/sources/netease.js | A:- | S:注册 _smoke_mock 临时源污染 registry 单例，仅用于本脚本进程内测试
+akshare.js[IN7T]: F:AKShare Python 桥 HTTP 客户端：11 类行情 + 财报/估值/板块/元数据 fetcher，available 由 main.js 生命周期管理 | R:code:electron/server/aktools.js,code:electron/server/routes/akshare.js | A:- | S:未就绪时 available()=false 调度器跳过本源零开销；服务返回 {code,msg,data} 取 data 字段
+netease.js[IN6T]: F:网易财经数据源：chddata CSV 历史日K（不复权），仅覆盖日K与指数日K | R:code:electron/server/sources/registry.js | A:- | S:网易 chddata 已废弃（502/DNS失效）暂未注册进调度器，文件保留待复活；北交所返回空交回调度器试下一源
+registry.js[CD8S]: F:多数据源健康度感知调度器：failover 串行/race 竞速/冷却记忆/软封空结果处理 | R:code:electron/server/aktools.js,code:electron/server/sources/sina.js | A:- | S:空数组一律视为源未命中继续下一源而非真无数据；连续失败 3 次进入 30s 冷却；PRIORITY_TDX_ONLY=true 冻结非 TDX 源（用户要求测试通达信效果），恢复时改回 false
+sina.js[IN7M]: F:新浪财经数据源：getKLineData 日/分钟K、指数日K、Market_Center 全市场快照分页 | R:code:electron/server/sources/registry.js | A:- | S:新浪不复权作为兜底用不复权行情（前复权由 DDB/调用方降级）；涨跌额/涨跌幅由前收推导，首行无前收→null；北交所 node=bj_a 单独取后合并
+tdx_local.js[IN7T]: F:通达信本地数据源：纯 Node 读 vipdoc lday .day 32 字节文件，离线日K兜底 | R:code:electron/server/settings.js,code:electron/server/sources/registry.js | A:- | S:零网络零 Python；换手率 .day 文件不含→null；安装路径 settings 优先否则探测常见路径；文件长度必须为 32 字节整数倍
+tdx_quant.js[IN8M]: F:通达信量化 HTTP 源（tqcenter 17709）：连运行中已登录 TdxW 取 K线/快照/涨跌停/财报 | R:code:electron/server/settings.js,code:electron/server/sources/registry.js | A:- | S:tqcenter 仅支持 count 不支持日期区间，需按区间估算 count 再过滤；snapshot 无 codes 参数时须返回空交由下一源否则 params 对象走到 includes 抛 TypeError 顶掉聚合错误；available 由 main.js 探测 17709 后设置
+tdx_server.js[IN8T]: F:通达信 tqs 数据源：经 Python 桥 /tdxs_* 调 tdxaidata.tqs，免客户端 Key 鉴权 | R:code:electron/server/settings.js,code:electron/server/aktools.js | A:- | S:依赖 Python 桥运行 + tdxaidata 已装 + Key 已配；available 由 main.js 探测 /tdxs_health 设置；health 给 20s 超时因 tqs 首次冷启动慢；indexDaily 传 is_index=1 区分上证指数 vs 平安银行
+
+===G:/pj/pj--ing/111111/guipai/frontend/===
+.gitignore[FG4T]: F:前端子工程忽略规则：日志/node_modules/dist/编辑器目录等 | R:- | A:- | S:-
+DataManagement密码验证功能说明.md[SU4T]: F:DataManagement 页前端密码验证（110110）功能说明文档，含安全建议 | R:- | A:- | S:密码硬编码于前端仅演示，已被改版取代
+K线实战模块使用说明.md[SU4T]: F:K线实战模块（模拟盘随机K线训练）使用说明文档 | R:- | A:- | S:-
+K线实战模块开发总结.md[SU4T]: F:K线实战模块开发总结：侧边栏/路由/RandomStockPractice 组件/ECharts 指标/模拟交易逻辑 | R:- | A:- | S:-
+LICENSE[SL3T]: F:MIT 许可证（Copyright 2025 顾森希） | R:- | A:- | S:-
+README.md[SG6T]: F:前端子工程说明：功能特性/技术栈/项目结构/开发启动/环境变量/核心模块 | R:- | A:- | S:开发端口唯一来源 frontend/.env 的 VITE_DEV_PORT（默认 5174）；API 始终指向内嵌 Electron 主进程的本地后端 8080
+Review页面使用说明.md[SU4T]: F:复盘页使用说明：数据概览/涨停池分类/市场时段筛选/缓存机制/API 清单 | R:- | A:- | S:页面优先读 localStorage 缓存不主动拉取，刷新按钮才拉最新并写缓存
+Review页面历史数据功能说明.md[SU4M]: F:复盘页 7 项指标点击查看 30 天历史趋势功能说明（弹窗/图表/表格/环比） | R:- | A:- | S:-
+TradeInsight项目开发指南.md[SG7L]: F:前端开发指南：技术栈/目录结构/新增页面流程/开发规范/常见问题 | R:- | A:- | S:文中 admin/DataManagement.vue 等目录描述与当前改版后实际文件已不完全一致，以现有 views/admin 下文件为准
+index.html[EU3T]: F:HTML 入口：挂载 #app、加载 /src/main.js、title 龟派 | R:- | A:- | S:-
+jsconfig.json[FV3T]: F:JS 路径别名配置：@/* → ./src/*，排除 node_modules/dist | R:- | A:- | S:-
+package-lock.json[FG3L]: F:前端依赖锁文件（Vue3/Element Plus/ECharts6/klinecharts/Pinia/Vite7 等） | R:- | A:- | S:手工修改无效，必须经 npm install 生成
+package.json[FV5T]: F:前端子工程：Vite 构建脚本（dev/build/preview）与 Vue3/Element Plus/ECharts6 等依赖清单 | R:- | A:- | S:engines 要求 Node ^20.19.0 || >=22.12.0；验收信号为 npm run build
+vite.config.js[FV7T]: F:Vite 构建配置：Vue 插件/@ 别名/SCSS 变量注入/dev 端口取 VITE_DEV_PORT/build 时 base='./' | R:code:electron/dev-port.js | A:- | S:dev 端口唯一来源 frontend/.env 的 VITE_DEV_PORT（默认5174，不用5173防撞端口）；SCSS additionalData 全局注入 variables.scss
+
+===G:/pj/pj--ing/111111/guipai/frontend/.kiro/steering/===
+structure.md[SG5T]: F:Kiro steering 项目结构约定（Vue3 组成 API/Vite/@别名/命名规范），含早期 Java 后端架构描述 | R:- | A:- | S:该文档 backend 部分描述的是历史 Spring Boot 架构，当前已改为 Electron+Node 方案 B
+
+===G:/pj/pj--ing/111111/guipai/frontend/.vscode/===
+extensions.json[FV3T]: F:VSCode 推荐扩展：Vue.volar | R:- | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/===
+App.vue[EU6T]: F:根组件：按路由 meta.hideLayout 切换完整布局（Header/Sidebar/Footer）与无布局模式，ErrorBoundary 包裹 router-view | R:code:frontend/src/components/layout/AppSidebar.vue,code:frontend/src/components/common/ErrorBoundary.vue | A:- | S:-
+main.js[EG7T]: F:应用入口：createApp+Pinia+Router+ElementPlus+全局图标注册，错误兜底上报主进程 | R:code:frontend/src/App.vue,code:frontend/src/router/index.js | A:- | S:三个全局上报（errorHandler/window error/unhandledrejection）经 window.tradeinsight.logError 写 renderer-error.log，用于定位间歇性黑屏
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/assets/===
+base.css[CU3T]: F:Vue 主题基础样式：CSS 变量色板/深色模式/全局 box-sizing 与 body 默认 | R:- | A:- | S:-
+logo.svg[CL2T]: F:Vue 官方 logo 矢量图（脚手架遗留资源） | R:- | A:- | S:-
+main.css[CU3T]: F:全局入口样式：引入 base.css、#app 视口布局、链接颜色 | R:- | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/assets/styles/===
+global.scss[CU5T]: F:全局样式：重置/滚动条/股票涨跌颜色类/通用工具类/页面与卡片布局/响应式 | R:code:frontend/src/assets/styles/variables.scss,code:frontend/src/assets/styles/mixins.scss | A:- | S:-
+mixins.scss[CU4T]: F:SCSS 混入：clearfix/ellipsis/flex 布局/股票涨跌色/响应式断点/卡片样式 | R:code:frontend/src/assets/styles/variables.scss | A:- | S:-
+variables.scss[CU4T]: F:SCSS 设计变量：主题色/股票涨跌色/背景文字色/边框/尺寸/圆角/阴影 | R:- | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/===
+HelloWorld.vue[CU2T]: F:Vite+Vue 脚手架示例组件：显示欢迎信息 | R:- | A:- | S:脚手架遗留，实际应用未使用
+TheWelcome.vue[CU2T]: F:Vue 官方欢迎页组件（文档/工具链/生态/社区/赞助卡片） | R:code:frontend/src/components/WelcomeItem.vue | A:- | S:脚手架遗留，实际应用未使用
+WelcomeItem.vue[CU2T]: F:Vue 欢迎页卡片槽组件（icon/heading/默认槽） | R:- | A:- | S:脚手架遗留，实际应用未使用
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/admin/===
+DateRangeSelector.vue[DU6M]: F:日期范围选择器：起止日期/快速选择/周末过滤/批量同步与强制更新（发事件） | R:- | A:- | S:范围上限 30 天；canSync 需区间天数≤30；批量同步由父组件监听事件执行
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/common/===
+ErrorBoundary.vue[CR7T]: F:组件错误边界：onErrorCaptured 捕获渲染错误展示降级 UI 并上报主进程日志 | R:code:frontend/src/App.vue | A:- | S:必须 return false 阻止错误上抛否则冒泡到 errorHandler 整树卸载；window.tradeinsight.logError 上报 renderer-error.log；retry 自增 reloadKey 重建子树
+HistoryDataModal.vue[DU7M]: F:指标历史弹窗：30 天概览统计/ECharts 趋势图/每日表格（环比红涨绿跌） | R:code:frontend/src/services/limitBoardStatistics.service.js | A:- | S:按 dataType 分支映射 valueField 与数量/百分比格式；图表容器按需渲染
+KLineChart.vue[DU8M]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权/指标切换、画线工具、自定义数据源 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:数据流 init→setSymbol→setPeriod→setDataLoader；customDataLoader 用于实战训练渐进揭示；组件自行拉取后端数据
+SliderFilter.vue[DU6T]: F:滑动筛选器：动态选项/滑块动画/v-model 双向绑定 | R:- | A:- | S:options 至少 2 项且每项需 label+value；滑块宽度按选项数等分
+StockCard.vue[DU6S]: F:股票卡片：价格/涨跌/最高最低/成交量展示，点击详情与自选切换事件 | R:code:frontend/src/utils/stock.js | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/icons/===
+IconCommunity.vue[CL2T]: F:社区图标 SVG（Vue 欢迎页用） | R:- | A:- | S:脚手架遗留，实际应用未使用
+IconDocumentation.vue[CL2T]: F:文档图标 SVG（Vue 欢迎页用） | R:- | A:- | S:脚手架遗留，实际应用未使用
+IconEcosystem.vue[CL2T]: F:生态图标 SVG（Vue 欢迎页用） | R:- | A:- | S:脚手架遗留，实际应用未使用
+IconSupport.vue[CL2T]: F:支持爱心图标 SVG（Vue 欢迎页用） | R:- | A:- | S:脚手架遗留，实际应用未使用
+IconTooling.vue[CL2T]: F:工具锤子图标 SVG（Vue 欢迎页用，MaterialDesign Apache2.0） | R:- | A:- | S:脚手架遗留，实际应用未使用
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/layout/===
+AppFooter.vue[DU3T]: F:底部信息栏：版权/版本/使用教程链接 | R:- | A:- | S:-
+AppHeader.vue[DU4T]: F:顶部导航栏：logo/股票搜索(跳转 StockList)/通知铃铛 | R:code:frontend/src/router/index.js | A:- | S:-
+AppSidebar.vue[DU7M]: F:侧边栏导航菜单：仪表盘/复盘/自选股/股票/笔记/K线实战/模板/数据管理/设置，可折叠 | R:code:frontend/src/router/index.js | A:- | S:菜单 index 即路由路径；admin 子菜单为数据总览与收盘数据同步
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/note/===
+KlineNoteBlock.vue[DU7T]: F:笔记内 K 线块：截图/实时图表/占位+上传三态，含代码搜索与周期日期配置 | R:code:frontend/src/services/stock.service.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:block 无 code 时进入配置表单态；customDataLoader 按区间拉数据
+NoteAlertPanel.vue[DU7T]: F:笔记提醒管理：价格/日期/重复三类提醒 CRUD 与状态展示 | R:code:frontend/src/store/note.store.js | A:- | S:通知由 useNotes 轮询统一处理，本组件仅 CRUD；canSave 按 alertType 校验必填
+NoteEmptyState.vue[DU3T]: F:空数据/加载兜底：骨架屏/el-empty/默认槽三态 | R:- | A:- | S:-
+RichTextEditor.vue[DU6T]: F:轻量自研富文本编辑器（contenteditable+execCommand），300ms 防抖 emit，失焦去 script 防 XSS | R:- | A:- | S:execCommand 已 deprecated 但 Chromium 稳定支持原型可接受；只做基础 script 标签净化
+StockNoteEditor.vue[DU8M]: F:股票笔记编辑器主容器：组装结构化字段/K线块/富文本/提醒，草稿自动保存+模板复用+导出 | R:code:frontend/src/composables/useNotes.js,code:frontend/src/components/note/TradeFieldsPanel.vue | A:- | S:create/edit 模式下表单深度 watch 防抖 1s 存 localStorage 草稿；mode=view 只读
+StockNoteSummary.vue[DU4T]: F:盈亏汇总卡片：每股票投入/回收/净额/笔数与总计 | R:code:frontend/src/composables/useNotes.js | A:- | S:浮动盈亏不在此卡，列表卡片按笔记实时取现价展示
+TradeFieldsPanel.vue[DU6T]: F:结构化交易字段录入：股票远程搜索/方向/价格/数量/手续费/日期/持仓/标签，实时预览金额 | R:code:frontend/src/services/stock.service.js | A:- | S:成本由后端自动计算，本组件仅预览交易金额（buy/add=价×量+费）
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/components/watchlist/===
+WatchlistGroupPicker.vue[DU5T]: F:加入自选的分组选择弹窗：默认分组+自定义分组单选，复用 watchlistStore | R:code:frontend/src/store/watchlist.store.js | A:- | S:打开时分组为空则懒加载；仅选择不含内联新建
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/composables/===
+useNotes.js[CB8M]: F:股票笔记 composable：列表过滤/CRUD/草稿自动保存/提醒轮询(60s)/浮动盈亏实时补算 | R:code:frontend/src/store/note.store.js,code:frontend/src/services/stock.service.js | A:- | S:主数据在 sql.js 本地库，草稿用 localStorage(stockNote:draft:)；提醒 Notification 降级；价格提醒由轮询后取现价判定
+useReview.js[CB8M]: F:复盘页 composable：涨停/跌停/昨日涨停/行业/指数数据获取与缓存，连板分类与市场时段筛选 | R:code:frontend/src/services/review.service.js,code:frontend/src/utils/cacheStorage.js | A:- | S:优先读 localStorage 缓存不主动拉取，刷新才拉最新；数据按连板数分类到高位板/一~四连板
+useStockData.js[CB7T]: F:股票数据 composable：详情/K线/实时获取、自动刷新(盘中5s)、涨跌状态格式化 | R:code:frontend/src/store/stock.store.js,code:frontend/src/utils/stock.js | A:- | S:自动刷新仅在 stockStore.isMarketOpen 时请求实时数据；watch code 变化即时刷新
+useTemplates.js[CB7M]: F:模板 composable：列表筛选(分类/搜索)/CRUD/复制/分享/取消分享/公共模板/基于模板建笔记 | R:code:frontend/src/store/template.store.js | A:- | S:删除/取消分享/批量移除前需 ElMessageBox.confirm；cancel 时静默返回不抛错
+useWatchlist.js[CB7M]: F:自选股 composable：增删/批量/分组 CRUD/移动/备注/价格提醒/实时数据，按分组筛选 | R:code:frontend/src/store/watchlist.store.js,code:frontend/src/store/stock.store.js | A:- | S:fetchRealtimeData 用 watchlistCodes 全部代码拉取；删除分组确认弹窗后由后端移回默认分组
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/router/===
+index.js[EN8S]: F:路由配置（hash 模式）：仪表盘/复盘/股票/自选/笔记/模板/K线实战/数据管理/设置 + 404 兜底 | R:code:frontend/src/views/admin/DataOverview.vue,code:frontend/src/views/admin/CloseDataSync.vue | A:- | S:桌面版用 createWebHashHistory 适配 Electron 本地加载；beforeEach 设置 document.title；页面组件全部懒加载
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/services/===
+aktools.service.js[ED5T]: F:已废弃 AKTools API 适配：6 个函数转发到 review.service，历史/minutes/info/holding 走旧路径 | R:code:frontend/src/services/review.service.js | A:- | S:已废弃文件保留仅为兼容，新代码请改 import review.service；getStockHistory 仍可调用但会 warn
+kline.service.js[EU5T]: F:K线实战服务：随机K线/模拟训练提交/历史/详情/本地用户 | R:code:frontend/src/utils/api.js | A:- | S:-
+limitBoardStatistics.service.js[EU7M]: F:涨跌停统计 API 服务层：基础/详情/对比/质量/行业/反弹/连板/情绪/分位/缓存管理 等全套端点 | R:code:frontend/src/utils/api.js | A:- | S:日期参数均为 yyyy-MM-dd；dataType 为 LIMIT_UP/LIMIT_DOWN；warmupCache 传 null body
+note.service.js[EU6T]: F:股票笔记服务层：CRUD/导出/去重股票/标签/汇总 + 提醒 CRUD 与轮询 | R:code:frontend/src/utils/api.js | A:- | S:字段口径 camelCase 与后端 rowToNote 对齐；cost 后端自动算；checkAlerts POST 空 body
+review.service.js[EB7T]: F:复盘数据适配层：调业务路由并把英文键映射回中文键（spot/板块/指数/涨停/跌停/昨日涨停） | R:code:frontend/src/utils/api.js,code:frontend/src/composables/useReview.js | A:- | S:getStockIndexSpot 合并为单次 /market/overview（覆盖三大指数）；昨日涨停的「昨日连板数」≠涨停池「连板数」
+stock.service.js[EU7M]: F:股票 API 服务层：列表/详情/K线/实时/搜索/元数据/财报/估值/板块/指数/市场概况 | R:code:frontend/src/utils/api.js | A:- | S:同步接口带 timeout:60000 + skipRetry:true（防超时重发放大）；blockchain:getBoardCons label 来自 getBoards
+template.service.js[EU6T]: F:模板 API 服务层：列表/详情/CRUD/复制/分类/公共/分享/取消分享/用模板建笔记 | R:code:frontend/src/utils/api.js | A:- | S:-
+watchlist.service.js[EU6T]: F:自选股 API 服务层：增删/批量/分组 CRUD/移动/备注/价格提醒 | R:code:frontend/src/utils/api.js | A:- | S:batchRemove 用 axios DELETE + data body；add 缺省入默认分组 0
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/store/===
+note.store.js[DB7T]: F:笔记 Pinia store：列表/详情/CRUD/删除/提醒 CRUD，前端本地状态同步 | R:code:frontend/src/services/note.service.js | A:- | S:浮动盈亏不落库由 useNotes 补算到 note._floatingPnl；fetchSummary 结果存 summary
+stock.store.js[DB7M]: F:股票 Pinia store：列表/详情/K线/实时/搜索/市场概况/热门/基础信息同步，开盘判断 | R:code:frontend/src/services/stock.service.js | A:- | S:isMarketOpen 按 9:30-11:30/13:00-15:00 且非周末本地判断；fetchRealtimeData 支持单码或数组更新 realtimeData
+template.store.js[DB7M]: F:模板 Pinia store：列表/详情/CRUD/复制/分类/公共模板/分享状态，本地模板分组搜索 | R:code:frontend/src/services/template.service.js | A:- | S:templatesByCategory 把未分类归 id=0；myTemplates 按 isOwner 判定；share 后本地同步 isShared/shareCode
+watchlist.store.js[DB7M]: F:自选股 Pinia store：CRUD/批量/分组/移动/备注/价格提醒，groupedWatchlist 按组聚合 | R:code:frontend/src/services/watchlist.service.js | A:- | S:addToWatchlist 已存在则跳过本地 push；deleteGroup 后本地将 stock.groupId 置 null；watchlistCodes 为全部代码计算属性
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/utils/===
+StockDateUtil.js[CD3M]: F:股票交易日工具类（读取最近/昨日交易日等方法，主体已注释保留） | R:- | A:- | S:文件主体方法已被注释掉，当前使用中由各调用处自行计算日期；此文件为遗留保留
+api.js[CN9T]: F:Axios 实例：baseURL 取 VITE_API_BASE_URL、响应信封解包、网络重试3次、统一错误提示 | R:- | A:- | S:data.code==200 解包返回 data；429 用 warning 提示；skipRetry:true 时超时不重发（长任务防并发重复）；重试仅限网络错误
+cacheStorage.js[CD6T]: F:localStorage 缓存工具：JSON 值+可选 TTL/读取时 maxAge 校验/超容量清除重试 | R:code:frontend/src/composables/useReview.js | A:- | S:前缀 guipai:；复盘数据默认不设 TTL 由用户手动刷新；结构损坏自动清除防脏数据
+date.js[CD6T]: F:dayjs 日期工具：格式化/相对时间/交易日期范围/交易时间判断/上下交易日(跳周末) | R:- | A:- | S:locale zh-cn + relativeTime/customParseFormat 插件在模块加载时配置
+klineData.js[CD6T]: F:KLineCharts 数据转换：后端 K 线行→KLineData、period/adjust 中英映射 | R:code:frontend/src/components/common/KLineChart.vue | A:- | S:date 字符串统一替换 '-' 为 '/' 后 new Date 兼容解析；amount 优先于 turnover
+stock.js[CD6T]: F:股票工具：涨跌幅/涨跌额计算、价格/百分比/成交量/市值格式化、涨跌状态、代码验证与市场判断、RSI/MA 指标 | R:code:frontend/src/components/common/StockCard.vue | A:- | S:getStockMarket 仅按首位数字判断（0/3深 6沪 8北），与后端 classifyMarket 前缀规则不同
+util.js[CD4T]: F:消息提示/确认弹窗/nprogress 页面加载/图片占位 URL 工具 | R:- | A:- | S:getImage 硬编码 edu.av-display.com 图片 URL，仅占位用
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/admin/===
+CloseDataSync.vue[DU8L]: F:收盘数据同步页：全市场同步配置/1.5s 进度轮询/完整性·验证·进度 ECharts 三区块 | R:code:electron/server/market-sync.js | A:- | S:轮询由 running 状态驱动卸载前清理；ECharts 实例需销毁防内存泄漏
+DataOverview.vue[DU7M]: F:数据总览页：sql.js/DolphinDB 双库表行数与大小、字段展开、DDB 一键重连、源健康度 | R:code:electron/server/routes/data-mgmt.js | A:- | S:AGENTS.md 规定字段变更必须同步此页字段渲染；10s 自动刷新已关闭改为手动刷新
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/dashboard/===
+Dashboard.vue[DU8M]: F:仪表盘：指数行情概览(stale-while-revalidate)/统计卡片/K线实战入口/指数K线 Tab | R:code:frontend/src/store/stock.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:立即读 localStorage 缓存直出避免空白，再后台刷新
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/error/===
+NotFound.vue[DU3T]: F:404 页面：返回首页/返回上页 | R:- | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/kline-practice/===
+RandomStockPractice.vue[DU9L]: F:K线实战页：随机股票 K线渐进揭示训练、模拟交易(买/卖/清仓)、资金持仓管理、自动播放 | R:code:frontend/src/components/common/KLineChart.vue,code:frontend/src/services/kline.service.js | A:- | S:customDataLoader 每步返回 [0,currentIndex] 切片渐进揭示；提交训练结果与本地用户关联
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/note/===
+NoteDetail.vue[DU5T]: F:笔记详情/编辑/创建页：按路由与 mode 分发，克隆复用经 sessionStorage noteClone 预填 | R:code:frontend/src/components/note/StockNoteEditor.vue | A:- | S:路由变化(详情间切换)watch 重新加载；创建成功跳详情、编辑成功回列表
+NoteList.vue[DU7S]: F:笔记列表页：盈亏汇总/过滤栏(关键词/股票/方向/标签)/卡片列表/浮动盈亏补算/提醒轮询 | R:code:frontend/src/composables/useNotes.js,code:frontend/src/components/note/StockNoteSummary.vue | A:- | S:挂载并行拉列表/股票/标签/汇总后启动提醒轮询并补算浮动盈亏；过滤变化重新拉取
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/review/===
+Review.vue[DU9L]: F:复盘页：指数概览/涨停池分类卡片/市场时段筛选/历史数据弹窗/缓存刷新 | R:code:frontend/src/composables/useReview.js,code:frontend/src/components/common/HistoryDataModal.vue | A:- | S:标题日期取最近交易日；刷新按钮强制拉最新并写缓存；迷你K线点击展开
+ReviewBF.vue[DU7L]: F:北交所实时行情看板：平均/最高涨跌幅、总成交额、市盈率、换手率统计与图表 | R:- | A:- | S:独立备用复盘看板，当前路由未挂载
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/settings/===
+Settings.vue[DU8M]: F:设置页：Tushare 多账号 CRUD/连通性测试/调用统计，含 AKShare/TDX 配置入口 | R:code:electron/server/routes/akshare.js | A:- | S:添加账号默认 test=true 先验证 token；统计为内存级重启清零；测试写 ini 需恢复原 Key
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/stock/===
+StockBoards.vue[DU6M]: F:行业板块页：板块列表(stale-while-revalidate 缓存)与成分股 Drawer | R:code:frontend/src/services/stock.service.js | A:- | S:拉取失败/空结果时保持旧缓存不空白页面
+StockDetail.vue[DU7S]: F:股票详情页：价格/涨跌/元数据/K线图(KLineChart)/加自选分组/财报与估值 | R:code:frontend/src/composables/useStockData.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:路由 :code 参数驱动数据加载
+StockList.vue[DU8M]: F:股票列表页：市场分类 tabs/搜索/分页/实时行情/批量加自选与分组选择 | R:code:frontend/src/store/stock.store.js,code:frontend/src/services/stock.service.js | A:- | S:realtimeMap 按 code 缓存实时数据；搜索关键词来自路由 query.search；加自选走 WatchlistGroupPicker
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/template/===
+TemplateEdit.vue[DU7M]: F:模板编辑页：模板表单/自定义字段类型编辑/创建与更新 | R:code:frontend/src/composables/useTemplates.js | A:- | S:isCreate 按路由名 TemplateCreate 判定
+TemplateList.vue[DU7M]: F:模板列表页：我的/公共 tab、分类筛选、搜索、删除/复制/分享操作 | R:code:frontend/src/composables/useTemplates.js | A:- | S:activeTab 切换 my/public；分享后更新 isShared/shareCode
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/user/===
+Profile.vue[DU4T]: F:个人中心页：展示本地用户信息(总模拟资金/训练次数) | R:code:frontend/src/services/kline.service.js | A:- | S:桌面版无登录，从 sim-training/local-user 取自动创建的用户
+
+===G:/pj/pj--ing/111111/guipai/frontend/src/views/watchlist/===
+Watchlist.vue[DU8L]: F:自选股页：左右分栏(左常驻K线图+右分组选项卡列表)，分割线可拖拽宽度持久化 | R:code:frontend/src/store/watchlist.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:el-tabs editable 事件签名为(paneName,action)；分割线宽度持久化键 watchlist_split_left；卸载时清理 mousemove/mouseup 拖拽监听
+
+===G:/pj/pj--ing/111111/guipai/frontend/后端API/===
+KlineAndSimTrainingController_API文档.md[SG5M]: F:早期 Java 后端 K线/模拟训练 Controller API 文档（random/submit/history/detail） | R:- | A:- | S:描述的 tradeinsight-backend Java 后端已弃用，当前为 Electron+Node 方案，接口已由 /api/kline 与 /api/sim-training 实现
+README.md[SG5M]: F:涨跌停统计分析 API 文档总览：24 接口分类/数据类型/性能/测试指南 | R:- | A:- | S:文档基于旧 Java 后端与 Swagger 编写，当前 Node 端 statistics.js 已实现同路径接口
+涨跌停板统计分析API使用指南.md[SG4M]: F:涨跌停统计 API 快速使用指南（快速上手/调用示例/最佳实践） | R:- | A:- | S:-
+涨跌停板统计分析API接口详细说明.md[SG4M]: F:涨跌停统计 API 接口详细参数与响应说明（24 端点） | R:- | A:- | S:-
+涨跌停板统计分析API测试用例.md[SG4M]: F:涨跌停统计 API 测试用例（正常/异常/边界/性能场景） | R:- | A:- | S:-
+
+===G:/pj/pj--ing/111111/guipai/python/aktools_server/===
+build.bat[XV6T]: F:PyInstaller 构建脚本：装依赖→清理 build/dist→按 build.spec 冻结 aktools-server exe | R:code:python/aktools_server/build.spec | A:- | S:产物 dist/aktools-server/aktools-server.exe 约 5-10 分钟，随 electron-builder extraResources 分发
+build.spec[FV7T]: F:PyInstaller 配置：server.py 冻结单目录 exe，collect_all akshare/pandas/numpy/lxml 等 | R:code:python/aktools_server/server.py | A:- | S:akshare 大量 dynamic import 需 collect_all 否则冻结后运行时缺模块；排除 matplotlib/pytest/IPython 减体积
+requirements.txt[FG3T]: F:AKShare 桥接服务 Python 依赖：akshare>=1.14.0 与 flask>=3.0.0 | R:- | A:- | S:-
+server.py[IN7L]: F:AKShare Flask 桥接服务：暴露 /kline /spot /industry /tdxs_* 等 REST 端点返回中文键 JSON，含 tqs 免客户端源 | R:code:electron/server/sources/akshare.js | A:- | S:akshare 未装时服务仍可启动各端点返回不可用；tqs 端点依赖 tdxaidata；Amount 万元→元换算；日期参数统一转 YYYYMMDD
