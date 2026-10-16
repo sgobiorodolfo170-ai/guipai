@@ -4,6 +4,8 @@ import { useRoute } from 'vue-router'
 import { useStockData } from '@/composables/useStockData'
 import { useWatchlistStore } from '@/store/watchlist.store'
 import KLineChart from '@/components/common/KLineChart.vue'
+import WatchlistGroupPicker from '@/components/watchlist/WatchlistGroupPicker.vue'
+import { ElMessage } from 'element-plus'
 
 const route = useRoute()
 const watchlistStore = useWatchlistStore()
@@ -29,11 +31,31 @@ onMounted(() => {
   }
 })
 
+// 已自选 → 直接移除；未自选 → 弹出分组选择后加入所选分组
+const showGroupPicker = ref(false)
+
 const toggleWatchlist = async () => {
+  const code = stockCode.value
+  if (isInWatchlist.value) {
+    try {
+      await watchlistStore.removeFromWatchlist(code)
+      ElMessage.success(`${code} 已从自选股移除`)
+    } catch (error) {
+      console.error('操作自选股失败:', error)
+    }
+    return
+  }
+  showGroupPicker.value = true
+}
+
+// 分组选择确认 → 按所选分组加入自选（传入名称，避免自选列表名称列空白）
+const onGroupConfirm = async (groupId) => {
   try {
-    await watchlistStore.toggleWatchlist(stockCode.value)
+    await watchlistStore.addToWatchlist(stockCode.value, groupId, stockData.value?.name)
+    ElMessage.success(`已加入自选股分组`)
   } catch (error) {
     console.error('操作自选股失败:', error)
+    ElMessage.error('加入自选股失败')
   }
 }
 
@@ -118,6 +140,9 @@ const isInWatchlist = computed(() => {
 
     <!-- 空状态 -->
     <el-empty v-else-if="!loading" description="股票信息不存在" />
+
+    <!-- 加入自选：分组选择弹窗 -->
+    <WatchlistGroupPicker v-model="showGroupPicker" @confirm="onGroupConfirm" />
   </div>
 </template>
 

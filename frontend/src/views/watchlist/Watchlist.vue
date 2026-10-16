@@ -73,19 +73,26 @@ const fetchData = async () => {
   }
 }
 
-// ---- 选项卡编辑（新建 / 删除分组）----
-// Element Plus el-tabs 的 edit 事件签名：emit("edit", paneName, action)
-// 注意参数顺序——首参为分组名（add 时为 undefined），次参为动作 'add'/'remove'
+// ---- 删除模式 + 新建分组 ----
+// 设计理由：默认选项卡不显示 ×，避免误删；点 - 进入删除模式后各分组选项卡显示红色 ×，
+// 再点 - 退出。+ 始终用于新建分组。el-tabs 原生 +（editable/addable）已弃用，
+// 以便在选项卡栏右端自定义 -/+ 按钮并获得该控制位。
+const deleteMode = ref(false)
+
+// + 按钮：打开新建分组对话框
+const openCreateGroup = () => {
+  groupForm.value = { name: '', description: '' }
+  showGroupDialog.value = true
+}
+
+// el-tabs @edit 仅处理 remove（add 改由自定义 + 按钮直接开对话框）。
+// 事件签名：(paneName, action)——首参为分组名，次参为动作 'remove'
 const handleTabEdit = (name, action) => {
-  if (action === 'add') {
-    groupForm.value = { name: '', description: '' }
-    showGroupDialog.value = true
-  } else if (action === 'remove') {
-    const id = Number(name)
-    if (id === 0) return // 默认分组不可删除
-    const group = watchlistStore.groups.find(g => g.id === id)
-    deleteGroup(id, group ? group.name : '')
-  }
+  if (action !== 'remove') return
+  const id = Number(name)
+  if (id === 0) return // 默认分组不可删除
+  const group = watchlistStore.groups.find(g => g.id === id)
+  deleteGroup(id, group ? group.name : '')
 }
 
 const createGroup = async () => {
@@ -246,22 +253,37 @@ const stopDrag = () => {
         <div class="split-divider-handle"></div>
       </div>
 
-      <!-- 右区：分组选项卡，每个分组一页，尾部 + 新建分组 -->
+      <!-- 右区：分组选项卡，每个分组一页；- 切换删除模式，+ 新建分组 -->
       <div class="split-right" v-loading="loading">
-        <el-tabs
-          v-if="tabGroups.length > 0"
-          v-model="activeGroupId"
-          type="card"
-          editable
-          @edit="handleTabEdit"
-        >
-          <el-tab-pane
-            v-for="g in tabGroups"
-            :key="g.id"
-            :name="String(g.id)"
-            :label="g.name"
-            :closable="g.id !== 0"
+        <div v-if="tabGroups.length > 0" class="tabs-wrap" :class="{ 'delete-mode': deleteMode }">
+          <!-- 自定义 - / + 按钮：位于选项卡栏右端（原生 + 已禁用，腾出该控制位） -->
+          <div class="tabs-controls">
+            <button
+              type="button"
+              class="tab-btn tab-minus"
+              :class="{ active: deleteMode }"
+              :title="deleteMode ? '退出删除分组模式' : '进入删除分组模式'"
+              @click="deleteMode = !deleteMode"
+            >−</button>
+            <button
+              type="button"
+              class="tab-btn tab-plus"
+              title="新建分组"
+              @click="openCreateGroup"
+            >+</button>
+          </div>
+          <el-tabs
+            v-model="activeGroupId"
+            type="card"
+            @edit="handleTabEdit"
           >
+            <el-tab-pane
+              v-for="g in tabGroups"
+              :key="g.id"
+              :name="String(g.id)"
+              :label="g.name"
+              :closable="deleteMode && g.id !== 0"
+            >
             <el-table
               :data="g.stocks"
               stripe
@@ -308,6 +330,7 @@ const stopDrag = () => {
             </el-table>
           </el-tab-pane>
         </el-tabs>
+        </div>
 
         <el-empty v-else description="暂无自选股" />
       </div>
@@ -427,6 +450,59 @@ const stopDrag = () => {
 
 .watchlist-table {
   cursor: pointer;
+}
+
+/* 选项卡栏自定义 -/+ 按钮（原生 + 已禁用，腾出右端控制位） */
+.tabs-wrap {
+  position: relative;
+}
+
+.tabs-controls {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
+  gap: 6px;
+}
+
+.tab-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--el-border-color);
+  border-radius: 4px;
+  background: #fff;
+  color: var(--el-text-color-primary);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+
+.tab-btn:hover {
+  color: var(--el-color-primary);
+  border-color: var(--el-color-primary);
+}
+
+/* 删除模式激活：- 按钮高亮红 */
+.tab-btn.tab-minus.active {
+  color: #fff;
+  background: #f56c6c;
+  border-color: #f56c6c;
+}
+
+/* 删除模式下各分组选项卡的 × 红色 */
+.tabs-wrap.delete-mode :deep(.el-tabs__item .is-icon-close) {
+  color: #f56c6c;
+}
+
+/* 给选项卡导航右侧预留 -/+ 按钮空间，避免末尾选项卡被遮挡 */
+.tabs-wrap :deep(.el-tabs__header) {
+  padding-right: 74px;
 }
 
 .stock-price {

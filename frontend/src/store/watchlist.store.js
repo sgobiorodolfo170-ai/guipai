@@ -48,17 +48,17 @@ export const useWatchlistStore = defineStore('watchlist', () => {
     }
   }
 
-  // 添加自选股
-  const addToWatchlist = async (code) => {
+  // 添加自选股（groupId 指定归入分组，name 用于自选列表名称列）
+  const addToWatchlist = async (code, groupId, name) => {
     try {
-      const response = await watchlistService.addToWatchlist(code)
+      const response = await watchlistService.addToWatchlist(code, groupId, name)
       const data = response.data || response
-      // 更新本地状态
+      // 更新本地状态（后端返回行含 groupId，直接复用即可）
       const existingIndex = watchlist.value.findIndex(item => item.code === code)
       if (existingIndex === -1) {
         watchlist.value.push(data)
       }
-      
+
       return response
     } catch (error) {
       throw error

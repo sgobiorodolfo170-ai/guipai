@@ -11,10 +11,12 @@ export const getWatchlist = () => {
 /**
  * 添加自选股
  * @param {string} code 股票代码
+ * @param {number} [groupId] 归入的分组 ID（缺省入默认分组 0）
+ * @param {string} [name] 股票名称（用于自选列表名称列，缺省后端置空）
  * @returns {Promise}
  */
-export const addToWatchlist = (code) => {
-  return api.post('/watchlist', { code })
+export const addToWatchlist = (code, groupId, name) => {
+  return api.post('/watchlist', { code, groupId, name })
 }
 
 /**

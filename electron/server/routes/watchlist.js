@@ -56,16 +56,16 @@ router.get('/', (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 添加自选股
+// 添加自选股（body: { code, name?, groupId? } —— groupId 指定归入分组，缺省入默认分组 0）
 router.post('/', (req, res) => {
   try {
-    const { code, name } = req.body || {}
+    const { code, name, groupId } = req.body || {}
     if (!code) return errMsg(res, '缺少股票代码')
     const db = getDb()
     // 幂等：已存在则直接返回现有记录
     const exist = db.prepare(`SELECT * FROM watchlist WHERE user_id=? AND code=?`).get(USER_ID, code)
     if (exist) return ok(res, rowToWatchlist(exist))
-    db.prepare(`INSERT INTO watchlist (user_id, code, name) VALUES (?, ?, ?)`).run(USER_ID, code, name || '')
+    db.prepare(`INSERT INTO watchlist (user_id, code, name, group_id) VALUES (?, ?, ?, ?)`).run(USER_ID, code, name || '', groupId || 0)
     const id = db.prepare(`SELECT last_insert_rowid() AS id`).get().id
     const row = db.prepare(`SELECT * FROM watchlist WHERE id=?`).get(id)
     ok(res, rowToWatchlist(row))

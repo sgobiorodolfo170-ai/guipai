@@ -6,6 +6,7 @@ import { useWatchlistStore } from '@/store/watchlist.store'
 import { getStockRealtime } from '@/services/stock.service'
 import { formatPrice, formatPercent, formatChange } from '@/utils/stock'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import WatchlistGroupPicker from '@/components/watchlist/WatchlistGroupPicker.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -164,11 +165,35 @@ const tagType = (market) => {
   return ''
 }
 
-const toggleWatchlist = async (code) => {
+// 已自选 → 直接移除；未自选 → 弹出分组选择后加入所选分组
+const showGroupPicker = ref(false)
+const pickRow = ref(null)
+
+const toggleWatchlist = async (row) => {
+  const code = row.code
+  if (watchlistStore.isInWatchlist(code)) {
+    try {
+      await watchlistStore.removeFromWatchlist(code)
+      ElMessage.success(`${code} 已从自选股移除`)
+    } catch (error) {
+      console.error('操作自选股失败:', error)
+    }
+    return
+  }
+  pickRow.value = row
+  showGroupPicker.value = true
+}
+
+// 分组选择确认 → 按所选分组加入自选（传入名称，避免自选列表名称列空白）
+const onGroupConfirm = async (groupId) => {
+  const row = pickRow.value
+  if (!row) return
   try {
-    await watchlistStore.toggleWatchlist(code)
+    await watchlistStore.addToWatchlist(row.code, groupId, row.name)
+    ElMessage.success(`已加入自选股分组`)
   } catch (error) {
     console.error('操作自选股失败:', error)
+    ElMessage.error('加入自选股失败')
   }
 }
 
@@ -273,7 +298,7 @@ onMounted(async () => {
             <el-button
               :type="watchlistStore.isInWatchlist(row.code) ? 'warning' : 'primary'"
               size="small"
-              @click.stop="toggleWatchlist(row.code)"
+              @click.stop="toggleWatchlist(row)"
             >
               <el-icon>
                 <Star v-if="watchlistStore.isInWatchlist(row.code)" />
@@ -299,6 +324,9 @@ onMounted(async () => {
         />
       </div>
     </el-card>
+
+    <!-- 加入自选：分组选择弹窗 -->
+    <WatchlistGroupPicker v-model="showGroupPicker" @confirm="onGroupConfirm" />
   </div>
 </template>
 
