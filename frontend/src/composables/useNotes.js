@@ -1,54 +1,53 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { useNoteStore } from '@/store/note.store'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { getStockRealtime } from '@/services/stock.service'
+import { ElMessage, ElMessageBox, ElNotification } from 'element-plus'
+
+/**
+ * 股票笔记 composable —— 封装列表过滤、CRUD、草稿自动保存、提醒轮询、浮动盈亏补算。
+ *
+ * 存储策略：主数据在 sql.js 本地库（无远程后端）；草稿自动保存用 localStorage 临时态。
+ * 浮动盈亏：不落库，对 holding_status=open 的笔记调 getStockRealtime 取现价实时算。
+ */
+
+const DRAFT_PREFIX = 'stockNote:draft:'
+const POLL_INTERVAL = 60000 // 提醒轮询 60s
 
 export function useNotes() {
   const noteStore = useNoteStore()
-  
-  // 响应式数据
+
   const loading = ref(false)
   const error = ref(null)
   const searchKeyword = ref('')
-  const selectedCategory = ref(null)
+  const selectedStock = ref(null)   // 股票代码
   const selectedTags = ref([])
-  
-  // 计算属性
-  const filteredNotes = computed(() => {
-    let notes = noteStore.notes
-    
-    // 按分类筛选
-    if (selectedCategory.value) {
-      notes = notes.filter(note => note.categoryId === selectedCategory.value)
-    }
-    
-    // 按标签筛选
-    if (selectedTags.value.length > 0) {
-      notes = notes.filter(note => 
-        note.tags && selectedTags.value.some(tag => note.tags.includes(tag))
-      )
-    }
-    
-    // 按关键词搜索
-    if (searchKeyword.value) {
-      const keyword = searchKeyword.value.toLowerCase()
-      notes = notes.filter(note => 
-        note.title.toLowerCase().includes(keyword) ||
-        note.content.toLowerCase().includes(keyword)
-      )
-    }
-    
-    return notes
+  const selectedDirection = ref(null)
+  const viewMode = ref('list')
+
+  // 笔记列表（store.notes），过滤参数驱动后端查询
+  const notes = computed(() => noteStore.notes)
+  const total = computed(() => noteStore.total)
+  const tags = computed(() => noteStore.tags)
+  const stocks = computed(() => noteStore.stocks)
+  const summary = computed(() => noteStore.summary)
+  const currentNote = computed(() => noteStore.currentNote)
+
+  /** 组装当前过滤参数 */
+  const filterParams = computed(() => {
+    const p = { page: 1, pageSize: 100 }
+    if (searchKeyword.value) p.keyword = searchKeyword.value
+    if (selectedStock.value) p.stockCode = selectedStock.value
+    if (selectedDirection.value) p.direction = selectedDirection.value
+    if (selectedTags.value.length) p.tags = selectedTags.value.join(',')
+    return p
   })
-  
-  const noteCount = computed(() => filteredNotes.value.length)
-  
-  // 获取笔记列表
+
+  /** 拉取笔记列表（应用当前过滤） */
   const fetchNotes = async (params = {}) => {
     try {
       loading.value = true
       error.value = null
-      
-      await noteStore.fetchNoteList(params)
+      await noteStore.fetchNoteList({ ...filterParams.value, ...params })
     } catch (err) {
       error.value = err.message || '获取笔记列表失败'
       ElMessage.error(error.value)
@@ -56,189 +55,225 @@ export function useNotes() {
       loading.value = false
     }
   }
-  
-  // 创建笔记
+
   const createNote = async (noteData) => {
     try {
       loading.value = true
-      
-      const response = await noteStore.createNote(noteData)
+      const res = await noteStore.createNote(noteData)
       ElMessage.success('笔记创建成功')
-      
-      return response
+      return res
     } catch (err) {
-      const errorMsg = err.message || '创建笔记失败'
-      ElMessage.error(errorMsg)
+      ElMessage.error(err.message || '创建笔记失败')
       throw err
-    } finally {
-      loading.value = false
-    }
+    } finally { loading.value = false }
   }
-  
-  // 更新笔记
+
   const updateNote = async (id, noteData) => {
     try {
       loading.value = true
-      
-      const response = await noteStore.updateNote(id, noteData)
+      const res = await noteStore.updateNote(id, noteData)
       ElMessage.success('笔记更新成功')
-      
-      return response
+      return res
     } catch (err) {
-      const errorMsg = err.message || '更新笔记失败'
-      ElMessage.error(errorMsg)
+      ElMessage.error(err.message || '更新笔记失败')
       throw err
-    } finally {
-      loading.value = false
-    }
+    } finally { loading.value = false }
   }
-  
-  // 删除笔记
+
   const deleteNote = async (id, title = '') => {
     try {
-      await ElMessageBox.confirm(
-        `确定要删除笔记"${title}"吗？此操作不可恢复。`,
-        '删除确认',
-        {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
-          type: 'warning'
-        }
-      )
-      
+      await ElMessageBox.confirm(`确定删除笔记"${title}"？提醒将一并删除，不可恢复。`, '删除确认', {
+        confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning'
+      })
       loading.value = true
       await noteStore.deleteNote(id)
-      ElMessage.success('笔记删除成功')
-      
+      ElMessage.success('已删除')
     } catch (err) {
-      if (err !== 'cancel') {
-        const errorMsg = err.message || '删除笔记失败'
-        ElMessage.error(errorMsg)
-        throw err
+      if (err !== 'cancel') { ElMessage.error(err.message || '删除失败'); throw err }
+    } finally { loading.value = false }
+  }
+
+  const fetchStocks = () => noteStore.fetchStocks()
+  const fetchTags = () => noteStore.fetchTags()
+  const fetchSummary = () => noteStore.fetchSummary()
+
+  /** 导出笔记：返回 {title,html,md}，调用方生成 Blob 下载 */
+  const exportNote = async (id, format = 'html') => {
+    try {
+      const data = await noteStore.exportNote(id)
+      const ext = format === 'md' ? 'md' : 'html'
+      const content = format === 'md' ? data.md : data.html
+      const blob = new Blob([content], { type: format === 'md' ? 'text/markdown' : 'text/html' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${data.title || '笔记'}.${ext}`
+      a.click()
+      URL.revokeObjectURL(url)
+      ElMessage.success('导出成功')
+    } catch (err) {
+      ElMessage.error(err.message || '导出失败')
+    }
+  }
+
+  // ============== 浮动盈亏补算 ==============
+  /**
+   * 对 open 持仓笔记取现价，算浮动盈亏（前端实时，不落库）。
+   * @param {Array} list 笔记列表
+   * @returns {Promise<Object>} code -> { price, pnl } 映射，并原地写 note._floatingPnl
+   */
+  const fetchRealtimePnL = async (list) => {
+    const openNotes = (list || []).filter(n => n.holdingStatus === 'open' && n.stockCode && BUY_DIRS.has(n.direction))
+    if (!openNotes.length) return {}
+    const codes = [...new Set(openNotes.map(n => n.stockCode))]
+    try {
+      const res = await getStockRealtime(codes)
+      // 返回结构可能是数组或对象，兼容
+      const spotMap = {}
+      const arr = Array.isArray(res.data) ? res.data : (res.data?.list || res.data?.items || [])
+      for (const s of arr) {
+        const c = s.code || s.stockCode || s.symbol
+        spotMap[c] = s.price ?? s.latestPrice ?? s.close
       }
-    } finally {
-      loading.value = false
-    }
-  }
-  
-  // 搜索笔记
-  const searchNotes = async (keyword) => {
-    try {
-      loading.value = true
-      
-      if (keyword) {
-        await noteStore.searchNotes(keyword)
-      } else {
-        noteStore.clearSearchResults()
+      for (const n of openNotes) {
+        const cur = spotMap[n.stockCode]
+        if (cur != null && n.tradePrice != null && n.quantity != null) {
+          n._floatingPnl = (cur - n.tradePrice) * n.quantity - (n.fee || 0)
+          n._currentPrice = cur
+        }
       }
-    } catch (err) {
-      const errorMsg = err.message || '搜索笔记失败'
-      ElMessage.error(errorMsg)
-    } finally {
-      loading.value = false
+      return spotMap
+    } catch {
+      // 取现价失败不影响列表展示，浮动盈亏留空
+      return {}
     }
   }
-  
-  // 获取分类
-  const fetchCategories = async () => {
+
+  // ============== 草稿自动保存（localStorage） ==============
+  const saveDraft = (key, form) => {
     try {
-      await noteStore.fetchNoteCategories()
-    } catch (err) {
-      ElMessage.error('获取分类失败')
-    }
+      localStorage.setItem(DRAFT_PREFIX + key, JSON.stringify(form))
+    } catch { /* 配额满等异常静默 */ }
   }
-  
-  // 创建分类
-  const createCategory = async (categoryData) => {
+  const restoreDraft = (key) => {
     try {
-      const response = await noteStore.createNoteCategory(categoryData)
-      ElMessage.success('分类创建成功')
-      return response
-    } catch (err) {
-      ElMessage.error('创建分类失败')
-      throw err
+      const raw = localStorage.getItem(DRAFT_PREFIX + key)
+      return raw ? JSON.parse(raw) : null
+    } catch { return null }
+  }
+  const clearDraft = (key) => {
+    try { localStorage.removeItem(DRAFT_PREFIX + key) } catch {}
+  }
+
+  // ============== 提醒轮询 + 通知 ==============
+  let pollTimer = null
+
+  const notifyUser = (title, body) => {
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try { new Notification(title, { body }); return } catch {}
+    }
+    // 降级：页面内提示
+    ElNotification({ title, message: body, type: 'warning', duration: 8000 })
+  }
+
+  const requestNotifyPermission = () => {
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission()
     }
   }
-  
-  // 上传附件
-  const uploadAttachment = async (file) => {
+
+  /** 处理到期提醒（date 一次性设 triggered；repeat 仅更新 last_triggered_at） */
+  const handleDueAlerts = async (due) => {
+    const now = new Date().toISOString()
+    for (const a of due) {
+      notifyUser(`笔记提醒: ${a.noteTitle || ''}`, buildDueMessage(a))
+      const patch = { lastTriggeredAt: now }
+      if (a.alertType === 'date') patch.status = 'triggered'
+      try { await noteStore.updateAlert(a.noteId, a.id, patch) } catch {}
+    }
+  }
+
+  /** 处理价格提醒：取现价比较 */
+  const handlePriceAlerts = async (price) => {
+    if (!price.length) return
+    const codes = [...new Set(price.map(a => a.stockCode).filter(Boolean))]
+    if (!codes.length) return
+    const res = await getStockRealtime(codes)
+    const spotMap = {}
+    const arr = Array.isArray(res.data) ? res.data : (res.data?.list || res.data?.items || [])
+    for (const s of arr) {
+      const c = s.code || s.stockCode || s.symbol
+      spotMap[c] = s.price ?? s.latestPrice ?? s.close
+    }
+    const now = new Date().toISOString()
+    for (const a of price) {
+      const cur = spotMap[a.stockCode]
+      if (cur == null || a.targetPrice == null) continue
+      const hit = a.direction === 'above' ? cur >= a.targetPrice : cur <= a.targetPrice
+      if (hit) {
+        const op = a.direction === 'above' ? '高于' : '低于'
+        notifyUser(`价格提醒: ${a.stockName || a.stockCode}`, `现价 ${cur} 已${op} ${a.targetPrice}（${a.noteTitle || ''}）`)
+        // 价格提醒一次性触发后标记，避免重复
+        try { await noteStore.updateAlert(a.noteId, a.id, { status: 'triggered', lastTriggeredAt: now }) } catch {}
+      }
+    }
+  }
+
+  const checkAndNotify = async () => {
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      
-      const response = await noteStore.uploadAttachment(formData)
-      ElMessage.success('文件上传成功')
-      
-      return response
-    } catch (err) {
-      ElMessage.error('文件上传失败')
-      throw err
-    }
+      const { due = [], price = [] } = await noteStore.checkAlerts()
+      await handleDueAlerts(due)
+      await handlePriceAlerts(price)
+    } catch { /* 轮询失败静默，下次重试 */ }
   }
-  
-  // 设置搜索关键词
-  const setSearchKeyword = (keyword) => {
-    searchKeyword.value = keyword
+
+  const startAlertPoller = () => {
+    requestNotifyPermission()
+    if (pollTimer) clearInterval(pollTimer)
+    pollTimer = setInterval(checkAndNotify, POLL_INTERVAL)
+    // 启动时立即查一次
+    checkAndNotify()
   }
-  
-  // 设置选中的分类
-  const setSelectedCategory = (categoryId) => {
-    selectedCategory.value = categoryId
+  const stopAlertPoller = () => {
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   }
-  
-  // 设置选中的标签
-  const setSelectedTags = (tags) => {
-    selectedTags.value = tags
-  }
-  
-  // 清空筛选条件
+
+  onUnmounted(() => stopAlertPoller())
+
   const clearFilters = () => {
     searchKeyword.value = ''
-    selectedCategory.value = null
+    selectedStock.value = null
     selectedTags.value = []
+    selectedDirection.value = null
   }
-  
-  // 监听搜索关键词变化
-  watch(searchKeyword, (newKeyword) => {
-    if (newKeyword) {
-      searchNotes(newKeyword)
-    } else {
-      noteStore.clearSearchResults()
-    }
-  })
-  
+
   return {
     // 状态
-    loading,
-    error,
-    searchKeyword,
-    selectedCategory,
-    selectedTags,
-    
-    // 计算属性
-    filteredNotes,
-    noteCount,
-    
-    // Store数据
-    notes: computed(() => noteStore.notes),
-    currentNote: computed(() => noteStore.currentNote),
-    categories: computed(() => noteStore.categories),
-    tags: computed(() => noteStore.tags),
-    searchResults: computed(() => noteStore.searchResults),
-    recentNotes: computed(() => noteStore.recentNotes),
-    
-    // 方法
-    fetchNotes,
-    createNote,
-    updateNote,
-    deleteNote,
-    searchNotes,
-    fetchCategories,
-    createCategory,
-    uploadAttachment,
-    setSearchKeyword,
-    setSelectedCategory,
-    setSelectedTags,
+    loading, error, searchKeyword, selectedStock, selectedTags, selectedDirection, viewMode,
+    // 列表数据
+    notes, total, tags, stocks, summary, currentNote, filterParams,
+    // CRUD
+    fetchNotes, createNote, updateNote, deleteNote,
+    fetchStocks, fetchTags, fetchSummary, exportNote,
+    // 浮动盈亏
+    fetchRealtimePnL,
+    // 草稿
+    saveDraft, restoreDraft, clearDraft,
+    // 提醒
+    checkAndNotify, startAlertPoller, stopAlertPoller, requestNotifyPermission,
     clearFilters
   }
+}
+
+// ============== 内部常量/工具 ==============
+const BUY_DIRS = new Set(['buy', 'add'])
+
+function buildDueMessage(a) {
+  if (a.alertType === 'date') return `日期提醒到期（${a.triggerDate || ''} ${a.triggerTime || ''}）`
+  if (a.alertType === 'repeat') {
+    const r = a.repeatRule || {}
+    const typeLabel = { daily: '每日', weekly: '每周', monthly: '每月' }[r.type] || '定时'
+    return `${typeLabel}提醒 ${a.triggerTime || ''}`
+  }
+  return '提醒到期'
 }

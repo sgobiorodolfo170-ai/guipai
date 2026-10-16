@@ -35,8 +35,8 @@ const SQLITE_TABLE_LABELS = {
   watchlist: '自选股',
   watchlist_group: '自选分组',
   price_alert: '价格提醒',
-  note: '笔记',
-  note_category: '笔记分类',
+  note: '股票笔记',
+  note_alert: '笔记提醒',
   template: '复盘模板',
   template_category: '模板分类',
   sim_single_training: '模拟训练记录',
@@ -105,6 +105,40 @@ const SQLJS_FIELD_DEFS = {
     { column: 'ps', label: 'PS', source: '百度估值' },
     { column: 'pcf', label: 'PCF', source: '百度估值' },
     { column: 'dividend_yield', label: '股息率', source: '百度估值' }
+  ],
+  note: [
+    { column: 'id', label: 'ID' },
+    { column: 'title', label: '标题', desc: '笔记标题' },
+    { column: 'stock_code', label: '股票代码', source: '用户输入/搜索选择' },
+    { column: 'stock_name', label: '股票名称' },
+    { column: 'direction', label: '交易方向', desc: 'buy买入/sell卖出/add加仓/reduce减仓' },
+    { column: 'trade_price', label: '成交价格' },
+    { column: 'quantity', label: '数量' },
+    { column: 'fee', label: '手续费' },
+    { column: 'trade_date', label: '成交日期' },
+    { column: 'cost', label: '成本', desc: '自动计算: buy/add=价格×数量+手续费' },
+    { column: 'holding_status', label: '持仓状态', desc: 'open持仓/closed清仓/partial部分' },
+    { column: 'content', label: '富文本内容', desc: 'HTML,买卖逻辑/复盘/经验' },
+    { column: 'kline_blocks', label: 'K线块', desc: 'JSON数组:{code,period,startDate,endDate,imageBase64}' },
+    { column: 'tags', label: '标签', desc: 'JSON数组' },
+    { column: 'is_public', label: '是否公开', desc: '0/1' },
+    { column: 'created_at', label: '创建时间' },
+    { column: 'updated_at', label: '更新时间' }
+  ],
+  note_alert: [
+    { column: 'id', label: 'ID' },
+    { column: 'note_id', label: '笔记ID', desc: '关联note.id' },
+    { column: 'user_id', label: '用户ID' },
+    { column: 'alert_type', label: '提醒类型', desc: 'price价格/date日期/repeat重复' },
+    { column: 'target_price', label: '目标价格', desc: '价格提醒用' },
+    { column: 'direction', label: '方向', desc: 'above高于/below低于' },
+    { column: 'trigger_date', label: '触发日期' },
+    { column: 'trigger_time', label: '触发时间', desc: 'HH:MM' },
+    { column: 'repeat_rule', label: '重复规则', desc: 'JSON:{type:daily/weekly/monthly,weekdays:[]}' },
+    { column: 'enabled', label: '启用', desc: '0/1' },
+    { column: 'last_triggered_at', label: '上次触发时间' },
+    { column: 'status', label: '状态', desc: 'pending/triggered/dismissed' },
+    { column: 'created_at', label: '创建时间' }
   ]
 }
 // DolphinDB 表字段定义（与 sql.js 同名表 schema 不同，单独维护）
@@ -136,7 +170,9 @@ const DDB_FIELD_DEFS = {
 const SQLITE_COVERAGE = {
   stock_basic: ['list_date', 'total_shares', 'is_st', 'is_suspended'],
   stock_financial: ['revenue', 'total_assets', 'roe'],
-  stock_indicator: ['pe_ttm', 'pb', 'pcf']
+  stock_indicator: ['pe_ttm', 'pb', 'pcf'],
+  note: ['stock_code', 'direction', 'cost', 'holding_status'],
+  note_alert: ['alert_type', 'status']
 }
 
 /**

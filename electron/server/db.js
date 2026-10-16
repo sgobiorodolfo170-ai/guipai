@@ -89,6 +89,21 @@ function scheduleSave() {
   }, 2000)
 }
 
+/**
+ * note 表结构迁移：旧版 note 表（无 stock_code 列）已被弃用，
+ * 需在 CREATE TABLE IF NOT EXISTS 之前 DROP 掉旧 note + note_category。
+ * 此操作清除旧笔记数据——已由用户授权弃用。
+ * 已迁移到新 schema（含 stock_code 列）则跳过，保证幂等。
+ */
+function migrateNoteSchema(db) {
+  const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name IN ('note','note_category')`).all().map(r => r.name)
+  if (!tables.includes('note')) return // note 不存在，由后续 CREATE 创建
+  const cols = new Set(db.prepare(`PRAGMA table_info(note)`).all().map(r => r.name))
+  if (cols.has('stock_code')) return // 已是新 schema
+  // 旧 schema：弃用旧表（用户已授权）
+  db.exec(`DROP TABLE IF EXISTS note; DROP TABLE IF EXISTS note_category;`)
+}
+
 async function initDb(dataDir) {
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true })
   dataDirPath = dataDir
@@ -107,6 +122,9 @@ async function initDb(dataDir) {
   }
 
   db = new DatabaseWrapper(rawDb)
+
+  // note 表结构迁移：必须先 DROP 旧表，CREATE TABLE IF NOT EXISTS 才能用新 schema 重建
+  migrateNoteSchema(db)
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS user (
@@ -191,24 +209,48 @@ async function initDb(dataDir) {
       target_price REAL, direction TEXT, note TEXT, enabled INTEGER DEFAULT 1,
       created_at TEXT DEFAULT (datetime('now','localtime'))
     );
-    CREATE TABLE IF NOT EXISTS note_category (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER DEFAULT 1,
-      name TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now','localtime'))
-    );
+    -- 股票笔记主表：结构化交易字段 + 富文本 + K线块 + 标签
+    -- 弃用旧 note_category（通用分类），改为 tags(JSON) 驱动
     CREATE TABLE IF NOT EXISTS note (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER DEFAULT 1,
       title TEXT NOT NULL,
+      stock_code TEXT,
+      stock_name TEXT,
+      direction TEXT,
+      trade_price REAL,
+      quantity REAL,
+      fee REAL DEFAULT 0,
+      trade_date TEXT,
+      cost REAL,
+      holding_status TEXT,
       content TEXT,
-      category_id INTEGER,
+      kline_blocks TEXT,
       tags TEXT DEFAULT '[]',
       is_public INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now','localtime')),
       updated_at TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_note_user ON note(user_id);
+    CREATE INDEX IF NOT EXISTS idx_note_code ON note(stock_code);
+    CREATE INDEX IF NOT EXISTS idx_note_direction ON note(direction);
+    -- 笔记提醒：价格阈值/指定日期/重复定时
+    CREATE TABLE IF NOT EXISTS note_alert (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      note_id INTEGER NOT NULL,
+      user_id INTEGER DEFAULT 1,
+      alert_type TEXT NOT NULL,
+      target_price REAL,
+      direction TEXT,
+      trigger_date TEXT,
+      trigger_time TEXT,
+      repeat_rule TEXT,
+      enabled INTEGER DEFAULT 1,
+      last_triggered_at TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_nalert_note ON note_alert(note_id);
     CREATE TABLE IF NOT EXISTS template_category (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER DEFAULT 1,
