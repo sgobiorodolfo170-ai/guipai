@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useStockStore } from '@/store/stock.store'
 import KLineChart from '@/components/common/KLineChart.vue'
 
@@ -17,6 +17,7 @@ const marketData = ref({
 onMounted(async () => {
   // 1. 立即从 localStorage 加载上次缓存的指数数据（避免页面空白）
   loadCachedMarketData()
+  initKlineHeight()
   loading.value = true
   try {
     await fetchMarketOverview()
@@ -99,6 +100,65 @@ const indexTabs = [
   { code: '399006', name: '创业板指' }
 ]
 const activeIndex = ref('000001')
+
+// ---- 指数K线卡片高度拖拽（持久化到 localStorage，与 Watchlist 分栏拖拽同模式）----
+// 需求：卡片高度可自由调节。上限仅作防御性封顶（防止拖出远超视口的不可用状态），
+// 下限保护图表可读性；高度变化由 KLineChart 内置 ResizeObserver 自动触发 chart.resize()。
+const KLINE_HEIGHT_KEY = 'dashboard_kline_height'
+const KLINE_HEIGHT_DEFAULT = 400
+const KLINE_HEIGHT_MIN = 240
+const KLINE_HEIGHT_MAX = 1400
+
+const klineHeight = ref(KLINE_HEIGHT_DEFAULT)
+let klineDragging = false
+let klineStartY = 0
+let klineStartHeight = 0
+
+/** 读取持久化高度；缺失/越界（视为损坏）回落默认值 */
+const initKlineHeight = () => {
+  const saved = Number(localStorage.getItem(KLINE_HEIGHT_KEY))
+  if (Number.isFinite(saved) && saved >= KLINE_HEIGHT_MIN && saved <= KLINE_HEIGHT_MAX) {
+    klineHeight.value = Math.round(saved)
+  }
+}
+
+const startKlineDrag = (e) => {
+  klineDragging = true
+  klineStartY = e.clientY
+  klineStartHeight = klineHeight.value
+  document.addEventListener('mousemove', onKlineDrag)
+  document.addEventListener('mouseup', stopKlineDrag)
+  document.body.style.userSelect = 'none' // 拖拽期间禁止选中文本
+}
+
+const onKlineDrag = (e) => {
+  if (!klineDragging) return
+  let h = klineStartHeight + (e.clientY - klineStartY)
+  if (h < KLINE_HEIGHT_MIN) h = KLINE_HEIGHT_MIN
+  if (h > KLINE_HEIGHT_MAX) h = KLINE_HEIGHT_MAX
+  klineHeight.value = Math.round(h)
+}
+
+const stopKlineDrag = () => {
+  if (!klineDragging) return
+  klineDragging = false
+  document.removeEventListener('mousemove', onKlineDrag)
+  document.removeEventListener('mouseup', stopKlineDrag)
+  document.body.style.userSelect = ''
+  localStorage.setItem(KLINE_HEIGHT_KEY, String(klineHeight.value))
+}
+
+/** 双击手柄复位默认高度 */
+const resetKlineHeight = () => {
+  klineHeight.value = KLINE_HEIGHT_DEFAULT
+  localStorage.setItem(KLINE_HEIGHT_KEY, String(KLINE_HEIGHT_DEFAULT))
+}
+
+onUnmounted(() => {
+  // 拖拽中途切走路由会留下悬挂监听，需清理（同 Watchlist 处理）
+  document.removeEventListener('mousemove', onKlineDrag)
+  document.removeEventListener('mouseup', stopKlineDrag)
+})
 </script>
 
 <template>
@@ -182,8 +242,17 @@ const activeIndex = ref('000001')
             :show-adjust-switcher="false"
             :show-drawing-tools="false"
             :show-volume="true"
-            height="400px"
+            :height="klineHeight + 'px'"
           />
+          <!-- 高度拖拽手柄：整条可拖，grip 仅视觉提示；双击复位默认高度 -->
+          <div
+            class="kline-resize-handle"
+            title="拖拽调节高度，双击复位（默认 400px）"
+            @mousedown="startKlineDrag"
+            @dblclick="resetKlineHeight"
+          >
+            <div class="kline-resize-grip"></div>
+          </div>
         </el-card>
       </el-col>
     </el-row>
@@ -238,6 +307,29 @@ const activeIndex = ref('000001')
 .market-change {
   font-size: 14px;
   font-weight: 500;
+}
+
+/* 指数K线高度拖拽手柄：cursor ns-resize 提示可上下拖拽 */
+.kline-resize-handle {
+  height: 16px;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+}
+
+.kline-resize-grip {
+  width: 64px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--el-border-color);
+  transition: background 0.2s;
+}
+
+.kline-resize-handle:hover .kline-resize-grip,
+.kline-resize-handle:active .kline-resize-grip {
+  background: var(--el-color-primary);
 }
 
 @media (max-width: 768px) {
