@@ -2,6 +2,7 @@
 
 | 版本号 | 日期 | 摘要 |
 | --- | --- | --- |
+| v1.13.0 | 2026-10-16 | 自选股加入改为弹窗选分组：StockList/StockDetail 未自选状态点击星标弹出 WatchlistGroupPicker 选择归入分组（传 name 避免名称列空白），已自选则直接移除；后端 POST /watchlist 支持 groupId、service/store 透传。自选股页选项卡控件改版：弃用原生 editable，选项卡栏右端自定义 -/+ 按钮（- 进入删除模式显示红色 ×，+ 新建分组），导航区右侧预留按钮空间 |
 | v1.12.0 | 2026-10-15 | 数据管理改版：删除「股票数据拉取」分类（前端组件/路由/菜单，后端 /data-pull 保留）；「收盘数据同步」全新设计 = 全市场数据同步 + 数据可视化。删除原四类收盘同步前后端（sync.js 及 /sync-status、data_sync_status 表、前端 dataSync.service/useDataSync）；四类数据（涨停/跌停/板块/指数日K）并入全市场同步。新增 electron/server/market-sync.js（/api/market-sync：start 单飞后台任务[全市场个股日K 并发池+连续限流自动暂停]+stop+status 轮询+completeness 完整性[逐日覆盖/按市场拆分/四类存在性]+validate 验证[OHLC/价格/成交量/字段缺失分类]）+ col-defs.js 共享三表列定义（aktools 路由改引用）。前端 CloseDataSync.vue 重写：同步配置/实时进度(1.5s轮询)/ECharts 完整性·验证·进度三区块/自动刷新 |
 | v1.11.1 | 2026-10-13 | 修复自选股分组选项卡尾部 + 按钮点击无反应：el-tabs 的 edit 事件签名实为 (paneName, action)（add 时 paneName=undefined），handleTabEdit 原误写为 (action, name) 致首参恒非 'add'、+ 新建分组与 × 删除分组均失效；改为 (name, action) 后恢复
 | v1.11.0 | 2026-10-13 | 自选股页重构为左右分栏 + 分组选项卡：删除分组下拉框/分组管理标签卡片/副标题"管理您的自选股票"/K线 Drawer；刷新按钮移至标题行右端；右区 el-tabs(type=card,editable) 每分组一页、尾部 + 号新建分组/× 删除分组（默认组 id=0 不可删）；左区常驻 KLineChart，点击右区股票行自动切换该股 K 线（首次加载自动选中首组首股）；中间分割线可拖拽且宽度 localStorage 持久化（key watchlist_split_left），窄屏自动转上下布局；表格去掉多选列与"图表"按钮、保留行内"移除"(@click.stop 防误选)
