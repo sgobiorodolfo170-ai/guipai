@@ -210,16 +210,19 @@ function buildDataLoader() {
       try {
         const code = activeCode
         // init: 拉最近 N 根；forward: 向左加载更早数据
-        const today = new Date()
-        const end = today.toISOString().slice(0, 10).replace(/-/g, '')
+        // 日期一律用本地日历格式化：toISOString 走 UTC，东八区凌晨会整体回退一天
+        const toCompactDate = (ms) => {
+          const d = new Date(ms)
+          const p = n => String(n).padStart(2, '0')
+          return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`
+        }
+        const end = toCompactDate(Date.now())
         // 根据是否为指数选择 API
         const fetchFn = props.isIndex ? getIndexKLine : getStockKLine
 
         if (type === 'init') {
-          // 默认拉取近 500 个交易日（约 2 年）
-          const start = new Date()
-          start.setDate(start.getDate() - 900)
-          const startDate = start.toISOString().slice(0, 10).replace(/-/g, '')
+          // 默认拉取近 900 个自然日（约 2.5 年）
+          const startDate = toCompactDate(Date.now() - 900 * 86400000)
           const resp = await fetchFn(code, {
             period: currentPeriod.value,
             adjust: currentAdjust.value,
@@ -229,11 +232,11 @@ function buildDataLoader() {
           const bars = toKLineDataList(resp?.data || [])
           callback(bars, { forward: true, backward: false })
         } else if (type === 'forward') {
-          // 向左分页：以当前最早时间戳为终点往前拉
-          const startDate = new Date()
-          startDate.setDate(startDate.getDate() - 2500)
-          const startDateStr = startDate.toISOString().slice(0, 10).replace(/-/g, '')
-          const endDateStr = new Date(timestamp).toISOString().slice(0, 10).replace(/-/g, '')
+          // 向左分页：以当前最早 bar 的时间戳为锚，向前取 2500 天窗口。
+          // 不能用"今天 - 2500 天"：那样窗口起点永远锚在当天，越过约 6.8 年后
+          // 请求区间无法再前移，历史被硬性截断（与滚动位置无关）。
+          const startDateStr = toCompactDate(timestamp - 2500 * 86400000)
+          const endDateStr = toCompactDate(timestamp)
           const resp = await fetchFn(code, {
             period: currentPeriod.value,
             adjust: currentAdjust.value,

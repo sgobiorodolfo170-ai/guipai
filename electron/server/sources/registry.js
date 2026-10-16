@@ -88,10 +88,12 @@ const PRIORITY_FULL = {
 }
 
 // TDX-only 优先级（冻结 main/sina/akshare，仅 tdx_server/tdx_quant/tdx_local）
+// indexDaily 增加 tdx_local 兜底：tqs 桥（tdx_server）未运行时回落读本机 vipdoc
+// 指数 .day 文件（1998 起深历史），保证 TDX 冻结模式下指数K线仍可回填历史。
 const PRIORITY_TDX = {
   kline: ['tdx_server', 'tdx_quant', 'tdx_local'],
   spot: ['tdx_server', 'tdx_quant'],
-  indexDaily: ['tdx_server'],
+  indexDaily: ['tdx_server', 'tdx_local'],
   indexSpot: ['tdx_server'],
   minute: ['tdx_server', 'tdx_quant'],
   limitPool: ['tdx_server', 'tdx_quant'],
