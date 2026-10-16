@@ -219,7 +219,6 @@
                   :show-adjust-switcher="false"
                   :show-drawing-tools="false"
                   :show-volume="true"
-                  :ma-periods="[]"
                   height="250px"
               />
               <div class="stock-info">
