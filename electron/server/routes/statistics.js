@@ -30,7 +30,13 @@ function ok(res, data) { res.json({ code: 200, msg: '成功', data }) }
 function err(res, msg) { res.json({ code: 500, msg }) }
 
 // '2025-09-24' -> '2025.09.24' (DolphinDB DATE 字面量)
-function dd(s) { return String(s || '').replace(/-/g, '.') }
+// 安全版：先经 safeDate 白名单校验（仅 YYYY-MM-DD / YYYY.MM.DD / YYYYMMDD 合法），
+// 非法值直接 throw，被各端点的 try/catch 捕获后返回 500 —— 不再允许任意字符串拼进 DolphinDB 脚本。
+function dd(s) {
+  const d = safeDate(s)
+  if (!d) throw new Error('日期参数不合法: ' + s)
+  return d
+}
 // ISO 日期加减天数 -> ISO 'YYYY-MM-DD'
 function addDays(iso, n) {
   const d = new Date((iso || '') + 'T00:00:00Z')

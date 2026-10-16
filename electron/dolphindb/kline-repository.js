@@ -76,7 +76,10 @@ async function insertDailyK(rawRows) {
   })).filter(r => safeSymbol(r.symbol) && safeDate(r.trade_date))
   if (!rows.length) return 0
   // 预删除（symbol + 日期范围），保证幂等
-  const symbol = rows[0].symbol
+  // symbol 已在 filter 步骤经 safeSymbol 校验，此处显式再校验一次——
+  // 即使上游重构移除了 filter，execute 这一层仍然安全。
+  const symbol = safeSymbol(rows[0].symbol)
+  if (!symbol) return 0
   const dates = rows.map(r => safeDate(r.trade_date)).sort()
   await ddb.execute(`t = loadTable("dfs://tradeinsight", "daily_k"); delete from t where symbol='${symbol}' and trade_date between ${dates[0]} and ${dates[dates.length - 1]}`)
   // 插入
