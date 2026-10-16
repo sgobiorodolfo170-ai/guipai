@@ -47,7 +47,7 @@ boards.js[EB6T]: F:行业板块路由：板块列表+成分股，DB-first write-
 data-mgmt.js[ED7T]: F:数据总览：sql.js 表行数/文件大小/DDB 表计数与最新日期/各源健康度 + 字段定义与覆盖统计 | R:code:electron/server/db.js,code:electron/dolphindb/client.js | A:- | S:AGENTS.md 规定字段变更必须同步 FIELD_DEFS/SQLITE_COVERAGE/SQLITE_TABLE_LABELS 与 DataOverview.vue；已迁移表从 sql.js 隐藏
 data-pull.js[EW6M]: F:个股日K往期拉取：分批次墙钟预算截断/单飞锁/串行+可配间隔/幂等写入 daily_k | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js | A:- | S:150s 墙钟预算防失控并发压源；单批上限 50 只/跨度 7300 天；未连库时允许只拉不写；前端需用 >预算 超时禁重试
 kline.js[EA6T]: F:摸箱训练随机K线：硬编码样本池随机选股，DB(daily_k→raw)→网络三级兜底 | R:code:electron/dolphindb/kline-repository.js,code:electron/server/aktools.js | A:- | S:回看窗口按交易日×1.5+30天缓冲防误报缺数据；日期必须用 ISO 不能传紧凑格式
-market.js[EB7T]: F:市场路由：/overview 指数概览 /hot 热门股 /index-kline 指数K线，均 DB-first | R:code:electron/dolphindb/spot-repository.js,code:electron/dolphindb/index-spot-repository.js,code:electron/server/aktools.js | A:- | S:指数名用静态映射补（stock_index_spot 无 name 列）；query 拼 DDB 前必须 safeSymbol/safeDate 净化；index-kline startDate 缺省给 1990-01-01
+market.js[EB7L]: F:市场路由：/overview 指数概览（静态名映射+快照日期）、/hot 热门股、/index-kline 指数K线（覆盖检测+缺口补拉+库内与补拉行响应层合并，周/月K JS 聚合） | R:code:electron/dolphindb/spot-repository.js,code:electron/dolphindb/index-spot-repository.js,code:electron/server/aktools.js,code:electron/server/converter.js | A:- | S:tradeinsight 分区下界 2024-01-01：更早日K 入库被静默丢弃，深历史靠库内+补拉响应层合并；周/月K 绝不落库；拼 DDB 脚本必须 safeSymbol/safeDate 净化；index-kline startDate 缺省 1990-01-01
 note.js[EB9M]: F:股票笔记全套 CRUD/标签/汇总/提醒轮询/导出：结构化交易字段+富文本+K线块 | R:code:electron/server/db.js | A:- | S:cost 服务端计算 buy/add=价×量+手续费；tags/kline_blocks/JSON 字符串存返回解析；价格提醒仅返回配置由前端取现价判定；静态 GET 需先于 /:id 注册
 statistics.js[KB9L]: F:涨跌停统计路由（DDB）：基础/详情/对比/质量/行业/连板/时间/封单/反弹/情绪/分位 + limit-pool/drop-pool/zt-previous DB-first 端点 | R:code:electron/dolphindb/client.js,code:electron/server/cache.js,code:electron/dolphindb/params.js | A:- | S:扫描聚合在 DDB（iif/sum/group by），比率/次日自连接/分桶/分位数在 JS 侧避开方言差异；DDB 日期以 2025.09.24 返回须归一 ISO；日期参数经 safeDate 白名单校验非法即 500（脚本无参数绑定防注入）；limit-pool 等三端点为 write-on-miss
 stock.js[EB9L]: F:股票路由：列表/搜索/实时/详情/K线(多级兜底)/分钟K/十大股东/财报/估值，元数据落 sql.js stock_basic | R:code:electron/server/aktools.js,code:electron/dolphindb/kline-repository.js,code:electron/dolphindb/spot-repository.js,code:electron/dolphindb/minute-repository.js,code:electron/dolphindb/holding-repository.js | A:- | S:日期统一归一 ISO 防字符串比较恒真；daily_k 查询 3s 限时超时降级，raw 不复权不与前复权混算，缺口回补前移 7 天防复权锚点漂移；minute/holding 为 DB-first write-on-miss；K线末级回退行情源网络直取保证前端可显示
@@ -59,9 +59,9 @@ watchlist.js[EU8M]: F:自选股全套 CRUD：股票/分组/备注/价格提醒�
 _smoke.js[TQ5T]: F:数据源真机冒烟：新浪/网易 K线与指数日K、调度器 failover、新浪 spot，手动运行 | R:code:electron/server/sources/registry.js,code:electron/server/sources/sina.js,code:electron/server/sources/netease.js | A:- | S:注册 _smoke_mock 临时源污染 registry 单例，仅用于本脚本进程内测试
 akshare.js[IN7T]: F:AKShare Python 桥 HTTP 客户端：11 类行情 + 财报/估值/板块/元数据 fetcher，available 由 main.js 生命周期管理 | R:code:electron/server/aktools.js,code:electron/server/routes/akshare.js | A:- | S:未就绪时 available()=false 调度器跳过本源零开销；服务返回 {code,msg,data} 取 data 字段
 netease.js[IN6T]: F:网易财经数据源：chddata CSV 历史日K（不复权），仅覆盖日K与指数日K | R:code:electron/server/sources/registry.js | A:- | S:网易 chddata 已废弃（502/DNS失效）暂未注册进调度器，文件保留待复活；北交所返回空交回调度器试下一源
-registry.js[CD8S]: F:多数据源健康度感知调度器：failover 串行/race 竞速/冷却记忆/软封空结果处理 | R:code:electron/server/aktools.js,code:electron/server/sources/sina.js | A:- | S:空数组一律视为源未命中继续下一源而非真无数据；连续失败 3 次进入 30s 冷却；PRIORITY_TDX_ONLY=true 冻结非 TDX 源（用户要求测试通达信效果），恢复时改回 false
+registry.js[CD8M]: F:多数据源健康度感知调度器：failover 串行/race 竞速/冷却记忆/软封空结果；PRIORITY_TDX.indexDaily=[tdx_server,tdx_local] | R:code:electron/server/aktools.js,code:electron/server/sources/sina.js | A:- | S:空数组一律视为源未命中继续下一源而非真无数据；连续失败 3 次进入 30s 冷却；PRIORITY_TDX_ONLY=true 冻结非 TDX 源（用户要求测试通达信效果），恢复时改回 false
 sina.js[IN7M]: F:新浪财经数据源：getKLineData 日/分钟K、指数日K、Market_Center 全市场快照分页 | R:code:electron/server/sources/registry.js | A:- | S:新浪不复权作为兜底用不复权行情（前复权由 DDB/调用方降级）；涨跌额/涨跌幅由前收推导，首行无前收→null；北交所 node=bj_a 单独取后合并
-tdx_local.js[IN7T]: F:通达信本地数据源：纯 Node 读 vipdoc lday .day 32 字节文件，离线日K兜底 | R:code:electron/server/settings.js,code:electron/server/sources/registry.js | A:- | S:零网络零 Python；换手率 .day 文件不含→null；安装路径 settings 优先否则探测常见路径；文件长度必须为 32 字节整数倍
+tdx_local.js[IN7S]: F:通达信本地数据源：纯 Node 读 vipdoc lday .day 32 字节文件，个股/指数离线日K兜底 | R:code:electron/server/settings.js,code:electron/server/sources/registry.js | A:- | S:零网络零 Python；换手率 .day 不含→null；路径 settings 优先否则探测常见路径；文件长须 32B 整数倍；指数映射 399*→sz 否则 sh；indexDaily 仅日线、缺目录/文件返回 [] 不抛错
 tdx_quant.js[IN8M]: F:通达信量化 HTTP 源（tqcenter 17709）：连运行中已登录 TdxW 取 K线/快照/涨跌停/财报 | R:code:electron/server/settings.js,code:electron/server/sources/registry.js | A:- | S:tqcenter 仅支持 count 不支持日期区间，需按区间估算 count 再过滤；snapshot 无 codes 参数时须返回空交由下一源否则 params 对象走到 includes 抛 TypeError 顶掉聚合错误；available 由 main.js 探测 17709 后设置
 tdx_server.js[IN8T]: F:通达信 tqs 数据源：经 Python 桥 /tdxs_* 调 tdxaidata.tqs，免客户端 Key 鉴权 | R:code:electron/server/settings.js,code:electron/server/aktools.js | A:- | S:依赖 Python 桥运行 + tdxaidata 已装 + Key 已配；available 由 main.js 探测 /tdxs_health 设置；health 给 20s 超时因 tqs 首次冷启动慢；indexDaily 传 is_index=1 区分上证指数 vs 平安银行
 
@@ -112,7 +112,7 @@ DateRangeSelector.vue[DU6M]: F:日期范围选择器：起止日期/快速选择
 ===G:/pj/pj--ing/111111/guipai/frontend/src/components/common/===
 ErrorBoundary.vue[CR7T]: F:组件错误边界：onErrorCaptured 捕获渲染错误展示降级 UI 并上报主进程日志 | R:code:frontend/src/App.vue | A:- | S:必须 return false 阻止错误上抛否则冒泡到 errorHandler 整树卸载；window.tradeinsight.logError 上报 renderer-error.log；retry 自增 reloadKey 重建子树
 HistoryDataModal.vue[DU7M]: F:指标历史弹窗：30 天概览统计/ECharts 趋势图/每日表格（环比红涨绿跌） | R:code:frontend/src/services/limitBoardStatistics.service.js | A:- | S:按 dataType 分支映射 valueField 与数量/百分比格式；图表容器按需渲染
-KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、自定义数据源与指数支持 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:candle.type 须为合法枚举（candle_up_stroke 等 6 种），非法值被库内 switch 静默跳过致蜡烛不绘制；空心蜡烛描边/影线色需显式设置（库默认西式绿涨红跌）；setDataLoader 须先于 setSymbol；customDataLoader 供实战训练渐进揭示；副图仅保留 VOL（showVolume 控制），已移除 MACD/KDJ 等指标切换
+KLineChart.vue[DU8L]: F:基于 KLineCharts v10 的通用 K 线组件：周期/复权切换、画线工具栏、成交量 VOL 副图、左滑分页加载更早数据、自定义数据源与指数支持 | R:code:frontend/src/services/stock.service.js,code:frontend/src/utils/klineData.js | A:- | S:candle.type 须为合法枚举（candle_up_stroke 等 6 种），非法值被库内 switch 静默跳过致蜡烛不绘制；空心描边/影线色须显式设置（默认西式绿涨红跌）；setDataLoader 须先于 setSymbol；customDataLoader 供实战训练渐进揭示；副图仅 VOL；左滑分页锚定最早 timestamp，日期本地手拼（toISOString 东八区偏移）
 SliderFilter.vue[DU6T]: F:滑动筛选器：动态选项/滑块动画/v-model 双向绑定 | R:- | A:- | S:options 至少 2 项且每项需 label+value；滑块宽度按选项数等分
 StockCard.vue[DU6S]: F:股票卡片：价格/涨跌/最高最低/成交量展示，点击详情与自选切换事件 | R:code:frontend/src/utils/stock.js | A:- | S:-
 
@@ -180,7 +180,7 @@ CloseDataSync.vue[DU8L]: F:收盘数据同步页：全市场同步配置/1.5s �
 DataOverview.vue[DU7M]: F:数据总览页：sql.js/DolphinDB 双库表行数与大小、字段展开、DDB 一键重连、源健康度 | R:code:electron/server/routes/data-mgmt.js | A:- | S:AGENTS.md 规定字段变更必须同步此页字段渲染；10s 自动刷新已关闭改为手动刷新
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/dashboard/===
-Dashboard.vue[DU8M]: F:仪表盘：指数行情概览(stale-while-revalidate)/统计卡片/K线实战入口/指数K线 Tab | R:code:frontend/src/store/stock.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:立即读 localStorage 缓存直出避免空白，再后台刷新
+Dashboard.vue[DU8M]: F:仪表盘：市场概况指数卡（快照日期+交易中/休市标签）/指数K线 Tab（上证/深证/创业板）；已移除自选股·复盘笔记统计卡与快捷操作卡 | R:code:frontend/src/store/stock.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:立即读 localStorage 缓存直出避免空白，再后台刷新；勿再引入 watchlist/note store（统计卡已删）
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/error/===
 NotFound.vue[DU3T]: F:404 页面：返回首页/返回上页 | R:- | A:- | S:-
