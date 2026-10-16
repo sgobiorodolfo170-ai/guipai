@@ -3,7 +3,7 @@
 ===G:/pj/pj--ing/111111/guipai/===
 .gitattributes[FG3T]: F:强制所有文本文件以 LF 检出，保证跨平台 checkout 与 AOCI 基线字节一致 | R:- | A:- | S:-
 .gitignore[FG4T]: F:定义依赖/构建产物/日志/本地数据忽略规则；AOCI 运行资产与主机集成配置不入库 | R:- | A:- | S:opencode.json、.aoci/与 aoci*.txt 为机器绑定运行资产，本地存在但不入库
-AGENTS.md[SG9L]: F:定义龟派项目 AI Agent 开发规范与方法论（目标前置/自审/质量护栏/Loop Engineering） | R:- | A:- | S:每次编码任务后必须运行 frontend 下 npm run build 作为验收信号；sql.js/DolphinDB 表字段变更必须同步 electron/server/routes/data-mgmt.js 的 FIELD_DEFS/SQLITE_COVERAGE 与 frontend/src/views/admin/DataOverview.vue
+AGENTS.md[SG9L]: F:定义龟派项目 AI Agent 开发规范与方法论（目标前置/自审/质量护栏/Loop Engineering） | R:- | A:- | S:每次编码任务后必须运行 frontend 下 npm run build 作为验收信号；sql.js/DolphinDB 表字段变更必须同步 electron/server/routes/data-mgmt.js 的 FIELD_DEFS/SQLITE_COVERAGE 与 frontend/src/views/admin/DataOverview.vue；所有会话汇报（session 汇报、进度汇报等）必须使用中文撰写
 CHANGELOG.md[SG6T]: F:项目根 SemVer 版本迭代记录表，一行一条版本摘要 | R:- | A:- | S:-
 electron-builder.yml[FV7T]: F:Electron 打包配置（NSIS/DMG、extraResources 携带 dolphindb-server 与 aktools-server） | R:code:electron/main.js | A:- | S:asar=false 因 dolphindb ESM 经动态 import 从 asar 加载不可靠；npmRebuild=false 因无原生模块需重编译
 package-lock.json[FG3L]: F:根依赖锁文件（Electron/electron-builder/dolphindb/sql.js/express 等） | R:- | A:- | S:手工修改无效，必须经 npm install 生成
