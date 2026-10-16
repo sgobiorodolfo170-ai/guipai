@@ -104,7 +104,7 @@ router.get('/stock/limit', dbFirst({
   fetchFromSource: (req) => aktools.getStockLimitPool(req.query.date),
   writeToDb: async (raw, req) => {
     const rows = converter.convertStockLimitPool(raw, req.query.date, 'LIMIT_UP')
-    const COLS = require('../sync')._COLS_MAP['stock_limit_pool']
+    const COLS = require('../col-defs')._COLS_MAP['stock_limit_pool']
     await ddb.insertRows('stock_limit_pool', COLS, rows)
     cache.delByPattern(`stats:*${req.query.date}*`)
   },
@@ -128,7 +128,7 @@ router.get('/stock/drop', dbFirst({
   fetchFromSource: (req) => aktools.getStockDropPool(req.query.date),
   writeToDb: async (raw, req) => {
     const rows = converter.convertStockLimitPool(raw, req.query.date, 'LIMIT_DOWN')
-    const COLS = require('../sync')._COLS_MAP['stock_limit_pool']
+    const COLS = require('../col-defs')._COLS_MAP['stock_limit_pool']
     await ddb.insertRows('stock_limit_pool', COLS, rows)
     cache.delByPattern(`stats:*${req.query.date}*`)
   },
@@ -153,7 +153,7 @@ router.get('/stock/industry', dbFirst({
   writeToDb: async (raw, req) => {
     const today = new Date().toISOString().slice(0, 10)
     const rows = converter.convertPlateMarket(raw, today)
-    const COLS = require('../sync')._COLS_MAP['plate_market_quotation']
+    const COLS = require('../col-defs')._COLS_MAP['plate_market_quotation']
     await ddb.insertRows('plate_market_quotation', COLS, rows)
     cache.delByPattern('stats:*')
   },

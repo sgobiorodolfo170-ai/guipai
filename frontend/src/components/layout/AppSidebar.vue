@@ -93,10 +93,6 @@ const menuItems = [
       {
         index: '/admin/close-data-sync',
         title: '收盘数据同步'
-      },
-      {
-        index: '/admin/stock-data-pull',
-        title: '股票数据拉取'
       }
     ]
   },

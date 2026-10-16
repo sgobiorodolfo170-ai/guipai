@@ -154,13 +154,6 @@ async function initDb(dataDir) {
       create_time TEXT DEFAULT (datetime('now','localtime'))
     );
     CREATE INDEX IF NOT EXISTS idx_pmq_date ON plate_market_quotation(trade_date);
-    CREATE TABLE IF NOT EXISTS data_sync_status (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      data_type TEXT NOT NULL, trade_date TEXT NOT NULL,
-      status INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0,
-      fail_count INTEGER DEFAULT 0, message TEXT, sync_time TEXT,
-      UNIQUE(data_type, trade_date)
-    );
     CREATE TABLE IF NOT EXISTS sim_single_training (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       user_id INTEGER, stock_name TEXT NOT NULL, stock_code TEXT NOT NULL,

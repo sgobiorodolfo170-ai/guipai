@@ -26,6 +26,9 @@ const errMsg = (res, msg) => res.json({ code: 500, msg })
 /** 已迁移至 DolphinDB 的表——不在 sql.js 表单中展示 */
 const SQLITE_MIGRATED_TABLES = new Set(['stock_limit_pool', 'stock_zh_index_daily', 'plate_market_quotation'])
 
+/** 已废弃的表——不再写入但旧库可能残留，从总览隐藏避免裸名展示 */
+const SQLITE_DISCONTINUED_TABLES = new Set(['data_sync_status'])
+
 /** sql.js 各表的中文说明（表名 → 用途），仅含未迁移的表 */
 const SQLITE_TABLE_LABELS = {
   user: '用户',
@@ -37,7 +40,6 @@ const SQLITE_TABLE_LABELS = {
   template: '复盘模板',
   template_category: '模板分类',
   sim_single_training: '模拟训练记录',
-  data_sync_status: '收盘同步状态',
   stock_basic: '股票基础信息(元数据)',
   stock_financial: '定期财报(三大表+指标)',
   stock_indicator: '估值指标快照',
@@ -150,7 +152,7 @@ router.get('/overview', async (req, res) => {
       `SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`
     ).all()
     const sqliteTables = tables
-      .filter(({ name }) => !SQLITE_MIGRATED_TABLES.has(name))
+      .filter(({ name }) => !SQLITE_MIGRATED_TABLES.has(name) && !SQLITE_DISCONTINUED_TABLES.has(name))
       .map(({ name }) => {
         let rows = 0
         try { rows = db.prepare(`SELECT COUNT(*) AS c FROM "${name}"`).get()?.c || 0 } catch (_) { /* 单表失败不阻断整体 */ }
