@@ -186,6 +186,12 @@ function buildStyles() {
       }
     },
     indicator: {
+      // VOL 量柱配色须与蜡烛一致（A股红涨绿跌）：klinecharts 指标柱默认绿涨红跌（西式
+      // alphaGreen/alphaRed），不显式覆盖会出现"红K配绿柱"的反色。样式做深合并，
+      // 只给色值即可继承默认的 fill/border 形态。
+      bars: [
+        { upColor: up, downColor: down, noChangeColor: '#888' }
+      ],
       lines: [
         { color: '#ff9900' },
         { color: '#0066ff' },
