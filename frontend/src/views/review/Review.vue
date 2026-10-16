@@ -218,10 +218,8 @@
                   :show-period-switcher="false"
                   :show-adjust-switcher="false"
                   :show-drawing-tools="false"
-                  :show-indicator-bar="false"
                   :show-volume="true"
                   :ma-periods="[]"
-                  :default-sub-indicator="'NONE'"
                   height="250px"
               />
               <div class="stock-info">

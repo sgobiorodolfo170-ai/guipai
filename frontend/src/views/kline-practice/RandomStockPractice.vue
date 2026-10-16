@@ -26,7 +26,6 @@
                 :show-period-switcher="false"
                 :show-adjust-switcher="false"
                 :show-drawing-tools="true"
-                :show-indicator-bar="false"
                 :show-volume="true"
                 height="710px"
             />

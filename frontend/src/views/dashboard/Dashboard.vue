@@ -201,7 +201,6 @@ const activeIndex = ref('000001')
             :show-period-switcher="true"
             :show-adjust-switcher="false"
             :show-drawing-tools="false"
-            :show-indicator-bar="true"
             :show-volume="true"
             height="400px"
           />

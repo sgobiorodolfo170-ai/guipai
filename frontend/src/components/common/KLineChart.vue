@@ -22,17 +22,6 @@
         >{{ a.label }}</button>
       </div>
 
-      <!-- 副图指标切换 -->
-      <div class="toolbar-group" v-if="showIndicatorBar">
-        <span class="toolbar-label">副图:</span>
-        <button
-          v-for="ind in subIndicatorOptions"
-          :key="ind.value"
-          :class="{ active: currentSubIndicator === ind.value }"
-          @click="switchSubIndicator(ind.value)"
-        >{{ ind.label }}</button>
-      </div>
-
       <!-- 画线工具 -->
       <div class="toolbar-group" v-if="showDrawingTools">
         <span class="toolbar-label">画线:</span>
@@ -56,9 +45,11 @@
 /**
  * KLineChart —— 基于 KLineCharts v10 的通用 K 线组件
  *
- * 设计理由：KLineCharts 专为金融 K 线设计，内置指标（MA/MACD/KDJ/RSI/BIAS/BOLL 等）
+ * 设计理由：KLineCharts 专为金融 K 线设计，内置 VOL 成交量副图
  * 与画线工具（趋势线/水平线/斐波那契等），开箱即用。相比手写 ECharts 蜡烛图，
- * 指标计算零出错、画线工具免开发、十字光标价格轴标签自带。
+ * 成交量计算零出错、画线工具免开发、十字光标价格轴标签自带。
+ *
+ * 副图策略：本项目仅保留成交量 VOL（showVolume 控制），不提供 MACD/KDJ/RSI/BIAS/BOLL 等副图切换。
  *
  * 数据流：init → setSymbol → setPeriod → setDataLoader（getBars 拉取后端数据）
  * 当 customDataLoader 提供时（实战训练渐进揭示），覆盖默认 getBars。
@@ -85,12 +76,8 @@ const props = defineProps({
   showAdjustSwitcher: { type: Boolean, default: false },
   /** 显示画线工具栏 */
   showDrawingTools: { type: Boolean, default: false },
-  /** 显示指标栏（主图MA + 副图MACD/KDJ切换） */
-  showIndicatorBar: { type: Boolean, default: false },
   /** 主图均线周期列表（空数组=不显示MA） */
   maPeriods: { type: Array, default: () => [] },
-  /** 默认副图指标（'NONE'=不创建副图指标） */
-  defaultSubIndicator: { type: String, default: 'NONE' },
   /** 自定义 dataLoader（覆盖默认 API 调用，给实战训练渐进揭示用） */
   customDataLoader: { type: Object, default: null },
   /** 主题 'light'|'dark' */
@@ -106,7 +93,6 @@ const chartRef = ref(null)
 let chart = null
 const currentPeriod = ref(props.period)
 const currentAdjust = ref(props.adjust)
-const currentSubIndicator = ref(props.defaultSubIndicator)
 const activeOverlay = ref(null)
 
 // 当前股票代码快照（用于 setDataLoader 闭包，避免异步竞态）
@@ -124,15 +110,6 @@ const adjustOptions = [
   { value: 'hfq', label: '后复权' }
 ]
 
-const subIndicatorOptions = [
-  { value: 'MACD', label: 'MACD' },
-  { value: 'KDJ', label: 'KDJ' },
-  { value: 'RSI', label: 'RSI' },
-  { value: 'BIAS', label: 'BIAS' },
-  { value: 'BOLL', label: 'BOLL' },
-  { value: 'NONE', label: '无' }
-]
-
 // 画线工具：KLineCharts 内置 overlay 类型名
 const drawingTools = [
   { name: 'horizontalStraightLine', label: '水平线' },
@@ -146,8 +123,7 @@ const drawingTools = [
 ]
 
 const hasToolbar = computed(() =>
-  props.showPeriodSwitcher || props.showAdjustSwitcher ||
-  props.showIndicatorBar || props.showDrawingTools
+  props.showPeriodSwitcher || props.showAdjustSwitcher || props.showDrawingTools
 )
 
 // ---- 主题样式 ----
@@ -282,7 +258,6 @@ function buildDataLoader() {
 // ---- 指标管理 ----
 // paneId 由本组件控制（v10 不再接受 createIndicator 的第 3 个参数，必须写进 value 对象）
 const VOL_PANE = 'pane_vol'
-const SUB_PANE = 'pane_sub'
 
 function setupIndicators() {
   if (!chart) return
@@ -296,26 +271,9 @@ function setupIndicators() {
     }, true)
   }
 
-  // 成交量副图（独立 pane）
+  // 成交量副图（独立 pane）——本项目仅保留 VOL，不提供 MACD/KDJ 等副图
   if (props.showVolume) {
     chart.createIndicator({ name: 'VOL', paneId: VOL_PANE })
-  }
-
-  // 技术指标副图（独立 pane）
-  if (props.defaultSubIndicator && props.defaultSubIndicator !== 'NONE') {
-    chart.createIndicator({ name: props.defaultSubIndicator, paneId: SUB_PANE })
-  }
-}
-
-function switchSubIndicator(name) {
-  currentSubIndicator.value = name
-  if (!chart) return
-  // 按 paneId 精确移除旧副图指标。
-  // 注意不能传 paneId 字符串本身：v10 的 getIndicatorsByFilter 只读 filter.paneId/name/id，
-  // 传字符串会让三者全为 undefined，match 函数恒真 → 误删 MA/VOL 等所有指标。
-  chart.removeIndicator({ paneId: SUB_PANE })
-  if (name !== 'NONE') {
-    chart.createIndicator({ name, paneId: SUB_PANE })
   }
 }
 
@@ -430,9 +388,7 @@ defineExpose({
       chart = null
     }
     initChart()
-  },
-  /** 切换副图指标 */
-  setSubIndicator: (name) => switchSubIndicator(name)
+  }
 })
 </script>
 

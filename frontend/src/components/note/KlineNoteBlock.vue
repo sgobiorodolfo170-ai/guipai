@@ -125,7 +125,7 @@ const onUpload = (file) => {
     <div v-else-if="showChart" class="knb-chart">
       <KLineChart v-if="!loadFailed" :key="chartKey" :stock-code="block.code" :period="block.period"
         :height="380" :show-period-switcher="false" :show-adjust-switcher="false"
-        :show-indicator-bar="false" :show-drawing-tools="false"
+        :show-drawing-tools="false"
         :custom-data-loader="customDataLoader" />
       <!-- 拉取失败占位 + 手动上传 -->
       <div v-else class="knb-fail">
