@@ -291,6 +291,17 @@ process.on('uncaughtException', (err) => {
   dialog.showErrorBox('龟派 运行错误', err.message)
 })
 
+// 渲染进程错误日志：前端 main.js 的全局 errorHandler / window 监听经 preload 的
+// tradeinsight.logError 转发至此，写入 userData/logs/renderer-error.log，供定位「间歇性黑屏」根因。
+ipcMain.on('log:error', (_e, payload) => {
+  try {
+    const logDir = path.join(app.getPath('userData'), 'logs')
+    fs.mkdirSync(logDir, { recursive: true })
+    const line = `[${payload.time || new Date().toISOString()}] [${payload.type || 'unknown'}] ${payload.message || ''}${payload.stack ? '\n' + payload.stack : ''}${payload.extra ? '\n' + JSON.stringify(payload.extra) : ''}\nhref=${payload.href || ''}\n\n`
+    fs.appendFileSync(path.join(logDir, 'renderer-error.log'), line)
+  } catch (_) { /* 日志写入失败不影响运行 */ }
+})
+
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 const FRONTEND_PROD_FILE = path.join(__dirname, '..', 'frontend', 'dist', 'index.html')
 const SERVER_PORT = Number(process.env.BACKEND_PORT) || 8080

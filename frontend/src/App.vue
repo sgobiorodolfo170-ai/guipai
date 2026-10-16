@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import AppFooter from '@/components/layout/AppFooter.vue'
+import ErrorBoundary from '@/components/common/ErrorBoundary.vue'
 
 const route = useRoute()
 
@@ -17,14 +18,14 @@ const showLayout = computed(() => !route.meta.hideLayout)
       <div class="app-body">
         <AppSidebar />
         <main class="app-main">
-          <router-view />
+          <ErrorBoundary><router-view /></ErrorBoundary>
         </main>
       </div>
       <AppFooter />
     </div>
 
     <div v-else class="no-layout">
-      <router-view />
+      <ErrorBoundary><router-view /></ErrorBoundary>
     </div>
   </div>
 </template>
