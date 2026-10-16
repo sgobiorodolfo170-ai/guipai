@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-15T12:17:57Z",
-  "updated_at": "2026-10-15T14:12:52Z",
+  "updated_at": "2026-10-16T12:21:10Z",
   "files": {
     ".gitattributes": {
       "sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476",
@@ -9,9 +9,9 @@
       "normalized_sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476"
     },
     ".gitignore": {
-      "sha256": "d91bf5fcd3a87de7dd3ce3f13404484ea3df5a21b734313e88b546903a54bf2f",
-      "size": 431,
-      "normalized_sha256": "5f3246d4db5f5a73134fcdc76aac98041434c69b31b42762dfc8b241f5886654"
+      "sha256": "0a3b1a82d02470d4929a2d0f1ade2feef0754b11794fab2bee6a2e55a43f7e22",
+      "size": 501,
+      "normalized_sha256": "323e3d7090f26dc44e638ac40ad0050acc8cc10dde8cc274160eefb232346090"
     },
     "AGENTS.md": {
       "sha256": "33a87a9fab992078636a742d2be7edd893e66e145f91bb8743678b0c4bb3e96b",
@@ -19,14 +19,14 @@
       "normalized_sha256": "33a87a9fab992078636a742d2be7edd893e66e145f91bb8743678b0c4bb3e96b"
     },
     "CHANGELOG.md": {
-      "sha256": "085340dc32b57557ce234eca522949493e7d8f7409bea3a94b7b2f6f084002ec",
-      "size": 10213,
-      "normalized_sha256": "085340dc32b57557ce234eca522949493e7d8f7409bea3a94b7b2f6f084002ec"
+      "sha256": "cd8b60b3ff63558910d47ba8740e3aa4986ea9cfa838adce1782f8da23a807cb",
+      "size": 12064,
+      "normalized_sha256": "cd8b60b3ff63558910d47ba8740e3aa4986ea9cfa838adce1782f8da23a807cb"
     },
     "aoci.code.txt": {
-      "sha256": "53e18083de452eaec4c97135b98858f4ed9d3c70b59b89b5fd908d73ba21ec6e",
-      "size": 42925,
-      "normalized_sha256": "53e18083de452eaec4c97135b98858f4ed9d3c70b59b89b5fd908d73ba21ec6e"
+      "sha256": "b02301378cee6e883edad9914c13f8f2335e51103c5dad2ce5f933bbb7cbda3f",
+      "size": 43943,
+      "normalized_sha256": "b02301378cee6e883edad9914c13f8f2335e51103c5dad2ce5f933bbb7cbda3f"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -81,9 +81,9 @@
       "normalized_sha256": "e7a4e18712589f5043b0b39e154fa00fdbd84b2fd45e6f2ded243e0f13b09879"
     },
     "electron/dolphindb/kline-repository.js": {
-      "sha256": "aa29d4939e5be0cd95fcaef6ccb556e5e416b8e3dc6c4ec907b2d6992f777466",
-      "size": 8152,
-      "normalized_sha256": "aa29d4939e5be0cd95fcaef6ccb556e5e416b8e3dc6c4ec907b2d6992f777466"
+      "sha256": "32adb061bca55ca524ccf97005a6b29a57047b9808f765358d5462eee0e94e87",
+      "size": 8353,
+      "normalized_sha256": "32adb061bca55ca524ccf97005a6b29a57047b9808f765358d5462eee0e94e87"
     },
     "electron/dolphindb/minute-repository.js": {
       "sha256": "024be529c2433051f74aef7b7462f83785afdd4d28e29719364219f2520af69e",
@@ -201,14 +201,14 @@
       "normalized_sha256": "aeb7fd74c39f6b69c03510d5a9773ecc1bb0abd91d21848db9e606e30db95ccb"
     },
     "electron/server/routes/statistics.js": {
-      "sha256": "0c934286a02eb0a8eddbebb9ac4a93fa955258c03c3307bc74e690136e5fa8a4",
-      "size": 36024,
-      "normalized_sha256": "0c934286a02eb0a8eddbebb9ac4a93fa955258c03c3307bc74e690136e5fa8a4"
+      "sha256": "d03208f0e6bc94551bf9a2ab8c119237f75a131c50744f9d70ce3d4c0bc841f5",
+      "size": 36309,
+      "normalized_sha256": "d03208f0e6bc94551bf9a2ab8c119237f75a131c50744f9d70ce3d4c0bc841f5"
     },
     "electron/server/routes/stock.js": {
-      "sha256": "84af8386efbf2a2a339ad24dce5b14195ac44af8b7c54980f6eb1242d1eb59e3",
-      "size": 26575,
-      "normalized_sha256": "84af8386efbf2a2a339ad24dce5b14195ac44af8b7c54980f6eb1242d1eb59e3"
+      "sha256": "54ba94ef7b028e95843ef5266a8daee6a84890693b861e51442da72e90580ae3",
+      "size": 29200,
+      "normalized_sha256": "54ba94ef7b028e95843ef5266a8daee6a84890693b861e51442da72e90580ae3"
     },
     "electron/server/routes/template.js": {
       "sha256": "a43133790120fee84f71af5f2f4a20ff3049fcecd01429300ef2e76a9bf25713",
@@ -416,9 +416,9 @@
       "normalized_sha256": "33f9714fca7f77376afdd5431ab72b7f89cd569edc5c263cc927d4aa18c865ea"
     },
     "frontend/src/components/common/KLineChart.vue": {
-      "sha256": "96a89e4fb6061e3a8c964da2f336f578d596e9e6cc15be8788f0c7c252b5ea23",
-      "size": 15036,
-      "normalized_sha256": "96a89e4fb6061e3a8c964da2f336f578d596e9e6cc15be8788f0c7c252b5ea23"
+      "sha256": "3b6afb7afa9be2b19f410db385c7de9dfc0a96100ba50fe4d6802e2e27137483",
+      "size": 13971,
+      "normalized_sha256": "3b6afb7afa9be2b19f410db385c7de9dfc0a96100ba50fe4d6802e2e27137483"
     },
     "frontend/src/components/common/SliderFilter.vue": {
       "sha256": "6591a7801c4918d487e6ef8784038855395c804fee2013a2d9ef600a93a5f6ac",
@@ -471,9 +471,9 @@
       "normalized_sha256": "5f74ffef963ec76ea83aca63fb0594e33733f208f8e37bee17e0140d17e2ca59"
     },
     "frontend/src/components/note/KlineNoteBlock.vue": {
-      "sha256": "7c01d40506480a15ca42e98277542b23ed2b16a76c958b0796a2ffa82b19cf82",
-      "size": 8110,
-      "normalized_sha256": "7c01d40506480a15ca42e98277542b23ed2b16a76c958b0796a2ffa82b19cf82"
+      "sha256": "a84ef72341ae0836617d1a32ba3a7818cccd6f138d3a3b7c2290d95b085390eb",
+      "size": 8082,
+      "normalized_sha256": "a84ef72341ae0836617d1a32ba3a7818cccd6f138d3a3b7c2290d95b085390eb"
     },
     "frontend/src/components/note/NoteAlertPanel.vue": {
       "sha256": "7836585ae4e77e1c4b2f15ee4ca40583700da6f41c075feab6fb63a7369fed6e",
@@ -491,9 +491,9 @@
       "normalized_sha256": "aff7b4983ad57996a690336db498531599538dea6bebb444111f393058bdbf9f"
     },
     "frontend/src/components/note/StockNoteEditor.vue": {
-      "sha256": "a3454651ff96006c718253fe77222b7370f898dcd3caeaa0ccf9570b7d4f1c6c",
-      "size": 8395,
-      "normalized_sha256": "a3454651ff96006c718253fe77222b7370f898dcd3caeaa0ccf9570b7d4f1c6c"
+      "sha256": "94ac321bdd0325fd8b0619e009f5a7e767d66c00e34024f007aa8745818b868f",
+      "size": 8699,
+      "normalized_sha256": "94ac321bdd0325fd8b0619e009f5a7e767d66c00e34024f007aa8745818b868f"
     },
     "frontend/src/components/note/StockNoteSummary.vue": {
       "sha256": "3678347235301d0b888bc18496123199b8c01af1989b9f9ad7fc81fe5d25da34",
@@ -546,9 +546,9 @@
       "normalized_sha256": "37ea13a9ed67b6711ff6acb2d5fe7dc7ceb2c1fba771851c9663e4238a43d11a"
     },
     "frontend/src/services/aktools.service.js": {
-      "sha256": "21998027d1e080f3219768fb837ea2a43a6a838d1294e21f4a0c2df44ff2e04c",
-      "size": 1494,
-      "normalized_sha256": "21998027d1e080f3219768fb837ea2a43a6a838d1294e21f4a0c2df44ff2e04c"
+      "sha256": "98bec1eb995e6af8f777948b77d073730baa376eebcf6b28f25eb0c50d6a01bb",
+      "size": 1657,
+      "normalized_sha256": "98bec1eb995e6af8f777948b77d073730baa376eebcf6b28f25eb0c50d6a01bb"
     },
     "frontend/src/services/kline.service.js": {
       "sha256": "b55c1276c1bbc40449d0208ee5c2b74bdc598e848466f6b1cee41b93a8efbb24",
@@ -651,9 +651,9 @@
       "normalized_sha256": "3b111bd516dc7c96d20574a29449d92296c38d6e45203f2a31a88cfc12c356af"
     },
     "frontend/src/views/dashboard/Dashboard.vue": {
-      "sha256": "92f2c6d55802ed151a2ef22e1102590686dca3e090b59a680be8c2a079f8cce5",
-      "size": 10825,
-      "normalized_sha256": "c6454854e94822c80c7198c8753c784d95dbc8391fa36369c91a7454607b4937"
+      "sha256": "fa7232512b4e028dd1c5af4d92ab1301cb409d74a82b8bc011fc3015eba9c64a",
+      "size": 10785,
+      "normalized_sha256": "8df74d0d61bcb003a988063da699354f9eecf3da5445ccca2c3b21a8df859628"
     },
     "frontend/src/views/error/NotFound.vue": {
       "sha256": "6bccd7d391869a4ad98c40946223a6c0a14fc29627fcd27669fec2a60251d933",
@@ -661,9 +661,9 @@
       "normalized_sha256": "6bccd7d391869a4ad98c40946223a6c0a14fc29627fcd27669fec2a60251d933"
     },
     "frontend/src/views/kline-practice/RandomStockPractice.vue": {
-      "sha256": "acb19c78f6828d59629121b336bf2b925331506fdb3ebb9dc8608ee93e607f39",
-      "size": 41742,
-      "normalized_sha256": "f9078ead9ec39dfbe34bcc9da17ba0b2d498956d78e316c572e3bcc8579683ad"
+      "sha256": "31d7bf920824e9e342e849c540058c08348c8cd62fe63550f0bc3f68852526d5",
+      "size": 41697,
+      "normalized_sha256": "b38aa093e4d7fd3d17ac7b592ada45bf61e958c767f0ccbfba4acf668cc7cde9"
     },
     "frontend/src/views/note/NoteDetail.vue": {
       "sha256": "f9953143d97f6d21be390be2f51ac81b80b471e3b7a903b261189b73ffab5c63",
@@ -676,9 +676,9 @@
       "normalized_sha256": "d9043899dd9f9bf64c15857a18bac4aa7144909e1a41dc721b950d6806479bec"
     },
     "frontend/src/views/review/Review.vue": {
-      "sha256": "35dca8f708c4e2dcc19b80232e383a6008c0cc3adc3ee531da7379ba4d4cdb32",
-      "size": 35616,
-      "normalized_sha256": "34098554313693f35930057b7976ed9e7fb19b628ec0b47e0ad84b47441f1e13"
+      "sha256": "81f703b8c4a1f420fbd2b557524a41bed59511338a7bb359471791399acd1d08",
+      "size": 35518,
+      "normalized_sha256": "f87afb94c32ece700d20c6aa03e54874f47561525d7e539d2b092840e8427768"
     },
     "frontend/src/views/review/ReviewBF.vue": {
       "sha256": "16327eb2ae374abb897c6bff9c44e434c6b26bbdf1895f5cccf92f13496a7abd",
@@ -696,9 +696,9 @@
       "normalized_sha256": "b925abeae79c600b227b535ddedce92f11904f9fe73b329162c871b7ede7e87b"
     },
     "frontend/src/views/stock/StockDetail.vue": {
-      "sha256": "2b60e3817bcd4faafa113ca6275e429744ee5e4c3294201facdf4d175e386b25",
-      "size": 6324,
-      "normalized_sha256": "e6eccbadd3fabfecd04e4c6aa63ab5ac39268f560657df2d08953bef72c3156c"
+      "sha256": "50b658cd653ef5c9ee7d66ae07fd51dcccf9e2914106677183489fc6834ebdd6",
+      "size": 6286,
+      "normalized_sha256": "209775fc6e0bd1f0368499564375f502166b39d6cf032086303c03a82b401c33"
     },
     "frontend/src/views/stock/StockList.vue": {
       "sha256": "130d0715647cdb849a30048f0b50c25fcafcff2773b8d752af177cb44f9d62e0",
@@ -721,9 +721,9 @@
       "normalized_sha256": "0284c3a5ac495f3703eba335879bffa04e79c6b732ceb9ae7ceb0111b4c873e1"
     },
     "frontend/src/views/watchlist/Watchlist.vue": {
-      "sha256": "79bed6df9b1bdcb6074c4f3fea43ada06137e2c87dfe880bc0d7a9fbb3237182",
-      "size": 16448,
-      "normalized_sha256": "79bed6df9b1bdcb6074c4f3fea43ada06137e2c87dfe880bc0d7a9fbb3237182"
+      "sha256": "5327a7bc0b4dc30d1aecf8c7b6bcc206fdc9dbb934d7c48c930268edff9a1fec",
+      "size": 16409,
+      "normalized_sha256": "5327a7bc0b4dc30d1aecf8c7b6bcc206fdc9dbb934d7c48c930268edff9a1fec"
     },
     "frontend/vite.config.js": {
       "sha256": "6368523c75eaa0032e07de501b089f1c0200b172d22e9113853ccda0decb58e7",
