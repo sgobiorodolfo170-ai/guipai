@@ -101,13 +101,19 @@ const getChangeClass = (change) => {
 }
 
 const formatChange = (change) => {
-  const sign = change > 0 ? '+' : ''
-  return `${sign}${change.toFixed(2)}`
+  // 后端可能返回字符串型数字或缓存形状不匹配时为 undefined，直接 .toFixed 会抛 TypeError
+  // 让整页渲染崩溃（叠加 Electron 深色窗口背景 = 黑屏）。Number 强制转换 + isFinite 兜底。
+  const n = Number(change)
+  if (!isFinite(n)) return '--'
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(2)}`
 }
 
 const formatPercent = (percent) => {
-  const sign = percent > 0 ? '+' : ''
-  return `${sign}${percent.toFixed(2)}%`
+  const n = Number(percent)
+  if (!isFinite(n)) return '--'
+  const sign = n > 0 ? '+' : ''
+  return `${sign}${n.toFixed(2)}%`
 }
 
 // 指数K线
