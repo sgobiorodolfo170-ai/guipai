@@ -1,24 +1,17 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useStockStore } from '@/store/stock.store'
-import { useWatchlistStore } from '@/store/watchlist.store'
-import { useNoteStore } from '@/store/note.store'
 import KLineChart from '@/components/common/KLineChart.vue'
 
 const stockStore = useStockStore()
-const watchlistStore = useWatchlistStore()
-const noteStore = useNoteStore()
 
 const loading = ref(false)
+// date 为快照交易日（后端 /market/overview 提供）：展示在标题后，明确数值是哪天的
 const marketData = ref({
   shanghai: { index: '--', change: 0, changePercent: 0 },
   shenzhen: { index: '--', change: 0, changePercent: 0 },
-  chinext: { index: '--', change: 0, changePercent: 0 }
-})
-
-const stats = ref({
-  watchlistCount: 0,
-  notesCount: 0
+  chinext: { index: '--', change: 0, changePercent: 0 },
+  date: ''
 })
 
 onMounted(async () => {
@@ -26,10 +19,7 @@ onMounted(async () => {
   loadCachedMarketData()
   loading.value = true
   try {
-    await Promise.all([
-      fetchMarketOverview(),
-      fetchStats()
-    ])
+    await fetchMarketOverview()
   } catch (error) {
     console.error('加载仪表盘数据失败:', error)
   } finally {
@@ -69,28 +59,14 @@ const fetchMarketOverview = async () => {
       marketData.value = {
         shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0 },
         shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0 },
-        chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 }
+        chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 },
+        // 快照日期：旧缓存/旧后端可能没有该字段，取不到时保留原值（空则模板隐藏）
+        date: sh?.date || sz?.date || cy?.date || marketData.value.date || ''
       }
       saveMarketDataToCache()
     }
   } catch (error) {
     console.error('获取市场概况失败:', error)
-  }
-}
-
-const fetchStats = async () => {
-  try {
-    const [watchlist, notes] = await Promise.all([
-      watchlistStore.fetchWatchlist(),
-      noteStore.fetchNoteList({ pageSize: 1 })
-    ])
-    
-    stats.value = {
-      watchlistCount: watchlist?.data?.length || 0,
-      notesCount: notes?.data?.total || 0
-    }
-  } catch (error) {
-    console.error('获取统计数据失败:', error)
   }
 }
 
@@ -138,7 +114,11 @@ const activeIndex = ref('000001')
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>市场概况</span>
+              <div class="market-title">
+                <span>市场概况</span>
+                <!-- 快照日期：与指数数值同属一个交易日的口径，避免"数据是哪天的"歧义 -->
+                <span v-if="marketData.date" class="market-date">{{ marketData.date }}</span>
+              </div>
               <el-tag type="success" v-if="stockStore.isMarketOpen">交易中</el-tag>
               <el-tag type="info" v-else>休市</el-tag>
             </div>
@@ -206,71 +186,6 @@ const activeIndex = ref('000001')
           />
         </el-card>
       </el-col>
-      
-      <!-- 统计卡片 -->
-      <el-col :span="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon">
-              <el-icon size="32" color="#409eff">
-                <Star />
-              </el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ stats.watchlistCount }}</div>
-              <div class="stat-label">自选股</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      
-      <el-col :span="6">
-        <el-card class="stat-card">
-          <div class="stat-content">
-            <div class="stat-icon">
-              <el-icon size="32" color="#67c23a">
-                <Document />
-              </el-icon>
-            </div>
-            <div class="stat-info">
-              <div class="stat-value">{{ stats.notesCount }}</div>
-              <div class="stat-label">复盘笔记</div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-      
-      <!-- 快捷操作 -->
-      <el-col :span="24" class="mt-20">
-        <el-card>
-          <template #header>
-            <span>快捷操作</span>
-          </template>
-          
-          <div class="quick-actions">
-            <el-button type="primary" @click="$router.push('/notes/create')">
-              <el-icon><EditPen /></el-icon>
-              写复盘笔记
-            </el-button>
-            <el-button @click="$router.push('/stocks')">
-              <el-icon><Search /></el-icon>
-              搜索股票
-            </el-button>
-            <el-button @click="$router.push('/watchlist')">
-              <el-icon><Star /></el-icon>
-              管理自选股
-            </el-button>
-            <el-button @click="$router.push('/templates')">
-              <el-icon><Files /></el-icon>
-              分析模板
-            </el-button>
-            <el-button type="success" @click="$router.push('/kline-practice/random-stock')">
-              <el-icon><TrendCharts /></el-icon>
-              K线实战
-            </el-button>
-          </div>
-        </el-card>
-      </el-col>
     </el-row>
   </div>
 </template>
@@ -284,14 +199,22 @@ const activeIndex = ref('000001')
   margin-bottom: 20px;
 }
 
-.mt-20 {
-  margin-top: 20px;
-}
-
 .card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.market-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.market-date {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
 }
 
 .market-item {
@@ -317,54 +240,9 @@ const activeIndex = ref('000001')
   font-weight: 500;
 }
 
-.stat-card {
-  height: 120px;
-}
-
-.stat-content {
-  display: flex;
-  align-items: center;
-  height: 100%;
-}
-
-.stat-icon {
-  margin-right: 16px;
-}
-
-.stat-info {
-  flex: 1;
-}
-
-.stat-value {
-  font-size: 28px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.stat-label {
-  font-size: 14px;
-  color: var(--el-text-color-secondary);
-}
-
-.quick-actions {
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
 @media (max-width: 768px) {
   .dashboard {
     padding: 10px;
-  }
-  
-  .quick-actions {
-    flex-direction: column;
-  }
-  
-  .quick-actions .el-button {
-    width: 100%;
   }
 }
 </style>
