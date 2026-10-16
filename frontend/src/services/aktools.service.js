@@ -23,7 +23,9 @@ export {
   getStockLimitYesterday
 }
 
-// 以下函数在前端无直接引用（grep 确认），保留原路径但标注废弃
+// 以下函数在前端无直接引用（grep 确认）。getStockHistory/getStockInfo 已重定向到业务路由；
+// getStockMinute/getStockHolding 暂无业务路由对应，仍走废弃的 aktools 路由（后端已 DB-first）。
+// TODO: 在 stock.js 新建 GET /:code/minute 和 GET /:code/holding 业务端点后，改为重定向。
 import api from '@/utils/api'
 
 export const getStockHistory = (params) => {
