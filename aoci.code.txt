@@ -180,7 +180,7 @@ CloseDataSync.vue[DU8L]: F:收盘数据同步页：全市场同步配置/1.5s �
 DataOverview.vue[DU7M]: F:数据总览页：sql.js/DolphinDB 双库表行数与大小、字段展开、DDB 一键重连、源健康度 | R:code:electron/server/routes/data-mgmt.js | A:- | S:AGENTS.md 规定字段变更必须同步此页字段渲染；10s 自动刷新已关闭改为手动刷新
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/dashboard/===
-Dashboard.vue[DU8M]: F:仪表盘：市场概况指数卡（快照日期+交易中/休市标签）/指数K线 Tab（上证/深证/创业板）；已移除自选股·复盘笔记统计卡与快捷操作卡 | R:code:frontend/src/store/stock.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:立即读 localStorage 缓存直出避免空白，再后台刷新；勿再引入 watchlist/note store（统计卡已删）
+Dashboard.vue[DU8M]: F:仪表盘：市场概况指数卡（快照日期+交易中/休市标签）/指数K线 Tab（上证/深证/创业板，高度可拖拽调节）；已移除自选股·复盘笔记统计卡与快捷操作卡 | R:code:frontend/src/store/stock.store.js,code:frontend/src/components/common/KLineChart.vue | A:- | S:立即读 localStorage 缓存直出避免空白再后台刷新；K线高度拖拽持久化 key dashboard_kline_height（240~1400，双击复位）；勿再引入 watchlist/note store（统计卡已删）
 
 ===G:/pj/pj--ing/111111/guipai/frontend/src/views/error/===
 NotFound.vue[DU3T]: F:404 页面：返回首页/返回上页 | R:- | A:- | S:-
