@@ -131,7 +131,6 @@ const isInWatchlist = computed(() => {
           :show-period-switcher="true"
           :show-adjust-switcher="true"
           :show-drawing-tools="true"
-          :show-indicator-bar="true"
           :show-volume="true"
           height="600px"
         />

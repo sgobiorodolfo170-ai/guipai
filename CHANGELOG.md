@@ -2,6 +2,7 @@
 
 | 版本号 | 日期 | 摘要 |
 | --- | --- | --- |
+| v1.13.3 | 2026-10-16 | 移除全站 K 线副图指标切换：KLineChart.vue 删除整套副图机制（工具栏「副图」按钮组、showIndicatorBar/defaultSubIndicator props、subIndicatorOptions/currentSubIndicator、SUB_PANE、setupIndicators 副图分支、switchSubIndicator、defineExpose.setSubIndicator），各视图仅保留成交量 VOL 副图（showVolume）；6 个调用点清理对应传参。主图 MA（maPeriods）保留 |
 | v1.13.2 | 2026-10-16 | 修复全站 K 线图看不到蜡烛：KLineChart.buildStyles 的 candle.type 误用非法值 'candle_down'（KLineCharts v10 合法枚举仅 candle_solid/candle_stroke/candle_up_stroke/candle_down_stroke/ohlc/area），库内蜡烛层 switch 无 default 分支致实体与影线全部静默不绘制；改为 'candle_up_stroke'（阳线空心/阴线实心）并补齐 upBorderColor/downBorderColor/noChangeBorderColor 与三档影线颜色，消除库默认西式绿涨红跌残留 |
 | v1.13.1 | 2026-10-16 | 修复「间歇性黑屏」：新增 ErrorBoundary 包裹 router-view 捕获渲染错误显示降级 UI（重试渲染/返回首页）+ main.js 全局 errorHandler/window error/未处理 Promise 拒绝统一上报，经 preload logError 转发主进程写入 userData/logs/renderer-error.log；Dashboard formatChange/formatPercent 加 Number+isFinite 兜底防 toFixed 抛 TypeError |
 | v1.13.0 | 2026-10-16 | 自选股加入改为弹窗选分组：StockList/StockDetail 未自选状态点击星标弹出 WatchlistGroupPicker 选择归入分组（传 name 避免名称列空白），已自选则直接移除；后端 POST /watchlist 支持 groupId、service/store 透传。自选股页选项卡控件改版：弃用原生 editable，选项卡栏右端自定义 -/+ 按钮（- 进入删除模式显示红色 ×，+ 新建分组），导航区右侧预留按钮空间 |
