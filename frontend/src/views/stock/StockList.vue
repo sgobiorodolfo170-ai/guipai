@@ -157,14 +157,6 @@ const viewStockDetail = (code) => {
   router.push(`/stocks/${code}`)
 }
 
-const tagType = (market) => {
-  if (market === '科创板' || market === '创业板') return 'warning'
-  if (market === '北交所') return 'info'
-  if (market === '沪市主板') return 'success'
-  if (market === '深市主板') return 'primary'
-  return ''
-}
-
 // 已自选 → 直接移除；未自选 → 弹出分组选择后加入所选分组
 const showGroupPicker = ref(false)
 const pickRow = ref(null)
@@ -261,16 +253,13 @@ onMounted(async () => {
         :data="stockList"
         v-loading="loading"
         stripe
+        border
+        allow-drag-last-column
         @row-click="(row) => viewStockDetail(row.code)"
         style="cursor: pointer;"
       >
         <el-table-column prop="code" label="代码" width="110" sortable />
-        <el-table-column prop="name" label="名称" min-width="120" sortable />
-        <el-table-column prop="market" label="市场" width="110" sortable>
-          <template #default="{ row }">
-            <el-tag size="small" :type="tagType(row.market)">{{ row.market }}</el-tag>
-          </template>
-        </el-table-column>
+        <el-table-column prop="name" label="名称" width="140" sortable />
         <el-table-column label="最新价" width="90" align="right" sortable :sort-method="(a, b) => (rt(a.code).price || 0) - (rt(b.code).price || 0)">
           <template #default="{ row }">
             <span>{{ formatPrice(rt(row.code).price) }}</span>
