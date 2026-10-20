@@ -7,6 +7,7 @@ const ddb = require('../../dolphindb/client')
 const klineRepo = require('../../dolphindb/kline-repository')
 const converter = require('../converter')
 const { getDb } = require('../db')
+const marketTime = require('../market-time')
 
 const router = express.Router()
 
@@ -193,16 +194,37 @@ router.get('/stock/info', dbFirst({
 // ==================== C3: spot DB-first (write-on-miss) ====================
 const spotRepo = require('../../dolphindb/spot-repository')
 
-// /stock/spot → DB-first from stock_spot (write-on-miss + 单飞锁)
+// /stock/spot → 盘中网络优先，盘后 DB-first from stock_spot (write-on-miss + 单飞锁)
 router.get('/stock/spot', async (req, res) => {
   const cacheKey = 'ddb:spot:latest'
   const cached = cache.get(cacheKey)
   if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  const ttl = marketTime.spotTtl()
   try {
+    // 0. 盘中网络优先：直接取行情源并异步入库；DDB 可用时回读保持响应结构不变
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockSpot()
+        if (raw && raw.length > 0) {
+          if (ddb.isConnected()) {
+            try {
+              await spotRepo.insertSpotSafe(raw)
+              const rows = await spotRepo.getSpot()
+              if (rows && rows.length > 0) {
+                cache.set(cacheKey, rows, ttl)
+                return res.json({ code: 200, msg: '成功(实时)', data: rows })
+              }
+            } catch (e) { console.error('[aktools] spot 实时入库失败，直接返回网络数据:', e.message) }
+          }
+          cache.set(cacheKey, raw, ttl)
+          return res.json({ code: 200, msg: '成功(实时)', data: raw })
+        }
+      } catch (e) { console.error('[aktools] spot 网络优先失败，降级库内:', e.message) }
+    }
     // 1. DB 读
     let data = await spotRepo.getSpot()
     if (data && data.length > 0) {
-      cache.set(cacheKey, data, 60)
+      cache.set(cacheKey, data, ttl)
       return res.json({ code: 200, msg: '成功', data })
     }
     // 2. aktools → write → re-read
@@ -211,7 +233,7 @@ router.get('/stock/spot', async (req, res) => {
       await spotRepo.insertSpotSafe(raw)
       data = await spotRepo.getSpot()
       if (data && data.length > 0) {
-        cache.set(cacheKey, data, 60)
+        cache.set(cacheKey, data, ttl)
         return res.json({ code: 200, msg: '成功(已入库)', data })
       }
     }
@@ -237,10 +259,32 @@ router.get('/stock/indexSpot', async (req, res) => {
   const cacheKey = `ddb:indexSpot:${symbol}`
   const cached = cache.get(cacheKey)
   if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  const ttl = marketTime.spotTtl()
   try {
+    // 盘中网络优先（腾讯单请求 / tqs），DDB 可用时回读保持响应结构
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockIndexSpot(symbol)
+        if (raw && raw.length > 0) {
+          const today = new Date().toISOString().slice(0, 10)
+          if (ddb.isConnected()) {
+            try {
+              await indexSpotRepo.insertIndexSpot(raw, today)
+              const rows = await indexSpotRepo.getIndexSpot()
+              if (rows && rows.length > 0) {
+                cache.set(cacheKey, rows, ttl)
+                return res.json({ code: 200, msg: '成功(实时)', data: rows })
+              }
+            } catch (e) { console.error('[aktools] indexSpot 实时入库失败，直接返回网络数据:', e.message) }
+          }
+          cache.set(cacheKey, raw, ttl)
+          return res.json({ code: 200, msg: '成功(实时)', data: raw })
+        }
+      } catch (e) { console.error('[aktools] indexSpot 网络优先失败，降级库内:', e.message) }
+    }
     let data = await indexSpotRepo.getIndexSpot()
     if (data && data.length > 0) {
-      cache.set(cacheKey, data, 60)
+      cache.set(cacheKey, data, ttl)
       return res.json({ code: 200, msg: '成功', data })
     }
     const raw = await aktools.getStockIndexSpot(symbol)
@@ -249,7 +293,7 @@ router.get('/stock/indexSpot', async (req, res) => {
       await indexSpotRepo.insertIndexSpot(raw, today)
       data = await indexSpotRepo.getIndexSpot()
       if (data && data.length > 0) {
-        cache.set(cacheKey, data, 60)
+        cache.set(cacheKey, data, ttl)
         return res.json({ code: 200, msg: '成功(已入库)', data })
       }
     }
@@ -267,11 +311,25 @@ router.get('/stock/minute', async (req, res) => {
   const cacheKey = `ddb:minute:${p.symbol}:${params.start_date || ''}:${params.end_date || ''}:${p.period}`
   const cached = cache.get(cacheKey)
   if (cached) return res.json({ code: 200, msg: '成功(缓存)', data: cached })
+  const ttl = marketTime.minuteTtl()
   try {
+    // 盘中网络优先（tqs→腾讯），异步入库；失败回落库内
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockMinute(params)
+        if (raw && raw.length > 0) {
+          cache.set(cacheKey, raw, ttl)
+          if (ddb.isConnected()) {
+            minuteRepo.insertMinuteK(raw, p.symbol, p.period).catch(e => console.error('[aktools] minute 入库失败:', e.message))
+          }
+          return res.json({ code: 200, msg: '成功(实时)', data: raw })
+        }
+      } catch (e) { console.error('[aktools] minute 网络优先失败，降级库内:', e.message) }
+    }
     const tradeDate = params.start_date || new Date().toISOString().slice(0, 10)
     let data = await minuteRepo.getMinuteK(p.symbol, tradeDate, p.period)
     if (data && data.length > 0) {
-      cache.set(cacheKey, data, 60)
+      cache.set(cacheKey, data, ttl)
       return res.json({ code: 200, msg: '成功', data })
     }
     const raw = await aktools.getStockMinute(params)
@@ -279,7 +337,7 @@ router.get('/stock/minute', async (req, res) => {
       await minuteRepo.insertMinuteK(raw, p.symbol, p.period)
       data = await minuteRepo.getMinuteK(p.symbol, tradeDate, p.period)
       if (data && data.length > 0) {
-        cache.set(cacheKey, data, 60)
+        cache.set(cacheKey, data, ttl)
         return res.json({ code: 200, msg: '成功(已入库)', data })
       }
     }
@@ -367,11 +425,12 @@ router.get('/stock/ztPoolPrevious', async (req, res) => {
 })
 
 // ==================== 启动预热 ====================
-// 全市场 spot 预热已废弃：TDX-only 模式下 /tdxs_market_spot 需分批拉 5500+ 只（30~60s），
-// 启动即占住 Python 桥，会让首个 K 线请求超时。且股票列表已改读本地 stock_basic、
-// 市场概况走 indexSpot（on-demand 快速），全市场 spot 缓存非关键路径，故跳过。
+// 2026-10-20 恢复全市场 spot 预热：主源改为腾讯批量（800/请求、6 并发，~1s），
+// 不再是 TDX-only 时期分批拉 5500+ 只（30~60s 占桥）的旧形态。
+// 预热打通 rank 代码池 + qt 连接，让首个 /stocks/realtime 或 /market/hot 免冷启动。
+// best-effort：失败静默，首个请求仍会自行拉取。
 async function primeCache() {
-  try { /* 预留：如需预热某轻量缓存（如指数快照），在此补充 */ } catch (_) {}
+  try { await aktools.getStockSpot() } catch (_) { /* 预热失败无副作用 */ }
 }
 
 module.exports = router

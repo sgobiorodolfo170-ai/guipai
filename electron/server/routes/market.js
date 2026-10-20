@@ -7,6 +7,7 @@ const ddb = require('../../dolphindb/client')
 const spotRepo = require('../../dolphindb/spot-repository')
 const indexSpotRepo = require('../../dolphindb/index-spot-repository')
 const converter = require('../converter')
+const marketTime = require('../market-time')
 const { safeSymbol, safeDate } = require('../../dolphindb/params')
 
 const router = express.Router()
@@ -108,16 +109,63 @@ function toHot(rows) {
     .sort((a, b) => b.turnover - a.turnover)
 }
 
-// 市场概况 — DB-first from stock_index_spot；DDB 不可用/入库失败时直接返回网络数据，避免空白
+// 全市场快照写库节流（与 stock.js /realtime 同规则：60s 一次，避免全量重写放大）
+let lastSpotWriteAt = 0
+
+/** 行情源中文键行 → /hot 前端契约（盘中网络优先路径） */
+function toHotRaw(rows) {
+  return rows
+    .filter(r => r['代码'])
+    .map(r => ({
+      code: r['代码'], name: r['名称'] || r['代码'],
+      price: Number(r['最新价']) || 0,
+      changePercent: Number(r['涨跌幅']) || 0,
+      turnover: Number(r['成交额']) || 0
+    }))
+    .sort((a, b) => b.turnover - a.turnover)
+}
+
+/** 行情源中文键行 → /overview 前端契约（与 toOverview 输出同构） */
+function rawToOverview(raw) {
+  const snapDate = latestTradeDateISO()
+  return raw.map(m => ({
+    code: m['代码'] || m['指数代码'],
+    name: m['名称'] || m['指数名称'],
+    price: Number(m['最新价']) || 0,
+    change: Number(m['涨跌额']) || 0,
+    changePercent: Number(m['涨跌幅']) || 0,
+    date: snapDate
+  }))
+}
+
+// 市场概况 — 盘中网络优先（腾讯单请求含 OHLC / tqs），盘后 DB-first from stock_index_spot；
+// DDB 不可用/入库失败时直接返回网络数据，避免空白。
 router.get('/overview', async (req, res) => {
   const cacheKey = 'ddb:indexSpot:overview'
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached)
+  const ttl = marketTime.spotTtl()
   try {
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockIndexSpot('沪深重要指数')
+        if (raw && raw.length > 0) {
+          const overview = rawToOverview(raw)
+          cache.set(cacheKey, overview, ttl)
+          const snapDate = latestTradeDateISO()
+          if (ddb.isConnected()) {
+            indexSpotRepo.insertIndexSpot(raw, snapDate).catch(e => console.error('[market] index spot 入库失败:', e.message))
+          }
+          return ok(res, overview, '成功(实时)')
+        }
+      } catch (e) {
+        console.error('[market] overview 网络优先失败，降级库内:', e.message)
+      }
+    }
     let data = await indexSpotRepo.getIndexSpot()
     if (data && data.length > 0) {
       const overview = toOverview(data)
-      cache.set(cacheKey, overview, 60)
+      cache.set(cacheKey, overview, ttl)
       return ok(res, overview)
     }
     // aktools → 直接返回网络数据（DDB 入库异步 best-effort，不阻塞展示）
@@ -125,14 +173,8 @@ router.get('/overview', async (req, res) => {
     if (raw && raw.length > 0) {
       // 快照日期取"最近交易日"近似（含 09:15 前回退），与数值同源，保证日期-数值对齐
       const snapDate = latestTradeDateISO()
-      const directOverview = raw.map(m => ({
-        code: m['代码'] || m['指数代码'], name: m['名称'] || m['指数名称'],
-        price: Number(m['最新价']) || 0,
-        change: Number(m['涨跌额']) || 0,
-        changePercent: Number(m['涨跌幅']) || 0,
-        date: snapDate
-      }))
-      cache.set(cacheKey, directOverview, 60)
+      const directOverview = rawToOverview(raw)
+      cache.set(cacheKey, directOverview, ttl)
       // 入库 best-effort：DDB 不可用时跳过；失败不影响展示
       if (ddb.isConnected()) {
         indexSpotRepo.insertIndexSpot(raw, snapDate).catch(e => console.error('[market] index spot 入库失败:', e.message))
@@ -143,17 +185,35 @@ router.get('/overview', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 热门股票 — DB-first from stock_spot (按成交额排序)
+// 热门股票 — 盘中网络优先（腾讯全市场 ~1s），盘后 DB-first from stock_spot (按成交额排序)
 router.get('/hot', async (req, res) => {
   const { limit = 20 } = req.query
   const cacheKey = 'ddb:spot:hot'
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached.slice(0, Number(limit)))
+  const ttl = marketTime.spotTtl()
   try {
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockSpot()
+        if (raw && raw.length > 0) {
+          const list = toHotRaw(raw)
+          cache.set(cacheKey, list, ttl)
+          // 写库节流 60s：insertSpot 为「删今日 + 全量插入」，5s 缓存过期即全量重写会放大写入
+          if (ddb.isConnected() && Date.now() - lastSpotWriteAt > 60000) {
+            lastSpotWriteAt = Date.now()
+            spotRepo.insertSpotSafe(raw).catch(e => console.error('[market] hot 快照入库失败:', e.message))
+          }
+          return ok(res, list.slice(0, Number(limit)), '成功(实时)')
+        }
+      } catch (e) {
+        console.error('[market] hot 网络优先失败，降级库内:', e.message)
+      }
+    }
     let data = await spotRepo.getSpot()
     if (data && data.length > 0) {
       const list = toHot(data)
-      cache.set(cacheKey, list, 60)
+      cache.set(cacheKey, list, ttl)
       return ok(res, list.slice(0, Number(limit)))
     }
     // aktools → write → re-read
@@ -163,7 +223,7 @@ router.get('/hot', async (req, res) => {
       data = await spotRepo.getSpot()
       if (data && data.length > 0) {
         const list = toHot(data)
-        cache.set(cacheKey, list, 60)
+        cache.set(cacheKey, list, ttl)
         return ok(res, list.slice(0, Number(limit)), '成功(已入库)')
       }
     }
@@ -174,7 +234,7 @@ router.get('/hot', async (req, res) => {
       data = await spotRepo.getSpot()
       if (data && data.length > 0) {
         const list = toHot(data)
-        cache.set(cacheKey, list, 60)
+        cache.set(cacheKey, list, ttl)
         return ok(res, list.slice(0, Number(limit)), '成功(daily_k_raw 派生快照)')
       }
     }
