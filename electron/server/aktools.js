@@ -21,6 +21,12 @@
  *   触发时机：主源抛错（网络拦截）或返回空（spot/industry）时降级；命中后 console.warn 留痕。
  *   返回键与东财口径保持一致（单位折算见各兜底函数注释），converter/前端无需改动。
  *
+ * 2026-10-20 数据源调度重构（解除 TDX-only 冻结）：
+ *   全部函数改为经 sources/registry.js 统一派发（failover 串行 / race 竞速 + 逐源超时 + 连续失败熔断），
+ *   优先级见 registry.PRIORITY；新增独立腾讯源 sources/tencent.js 作全市场 spot/指数 spot 主源，
+ *   本文件内联的东财/腾讯/同花顺实现作为 main 源注册（兜底层）。单股 spot 由 getStockSpot(codes)
+ *   覆盖为 tdx_quant→腾讯→tqs→东财→新浪（SPOT_BY_CODE_SOURCES）。
+ *
  * 已移植函数返回"中文键对象数组"（与 akshare 输出一致），故 converter.js 无需改动。
  * 字段映射依据 akshare 1.18.97 源码 + 东财真实返回字段键（c/m/n/p/zdp/amount/ltsz/tshare/hs/lbc/fbt/lbt/fund/zbc/hybk/zttj 等）。
  */
@@ -740,9 +746,13 @@ async function warmupUpstream() {
     // 4) 腾讯分时 day/query（p1 分时兜底路径，实测首请求 ~7.7s）
     () => getJson('https://web.ifzq.gtimg.cn/appstock/app/day/query?code=sh600519', Object.assign({}, TX_H, SLOW)),
     // 5) 腾讯分钟 mkline（p5/p15/p30/p60 兜底路径）
-    () => getJson('https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh600519,m5,,50', Object.assign({}, TX_H, SLOW)),
-    // 6) 腾讯实时行情 qt.gtimg.cn（指数快照兜底，GBK）
-    () => getText('https://qt.gtimg.cn/q=s_sh000001,s_sz399001', Object.assign({ encoding: 'gbk' }, SLOW)),
+    //    count 必须与生产请求一致（,,2000）：腾讯按 URL 参数做边缘缓存，
+    //    不同 count 是不同缓存键，用 ,,50 预热对 ,,2000 无效（实测冷 7.7s）。
+    () => getJson('https://ifzq.gtimg.cn/appstock/app/kline/mkline?param=sh600519,m5,,2000', Object.assign({}, TX_H, SLOW)),
+    // 6) 腾讯实时行情 qt.gtimg.cn（指数/个股批量快照共用通道，GBK）：
+    //    完整指数代码与个股混打，既建立连接也验证 88 字段解析路径；
+    //    全市场批量(7×800)留到首个请求/primeCache 触发，避免启动即占满带宽。
+    () => getText('https://qt.gtimg.cn/q=s_sh000001,s_sz399001,sh000001,sh600519,sz000001', Object.assign({ encoding: 'gbk' }, SLOW)),
     // 7) 东财 push2ex 涨停池（涨停/跌停/昨日涨停池数据源，实测首请求可卡 7s+）
     () => getJson(`https://push2ex.eastmoney.com/getTopicZTPool?ut=${UT}&dpt=wz.ztzt&Pageindex=0&pagesize=10&sort=fbt:asc&date=20260101`, Object.assign({}, EM_H, SLOW)),
     // 8) Tushare daily + adj_factor（若已配置账号）：实测首次调用 ~10s
@@ -949,6 +959,10 @@ registry.registerSource({
   },
   available: () => true
 })
+// 腾讯独立源（qt.gtimg.cn 批量行情 + fqkline/mkline/分时兜底）。
+// 全市场 spot 首选：800 只/请求、6 并发，~1s 取回 5580 只且含完整 OHLC；
+// 指数 spot 首选：单请求 88 字段（含高/低/开/昨收）；分钟/日K 仅作 tqs 之后的应急兜底。
+registry.registerSource(require('./sources/tencent'))
 registry.registerSource(require('./sources/sina'))
 // 通达信本地数据源（Path A：纯 Node 读 .day 文件，离线兜底）。
 // 直接读通达信安装目录 vipdoc\<sh|sz|bj>\lday\*.day，标准 32 字节格式，
@@ -972,8 +986,15 @@ registry.registerSource(tdxServerSource)
 const akshareSource = require('./sources/akshare')
 registry.registerSource(akshareSource)
 
+/** 单股/少量代码 spot 的源顺序：本地 tdx_quant 最快（~20ms），其次腾讯批量，
+ *  tqs 补北交所/新代码，最后才是东财/新浪。全市场（无 codes）走 registry 默认优先级（腾讯首选）。 */
+const SPOT_BY_CODE_SOURCES = ['tdx_quant', 'tencent', 'tdx_server', 'main', 'sina', 'akshare']
+
 module.exports = {
-  getStockSpot: (codes) => registry.dispatch('spot', codes),
+  getStockSpot: (codes) => {
+    const hasCodes = codes != null && codes !== '' && (!Array.isArray(codes) || codes.length > 0)
+    return registry.dispatch('spot', codes, hasCodes ? { sources: SPOT_BY_CODE_SOURCES } : {})
+  },
   getStockHistory: (p) => registry.dispatch('kline', p),
   getStockMinute: (p) => registry.dispatch('minute', p),
   getStockInfo: (s) => registry.dispatch('info', s),
