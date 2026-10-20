@@ -1,45 +1,42 @@
-# DolphinDB 原始数据基线（daily_k_raw）— 不可变，禁止删除/修改
+# DolphinDB 原始日K基线（daily_k_raw）— 官方数据包每日增量维护
 
 ## 数据来源
-- 通达信 V64 本地数据（`.day` 二进制文件）
-- 路径：`C:\new_tdx64\vipdoc\{sh,sz,bj}\lday\*.day`
-- 导入工具：`electron/dolphindb/import-tdx.js`（CLI）+ `electron/dolphindb/tdx-import.js`（可复用库）
+- 通达信官网数据包（每日 `g3day/YYYYMMDD.zip` + `bjlday.zip`；全量 `hsjday.zip`；指数 `shzsday/szzsday.zip`）
+- 本地通达信 V64 数据（备用 / 全量重建）：`C:\new_tdx64\vipdoc\{sh,sz,bj}\lday\*.day`
+- 工具：`electron/dolphindb/import-package.js`（CLI）、`electron/dolphindb/package-import.js`（编排库）、
+  `electron/dolphindb/tdx-import.js`（本地 .day 遍历/导入库）
 
 ## 数据范围
 | 维度 | 值 |
 |---|---|
-| 时间范围 | 1998-01-05 ~ **2026-10-08** |
-| 股票数量 | 9,357 只（沪深京 A 股个股，区间内有数据） |
-| 总记录数 | **23,566,963**（与本地 .day 区间内个股记录逐 symbol 一致，零缺口） |
+| 时间范围 | 1998-01-05 起；每日 18:10 自动追加当日，启动时补跑最近 5 个交易日 |
+| 股票数量 | 约 5,500 只 A 股/日（沪 6xxxxx、深 00/30、北交所 43/83/87/88/92） |
+| 记录数 | 约 2,000 万（以 `select count(*)` 为准） |
 | 数据格式 | 不复权原始价格（价格单位：元，成交量：手，成交额：元） |
 
-> **数据规模变更说明（2026-10-14 清理）**：原导入曾混入 sh 上证指数（66 只 00xxxx，
-> 如 000001=上证指数）与 sz 深证指数（104 只 399xxx，如 399001=深证成指）到 daily_k_raw，
-> 导致 45 只 `00xxxx` 与深市同名个股（如 000001=平安银行）同 symbol 混叠。已按方案 A 清理：
-> raw 表仅存**个股**；指数数据一律走独立表 `stock_zh_index_daily` + `/api/market/index-kline`。
-> 清理后：删 170 只指数 symbol（冗余 275,540 行），行数 24,270,484 → 23,566,963，
-> 重复(symbol,date)=0，逐 symbol 与本地个股零差异。
+> **口径说明**：早期历史数据曾混入基金/债券（15/16/50/51 等前缀）与指数。现行链路只写 A 股个股，
+> 指数一律走独立表 `stock_zh_index_daily` + `/api/market/index-kline`；覆盖率统计也按 A 股口径过滤。
 
 ## 数据边界（重要约定）
-- **daily_k_raw 只存 [1998-01-01, 2026-10-08] 的本地通达信基线**，之后（2026-10-09 起）的新交易日
-  **一律走 aktools 网络接口**：由 `stock.js /:code/kline` 断点续传增量拉取，写入
-  `dfs://tradeinsight` / `daily_k`（前复权查询层）。raw 表不追加网络数据，保持"本地基线"语义。
-- 区间外无历史数据（1998 前）与区间后新数据（10-08 后上市的新股/新基金）不在本表，
-  前者无意义、后者由网络层补齐。
-- **daily_k_raw 只存个股，不存指数**：导入时跳过 `sh/000xxx`（上证指数系列）与
-  `sz/399xxx`（深证指数系列），指数由 `stock_zh_index_daily` 表 + `/api/market/index-kline`
-  提供。此规则由 `tdx-import.js` 的 `isIndexFile()` 强制保证。
+- **每日快照**：`g3day` 的 `mdt/cod` 提供当日全市场个股快照（不含北交所），按日期“先删后插”写入
+  `daily_k_raw`，保证同日重跑幂等。
+- **北交所**：`bjlday.zip` 每日整包更新，逐文件取当日末条；停牌/退市自然缺失。
+- **指数**：`stock_zh_index_daily` 只写 000001/399001/399006，且只写 2024-01-01 起
+  （`dfs://tradeinsight` 分区起点，更早写入会被 DolphinDB 静默丢弃）。
+- **全量重建**：可用 `hsjday.zip`（含沪深北）或本地 vipdoc 目录；已有历史需补深/纠错时用 `--refresh`。
+- **前复权查询层**：`daily_k` 仍由行情源增量维护，与 raw 表独立。
 
-## 导入工具（可复用，幂等）
+## 导入工具（幂等）
 ```
-node electron/dolphindb/import-tdx.js                       # 默认 full：19980101~20261008
-node electron/dolphindb/import-tdx.js --mode=verify         # 只校验缺口（只读）
-node electron/dolphindb/import-tdx.js --mode=full           # 全量（缺的补、已有的跳过）
-node electron/dolphindb/import-tdx.js --mode=incremental    # 仅补库内缺失的 symbol
-node electron/dolphindb/import-tdx.js --mode=refresh        # 强制重刷 [start,end]（先删后插）
-node electron/dolphindb/import-tdx.js --start=19980101 --end=20261008
+node electron/dolphindb/import-package.js status
+node electron/dolphindb/import-package.js daily [YYYY-MM-DD] [--days 5] [--force]
+node electron/dolphindb/import-package.js full [--start 1990-01-01] [--end YYYY-MM-DD] [--refresh]
+node electron/dolphindb/import-package.js index [--from 2024-01-01]
+node electron/dolphindb/import-package.js financial [--from 2010-01-01] [--data-dir <sqlite数据目录>]
 ```
-校验：`--mode=verify` 输出本地 vs 库内行数、缺失 symbol、逐 symbol 条数差异。
+- 定时任务：`electron/server/package-sync.js` 每天 18:10 执行；页面「数据管理 → 收盘数据同步」可手动补跑/停止。
+- 缓存目录：`<userData>/tdx-packages`（可用 `TDX_PACKAGE_CACHE` 覆盖）；每日包默认保留 30 天。
+- 本地 vipdoc 导入仍可用 `tdx-import.js`（full/incremental/refresh/verify）。
 
 ## 存储位置
 - DolphinDB 库：`dfs://tradeinsight_raw`（独立库，RANGE 分区 1990-2031 年度）
@@ -58,16 +55,12 @@ node electron/dolphindb/import-tdx.js --start=19980101 --end=20261008
 | volume | LONG | 成交量（手） |
 | amount | DOUBLE | 成交额（元） |
 
-## ⚠️ 不可变声明
-此表为项目**原始数据基线**，从通达信本地数据一次性导入。
-
-- **禁止**删除此表或其中的任何数据。
-- **禁止**修改已导入的任何记录。
-- **禁止**用前复权数据覆盖此表——前复权数据存入 `dfs://tradeinsight` / `daily_k`（查询层）。
-- 此表是**唯一的不复权数据源**，用于后续前复权计算、数据校验、回测基准。
-
-如果需要更新数据（如通达信更新了新交易日数据），应**追加**新日期的数据，不得删除/修改已有日期的数据。
+## ⚠️ 维护约定
+- 本表由数据包链路维护：**允许按日期删除并重写**（幂等），但不得删除整表、不得写入前复权数据。
+- 前复权数据只进 `dfs://tradeinsight` / `daily_k`（查询层）。
+- 每日写入前先删当日再批量插入；异常中断后重新执行同日同步即可恢复。
+- 覆盖/验证统计见「收盘数据同步 → 数据可视化」，或 `/api/market-sync/completeness`、`/api/market-sync/validate`。
 
 ## 与 daily_k 的关系
-- `daily_k_raw`（本表）：不复权原始数据，只读基线。
-- `daily_k`（在 `dfs://tradeinsight` 中）：前复权（qfq）数据，前端查询用。通过东财/Tushare 的 `getStockHistory(adj='qfq')` 或 `pro_bar(adj='qfq')` 获取，与 `daily_k_raw` 独立维护。
+- `daily_k_raw`（本表）：不复权原始数据，历史基线 + 每日增量。
+- `daily_k`（`dfs://tradeinsight`）：前复权（qfq）数据，前端查询优先使用；数据不足时由 `daily_k_raw` 兜底。
