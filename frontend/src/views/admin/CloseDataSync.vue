@@ -1,160 +1,210 @@
 <script setup>
 /**
- * 收盘数据同步 —— 全市场数据同步 + 数据可视化（全新设计，替代原四类收盘同步页）。
+ * 收盘数据同步 —— 通达信数据包同步 + 收盘股票池 + 数据可视化。
  *
  * 功能分区：
- *   1. 全市场数据同步：一次「开始」= 全市场个股日K（写入 daily_k，前复权，幂等）
- *      + 四类收盘数据（涨停/跌停/板块/指数日K）。后台任务 + 实时进度轮询（1.5s）。
- *   2. 数据可视化（ECharts）：
- *      - 数据完整性：近 N 天 daily_k 覆盖率 / 按市场覆盖拆分 / 四类收盘数据存在性
- *      - 数据验证：当日 daily_k 异常分类计数（OHLC 冲突、非正价格、字段缺失）
- *      - 数据进度：进行中任务实时面板 + 最近任务历史
- *
- * 后端契约见 electron/server/market-sync.js（/api/market-sync/*）。
+ *   1. 数据包同步（/api/package-sync）：18:10 自动 + 启动补跑最近 5 个交易日，
+ *      从通达信官网下载每日行情包（个股日K → daily_k_raw、三大指数 → stock_zh_index_daily）
+ *      和季度财务包（→ SQLite stock_financial）。
+ *   2. 收盘股票池（/api/market-sync）：涨停池 / 跌停池 / 板块行情 / 全市场实时行情。
+ *   3. 数据可视化：daily_k_raw 覆盖率、按市场拆分、异常校验、任务历史。
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
 import api from '@/utils/api'
 
-// ---- 全市场同步：配置 ----
-const today = () => new Date().toISOString().slice(0, 10)
-const syncDate = ref(today())
-const adjust = ref('qfq')
-const concurrency = ref(3)
-const includePools = ref(true)
-const force = ref(false)
-const starting = ref(false)
-
-// ---- 全市场同步：状态 ----
-const status = ref(null)
-const statusLoading = ref(false)
-const progressTimer = ref(null)
-
-const ddbConnected = computed(() => !!status.value?.ddb?.connected)
-const running = computed(() => !!status.value?.running)
-const progressPercent = computed(() => status.value?.percent ?? 0)
-const phaseLabel = computed(() => status.value?.phaseLabel || (status.value?.running ? '准备中…' : '未开始'))
-
-/** 秒 → HH:MM:SS */
-function fmtDuration(sec) {
-  const s = Math.max(0, Math.round(sec || 0))
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), x = s % 60
-  const p = n => String(n).padStart(2, '0')
-  return `${p(h)}:${p(m)}:${p(x)}`
+const today = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-const POOL_LABELS = [
-  { key: 'limit_up', label: '涨停池' },
-  { key: 'limit_down', label: '跌停池' },
-  { key: 'plate', label: '板块行情' },
-  { key: 'index', label: '指数日K' }
-]
+// ---- 数据包同步 ----
+const pkgStatus = ref(null)
+const pkgLoading = ref(false)
+const pkgStarting = ref(false)
+const pkgForce = ref(false)
+let pkgTimer = null
 
-const fetchStatus = async () => {
-  statusLoading.value = true
+const ddbConnected = computed(() => !!pkgStatus.value?.ddbConnected)
+const pkgRunning = computed(() => !!pkgStatus.value?.running)
+const pkgPercent = computed(() => pkgStatus.value?.percent ?? 0)
+const pkgPhase = computed(() => pkgStatus.value?.phase || (pkgRunning.value ? '准备中…' : '空闲'))
+
+const fetchPkgStatus = async () => {
+  pkgLoading.value = true
   try {
-    const res = await api.get('/market-sync/status')
-    status.value = res.data || null
-  } catch (e) {
-    // 仅静默失败一次，避免断连时刷屏；进度轮询由 running 判断兜底
+    const res = await api.get('/package-sync/status')
+    pkgStatus.value = res.data || null
+  } catch (_) {
+    // 后端重启中：静默，下一轮轮询恢复
   } finally {
-    statusLoading.value = false
+    pkgLoading.value = false
   }
 }
 
-/** 运行中 → 1.5s 轮询进度；空闲 → 停表 */
-const managePolling = () => {
-  if (progressTimer.value) { clearInterval(progressTimer.value); progressTimer.value = null }
-  if (running.value) {
-    progressTimer.value = setInterval(fetchStatus, 1500)
-  }
-}
-watch(running, managePolling)
-
-const startSync = async () => {
-  if (starting.value) return
-  if (!ddbConnected.value) return ElMessage.warning('DolphinDB 未连接，无法写入。请先在数据总览重连 DolphinDB')
-  if (!syncDate.value) return ElMessage.warning('请选择目标日期')
+const startPackageSync = async () => {
+  if (pkgStarting.value) return
+  if (!ddbConnected.value) return ElMessage.warning('DolphinDB 未连接，无法写入。请先重连')
   try {
     await ElMessageBox.confirm(
-      `将启动「全市场数据同步」：\n` +
-      `目标日期：${syncDate.value}（个股日K按当日拉取，前复权）\n` +
-      `并发数：${concurrency.value}（全市场约 5000+ 只，预计需半小时以上，可随时停止后续拉）\n` +
-      `${force.value ? '（已勾选强制重刷：四类收盘数据已存在也重新拉取）' : '（未勾选强制：四类收盘数据已存在的日期自动跳过）'}\n` +
-      `是否继续？`,
-      '确认启动全市场同步',
+      `将从通达信官网补跑最近 5 个交易日的数据包：\n` +
+      `· 个股日K（不复权）→ daily_k_raw（已存在的日期自动跳过）\n` +
+      `· 三大指数日K → stock_zh_index_daily\n` +
+      (pkgForce.value ? '· 已勾选强制重跑：已存在的日期也会重新下载并覆盖\n' : '') +
+      '是否继续？',
+      '确认同步数据包',
       { confirmButtonText: '开始同步', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
-
-  starting.value = true
+  pkgStarting.value = true
   try {
-    const res = await api.post('/market-sync/start', {
-      date: syncDate.value,
-      adjust: adjust.value,
-      concurrency: concurrency.value,
-      includePools: includePools.value,
-      force: force.value
-    })
-    ElMessage.success(res.msg || '任务已启动')
-    await fetchStatus()
-    managePolling()
+    const res = await api.post('/package-sync/start', { days: 5, force: pkgForce.value })
+    ElMessage.success(`已启动：${(res.data?.dates || []).join('、')}`)
+    await fetchPkgStatus()
   } catch (e) {
     ElMessage.error('启动失败: ' + e.message)
   } finally {
-    starting.value = false
+    pkgStarting.value = false
   }
 }
 
-const stopSync = async () => {
-  if (!running.value) return
+const stopPackageSync = async () => {
+  if (!pkgRunning.value) return
   try {
-    const res = await api.post('/market-sync/stop')
-    ElMessage.info(res.msg || '已请求停止，将在当前批次结束后停止')
-    await fetchStatus()
+    const res = await api.post('/package-sync/stop')
+    ElMessage.info(res.msg || '已请求停止')
+    await fetchPkgStatus()
   } catch (e) {
     ElMessage.error('停止失败: ' + e.message)
   }
 }
 
-const lastCompleted = computed(() => status.value?.lastCompleted || null)
+const reconnectDdb = async () => {
+  try {
+    const res = await api.post('/package-sync/connect')
+    if (res.data?.connected) ElMessage.success('DolphinDB 连接成功')
+    else ElMessage.warning('连接未成功，请确认本机 DolphinDB 已启动（默认 ws://127.0.0.1:8848）')
+    await fetchPkgStatus()
+  } catch (e) {
+    ElMessage.error('连接失败: ' + e.message)
+  }
+}
 
-// ---- 数据可视化：完整性 ----
+const logType = (level) => (level === 'error' ? 'danger' : level === 'warn' ? 'warning' : 'info')
+const fmtTime = (iso) => (iso ? new Date(iso).toLocaleString('zh-CN', { hour12: false }) : '-')
+
+// ---- 收盘股票池 ----
+const poolStatus = ref(null)
+const poolLoading = ref(false)
+const poolStarting = ref(false)
+const syncDate = ref(today())
+const poolForce = ref(false)
+let poolTimer = null
+
+const poolRunning = computed(() => !!poolStatus.value?.running)
+const poolPercent = computed(() => poolStatus.value?.percent ?? 0)
+const poolPhase = computed(() => poolStatus.value?.phaseLabel || (poolRunning.value ? '准备中…' : '未开始'))
+
+const POOL_LABELS = [
+  { key: 'limit_up', label: '涨停池' },
+  { key: 'limit_down', label: '跌停池' },
+  { key: 'plate', label: '板块行情' },
+  { key: 'spot', label: '全市场实时行情' }
+]
+
+const poolTagType = (r) => {
+  if (!r) return 'info'
+  if (r.status === 'ok') return 'success'
+  if (r.status === 'skipped') return 'warning'
+  if (r.status === 'empty') return 'info'
+  return 'danger'
+}
+const poolText = (r) => {
+  if (!r) return '-'
+  if (r.status === 'ok') return `${r.rows} 行`
+  if (r.status === 'skipped') return '已存在'
+  if (r.status === 'empty') return '无数据'
+  return '失败'
+}
+
+const fetchPoolStatus = async () => {
+  poolLoading.value = true
+  try {
+    const res = await api.get('/market-sync/status')
+    poolStatus.value = res.data || null
+  } catch (_) {
+    // 静默
+  } finally {
+    poolLoading.value = false
+  }
+}
+
+const startPoolSync = async () => {
+  if (poolStarting.value) return
+  if (!ddbConnected.value) return ElMessage.warning('DolphinDB 未连接，无法写入')
+  if (!syncDate.value) return ElMessage.warning('请选择目标日期')
+  try {
+    await ElMessageBox.confirm(
+      `将同步 ${syncDate.value} 的收盘股票池：涨停池 → 跌停池 → 板块行情 → 全市场实时行情。\n` +
+      (poolForce.value ? '已勾选强制重刷：当日已存在的数据会重新拉取并覆盖。' : '已有数据会自动跳过。'),
+      '确认同步收盘股票池',
+      { confirmButtonText: '开始同步', cancelButtonText: '取消', type: 'warning' }
+    )
+  } catch { return }
+  poolStarting.value = true
+  try {
+    const res = await api.post('/market-sync/start', { date: syncDate.value, force: poolForce.value })
+    ElMessage.success(res.msg || '任务已启动')
+    await fetchPoolStatus()
+  } catch (e) {
+    ElMessage.error('启动失败: ' + e.message)
+  } finally {
+    poolStarting.value = false
+  }
+}
+
+const stopPoolSync = async () => {
+  if (!poolRunning.value) return
+  try {
+    const res = await api.post('/market-sync/stop')
+    ElMessage.info(res.msg || '已请求停止')
+    await fetchPoolStatus()
+  } catch (e) {
+    ElMessage.error('停止失败: ' + e.message)
+  }
+}
+
+// ---- 数据可视化 ----
 const completenessDays = ref(10)
 const completeness = ref(null)
 const completeLoading = ref(false)
+const validateDate = ref(today())
+const validateData = ref(null)
+const validateLoading = ref(false)
 
 const coverageDates = computed(() => (completeness.value?.byDate || []).map(d => d.date))
 const coverageCovered = computed(() => (completeness.value?.byDate || []).map(d => d.covered))
 const coverageRate = computed(() => (completeness.value?.byDate || []).map(d => d.percent))
 const marketBreakdown = computed(() => completeness.value?.marketBreakdown || [])
-const pools = computed(() => completeness.value?.pools || { limitUp: 0, limitDown: 0, plate: 0, index: 0 })
+const universeSource = computed(() => completeness.value?.universeSource || 'stock_basic')
+const pools = computed(() => completeness.value?.pools || { limitUp: 0, limitDown: 0, plate: 0 })
 
 const completenessStats = computed(() => {
   const c = completeness.value
-  const todayItem = (c?.byDate || []).find(d => d.date === (c?.date || today())) || (c?.byDate || [])[0]
+  const item = (c?.byDate || []).find(d => d.date === (c?.date || today())) || (c?.byDate || [])[0]
   return {
     expected: c?.expected ?? 0,
-    date: todayItem?.date || '-',
-    covered: todayItem?.covered ?? 0,
-    percent: todayItem?.percent ?? 0
+    date: item?.date || '-',
+    covered: item?.covered ?? 0,
+    percent: item?.percent ?? 0
   }
 })
-
-// ---- 数据可视化：验证 ----
-const validateDate = ref(today())
-const validateData = ref(null)
-const validateLoading = ref(false)
 
 const validateChecks = computed(() => validateData.value?.checks || [])
 const validateTotal = computed(() => validateData.value?.total ?? 0)
 const validateIssues = computed(() => validateData.value?.issues ?? 0)
 const validateRate = computed(() => validateData.value?.rate ?? 0)
-
-// ---- 自动刷新 ----
-const autoRefresh = ref(false)
-let autoTimer = null
 
 const fetchCompleteness = async () => {
   completeLoading.value = true
@@ -184,11 +234,6 @@ const refreshVisual = async () => {
   await Promise.all([fetchCompleteness(), fetchValidate()])
 }
 
-watch(autoRefresh, (on) => {
-  if (autoTimer) { clearInterval(autoTimer); autoTimer = null }
-  if (on) autoTimer = setInterval(refreshVisual, 10000)
-})
-
 // ---- ECharts ----
 const completenessChartRef = ref(null)
 const marketChartRef = ref(null)
@@ -203,8 +248,7 @@ function ensureInit(instRef, elRef) {
   const el = elRef.value
   if (!el) return null
   if (instRef !== null) return instRef
-  const inst = echarts.init(el)
-  return inst
+  return echarts.init(el)
 }
 
 const renderCompletenessChart = async () => {
@@ -269,22 +313,23 @@ const handleResize = () => {
   validateChart?.resize()
 }
 
-watch([coverageDates, coverageCovered, coverageRate], () => { if (completeness.value && Object.keys(completeness.value).length) renderCompletenessChart() })
+watch([coverageDates, coverageCovered, coverageRate], () => { if (coverageDates.value.length) renderCompletenessChart() })
 watch(marketBreakdown, () => { if (marketBreakdown.value.length) renderMarketChart() })
 watch(validateChecks, () => { if (validateChecks.value.length) renderValidateChart() })
 
 // ---- 生命周期 ----
 onMounted(async () => {
   window.addEventListener('resize', handleResize)
-  await fetchStatus()
-  managePolling()
+  await Promise.all([fetchPkgStatus(), fetchPoolStatus()])
   await refreshVisual()
+  pkgTimer = setInterval(fetchPkgStatus, 5000)
+  poolTimer = setInterval(() => { if (poolRunning.value) fetchPoolStatus() }, 1500)
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize)
-  if (progressTimer.value) clearInterval(progressTimer.value)
-  if (autoTimer) clearInterval(autoTimer)
+  if (pkgTimer) clearInterval(pkgTimer)
+  if (poolTimer) clearInterval(poolTimer)
   completenessChart?.dispose()
   marketChart?.dispose()
   validateChart?.dispose()
@@ -293,149 +338,141 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="close-data-sync">
-    <!-- ======== 1. 全市场数据同步 ======== -->
+    <!-- ======== 1. 通达信数据包同步 ======== -->
     <el-card class="mb-16">
       <template #header>
         <div class="card-header">
-          <span>全市场数据同步</span>
-          <el-button size="small" :loading="statusLoading" @click="fetchStatus">刷新状态</el-button>
+          <span>通达信数据包同步</span>
+          <el-button size="small" :loading="pkgLoading" @click="fetchPkgStatus">刷新状态</el-button>
         </div>
       </template>
 
-      <el-descriptions :column="4" border size="small" v-loading="statusLoading">
+      <el-descriptions :column="4" border size="small" v-loading="pkgLoading">
         <el-descriptions-item label="DolphinDB">
-          <el-tag size="small" :type="ddbConnected ? 'success' : 'danger'">
-            {{ ddbConnected ? '已连接' : '未连接' }}
-          </el-tag>
+          <el-tag size="small" :type="ddbConnected ? 'success' : 'danger'">{{ ddbConnected ? '已连接' : '未连接' }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="daily_k 总行数">{{ status?.ddb?.totalRows?.toLocaleString() ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="daily_k 覆盖股票数">{{ status?.ddb?.totalSymbols?.toLocaleString() ?? '-' }}</el-descriptions-item>
-        <el-descriptions-item label="最新交易日">{{ status?.ddb?.latestDate || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="最新日K">{{ pkgStatus?.lastDaily || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="最新财报期">{{ pkgStatus?.financial?.reportDate || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="财务行数">{{ (pkgStatus?.financial?.rows ?? 0).toLocaleString() }}</el-descriptions-item>
       </el-descriptions>
+
       <el-alert
         v-if="!ddbConnected"
         type="warning"
         :closable="false"
         class="mt-12"
-        title="DolphinDB 未启动：全市场数据同步无法写入 daily_k / 涨跌停池 / 板块 / 指数日K。请启动本机 DolphinDB（默认 ws://127.0.0.1:8848）后刷新状态。"
-      />
+        title="DolphinDB 未启动：数据包无法写入 daily_k_raw / 指数日K。请启动本机 DolphinDB（默认 ws://127.0.0.1:8848）后重连。"
+      >
+        <el-button size="small" type="primary" plain class="mt-8" @click="reconnectDdb">立即重连</el-button>
+      </el-alert>
 
-      <el-form class="mt-16" :inline="true" label-width="90px">
-        <el-form-item label="目标日期">
-          <el-date-picker v-model="syncDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :disabled="running" />
-        </el-form-item>
-        <el-form-item label="复权方式">
-          <el-select v-model="adjust" style="width: 110px" :disabled="running">
-            <el-option label="前复权" value="qfq" />
-            <el-option label="后复权" value="hfq" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="并发数">
-          <el-input-number v-model="concurrency" :min="1" :max="8" controls-position="right" :disabled="running" />
-          <span class="form-hint">只并发</span>
-        </el-form-item>
-        <el-form-item label="四类收盘">
-          <el-switch v-model="includePools" :disabled="running" active-text="同步" />
-        </el-form-item>
-        <el-form-item label="强制重刷">
-          <el-checkbox v-model="force" :disabled="running">四类数据已存在也重拉</el-checkbox>
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" :loading="starting" :disabled="running || !ddbConnected" @click="startSync">
-            开始同步
-          </el-button>
-          <el-button type="danger" plain :disabled="!running" @click="stopSync">停止</el-button>
-        </el-form-item>
-      </el-form>
-      <div class="hint">
-        一次「开始」依次执行：全市场个股日K（当日，逐只写入 daily_k，幂等）→ 涨停池 → 跌停池 → 板块行情 → 指数日K。
-        全市场约 5000+ 只，预计耗时较长；随时可「停止」，恢复后再点「开始」续拉（已完成的股票不重复写入）。
+      <div class="toolbar mt-16">
+        <el-button type="primary" :loading="pkgStarting" :disabled="pkgRunning || !ddbConnected" @click="startPackageSync">
+          补跑最近 5 个交易日
+        </el-button>
+        <el-button type="danger" plain :disabled="!pkgRunning" @click="stopPackageSync">停止</el-button>
+        <el-checkbox v-model="pkgForce" :disabled="pkgRunning">强制重跑（覆盖已存在日期）</el-checkbox>
+        <span class="dim">每日 18:10 自动同步；应用启动后自动补跑缺失交易日。</span>
       </div>
 
-      <!-- 实时进度 -->
-      <div class="progress-block mt-16" v-if="status">
+      <div class="progress-block mt-16" v-if="pkgStatus">
         <el-progress
-          :percentage="progressPercent"
-          :status="!running && progressPercent === 100 ? 'success' : undefined"
-          :stroke-width="20"
-          :striped="running"
+          :percentage="pkgPercent"
+          :status="!pkgRunning && pkgPercent === 100 ? 'success' : undefined"
+          :stroke-width="18"
+          :striped="pkgRunning"
         />
-        <el-descriptions v-if="running || progressPercent > 0" :column="8" border size="small" class="mt-12">
-          <el-descriptions-item label="当前阶段">
-            <el-tag size="small" :type="running ? 'primary' : 'info'">{{ phaseLabel }}</el-tag>
-          </el-descriptions-item>
-          <el-descriptions-item label="已处理">{{ status.done }} / {{ status.total }}</el-descriptions-item>
-          <el-descriptions-item label="成功">{{ status.ok }}</el-descriptions-item>
-          <el-descriptions-item label="无数据">{{ status.empty }}</el-descriptions-item>
-          <el-descriptions-item label="失败">{{ status.error }}</el-descriptions-item>
-          <el-descriptions-item label="累计写入">{{ status.rows }} 行</el-descriptions-item>
-          <el-descriptions-item label="速度">{{ status.rate ?? 0 }} 只/s</el-descriptions-item>
-          <el-descriptions-item label="预计剩余">{{ running ? fmtDuration(status.etaSec) : '-' }}</el-descriptions-item>
-        </el-descriptions>
-        <div v-if="status.startedAt" class="dim mt-8">
-          已运行 {{ fmtDuration(status.elapsedSec) }} · 目标日期 {{ status.date || '-' }}（并发 {{ status.concurrency }}）
+        <div class="dim mt-8">
+          当前阶段：{{ pkgPhase }}
+          <span v-if="pkgStatus.startedAt"> · 开始于 {{ fmtTime(pkgStatus.startedAt) }}</span>
         </div>
-        <el-alert
-          v-if="status.message"
-          :title="status.message"
-          type="warning"
-          :closable="false"
-          class="mt-8"
-        />
-        <!-- 四类收盘结果 -->
-        <div v-if="status.pools && Object.values(status.pools).some(Boolean)" class="pool-result mt-12">
-          <span class="pool-title">四类收盘数据：</span>
-          <el-tag
-            v-for="p in POOL_LABELS"
-            :key="p.key"
-            size="small"
-            class="pool-tag"
-            :type="!status.pools[p.key] ? 'info' : status.pools[p.key].status === 'ok' ? 'success' : status.pools[p.key].status === 'skipped' ? 'warning' : status.pools[p.key].status === 'empty' ? 'info' : 'danger'"
-          >
-            {{ p.label }}：
-            <template v-if="!status.pools[p.key]">-</template>
-            <template v-else>
-              {{ status.pools[p.key].status === 'ok' ? `${status.pools[p.key].rows} 行` : status.pools[p.key].status === 'skipped' ? '已存在' : status.pools[p.key].status === 'empty' ? '无数据' : '失败' }}
+        <div v-if="pkgStatus.financial?.lastSuccess" class="dim mt-4">
+          上次财报导入：{{ fmtTime(pkgStatus.financial.lastSuccess) }}
+        </div>
+      </div>
+
+      <div class="mt-16">
+        <div class="section-subtitle">最近 10 个交易日覆盖（daily_k_raw）</div>
+        <el-table :data="pkgStatus?.recent || []" size="small" border max-height="300">
+          <el-table-column prop="date" label="交易日" width="140" />
+          <el-table-column label="个股行数" width="140" align="right">
+            <template #default="{ row }">{{ (row.count ?? 0).toLocaleString() }}</template>
+          </el-table-column>
+          <el-table-column label="状态" min-width="120">
+            <template #default="{ row }">
+              <el-tag size="small" :type="row.count > 0 ? 'success' : 'info'">{{ row.count > 0 ? '已入库' : '无数据' }}</el-tag>
             </template>
+          </el-table-column>
+          <template #empty><span class="dim">暂无覆盖记录</span></template>
+        </el-table>
+      </div>
+
+      <div class="mt-16" v-if="pkgStatus?.log?.length">
+        <div class="section-subtitle">同步日志（最近 60 条）</div>
+        <el-scrollbar max-height="220" class="log-box">
+          <div v-for="(l, i) in pkgStatus.log" :key="i" class="log-line">
+            <span class="log-time">{{ fmtTime(l.ts) }}</span>
+            <el-tag size="small" :type="logType(l.level)" class="log-tag">{{ l.level }}</el-tag>
+            <span>{{ l.text }}</span>
+          </div>
+        </el-scrollbar>
+      </div>
+    </el-card>
+
+    <!-- ======== 2. 收盘股票池同步 ======== -->
+    <el-card class="mb-16">
+      <template #header>
+        <div class="card-header">
+          <span>收盘股票池同步</span>
+          <el-button size="small" :loading="poolLoading" @click="fetchPoolStatus">刷新状态</el-button>
+        </div>
+      </template>
+
+      <div class="toolbar">
+        <el-date-picker v-model="syncDate" type="date" value-format="YYYY-MM-DD" placeholder="选择日期" :disabled="poolRunning" />
+        <el-button type="primary" :loading="poolStarting" :disabled="poolRunning || !ddbConnected" @click="startPoolSync">开始同步</el-button>
+        <el-button type="danger" plain :disabled="!poolRunning" @click="stopPoolSync">停止</el-button>
+        <el-checkbox v-model="poolForce" :disabled="poolRunning">强制重刷当日数据</el-checkbox>
+      </div>
+      <div class="hint">依次执行：涨停池 → 跌停池 → 板块行情 → 全市场实时行情。已有数据自动跳过。</div>
+
+      <div class="progress-block mt-16" v-if="poolStatus">
+        <el-progress
+          :percentage="poolPercent"
+          :status="!poolRunning && poolPercent === 100 ? 'success' : undefined"
+          :stroke-width="18"
+          :striped="poolRunning"
+        />
+        <div class="dim mt-8">当前阶段：{{ poolPhase }}</div>
+        <div v-if="poolStatus.pools && Object.values(poolStatus.pools).some(Boolean)" class="pool-result mt-12">
+          <el-tag v-for="p in POOL_LABELS" :key="p.key" size="small" class="pool-tag" :type="poolTagType(poolStatus.pools[p.key])">
+            {{ p.label }}：{{ poolText(poolStatus.pools[p.key]) }}
           </el-tag>
         </div>
-        <!-- 最近一次完成摘要 -->
-        <el-descriptions v-if="lastCompleted" :column="6" border size="small" class="mt-12">
+        <el-descriptions v-if="poolStatus.lastCompleted" :column="3" border size="small" class="mt-12">
           <el-descriptions-item label="上次任务">
-            {{ lastCompleted.date }} · {{ new Date(lastCompleted.endedAt).toLocaleTimeString('zh-CN', { hour12: false }) }} 完成
+            {{ poolStatus.lastCompleted.date }} · {{ fmtTime(poolStatus.lastCompleted.endedAt) }}
           </el-descriptions-item>
-          <el-descriptions-item label="成功">{{ lastCompleted.ok }}</el-descriptions-item>
-          <el-descriptions-item label="无数据">{{ lastCompleted.empty }}</el-descriptions-item>
-          <el-descriptions-item label="失败">{{ lastCompleted.error }}</el-descriptions-item>
-          <el-descriptions-item label="写入">{{ lastCompleted.rows }} 行</el-descriptions-item>
-          <el-descriptions-item label="结果">{{ lastCompleted.message || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="结果" :span="2">{{ poolStatus.lastCompleted.message || '-' }}</el-descriptions-item>
         </el-descriptions>
       </div>
     </el-card>
 
-    <!-- ======== 2. 数据可视化 ======== -->
+    <!-- ======== 3. 数据可视化 ======== -->
     <el-card class="mb-16">
       <template #header>
         <div class="card-header">
           <span>数据可视化</span>
-          <div class="header-actions">
-            <el-switch v-model="autoRefresh" active-text="自动刷新(10s)" />
-            <el-button size="small" style="margin-left: 8px" :loading="completeLoading || validateLoading" @click="refreshVisual">
-              刷新数据
-            </el-button>
-          </div>
+          <el-button size="small" :loading="completeLoading || validateLoading" @click="refreshVisual">刷新数据</el-button>
         </div>
       </template>
 
-      <!-- 2.1 数据完整性 -->
       <div class="viz-section">
-        <div class="section-title">数据完整性</div>
+        <div class="section-title">数据完整性（daily_k_raw）</div>
         <el-row :gutter="12" class="stat-row">
           <el-col :span="6"><el-statistic title="全市场股票数" :value="completenessStats.expected" /></el-col>
           <el-col :span="6"><el-statistic title="当日已覆盖" :value="completenessStats.covered" /></el-col>
-          <el-col :span="6">
-            <el-statistic title="当日覆盖率" :value="completenessStats.percent" suffix="%" />
-          </el-col>
+          <el-col :span="6"><el-statistic title="当日覆盖率" :value="completenessStats.percent" suffix="%" /></el-col>
           <el-col :span="6">
             <div class="stat-mini">
               <span class="stat-mini-label">对应日期</span>
@@ -443,6 +480,9 @@ onBeforeUnmount(() => {
             </div>
           </el-col>
         </el-row>
+        <div v-if="universeSource === 'recent_peak'" class="dim mb-12">
+          stock_basic 尚未同步：覆盖率分母按近 {{ completenessDays }} 天已覆盖峰值估算；在「股票列表」页同步后会恢复为真实全市场股票数。
+        </div>
 
         <el-row :gutter="12" class="chart-row">
           <el-col :xs="24" :md="16">
@@ -450,24 +490,24 @@ onBeforeUnmount(() => {
           </el-col>
           <el-col :xs="24" :md="8">
             <div class="board-card">
-              <div class="section-subtitle">四类收盘数据（当日）</div>
-              <div class="board-item" v-for="(label, key) in { limitUp: '涨停池', limitDown: '跌停池', plate: '板块行情', index: '指数日K' }" :key="key">
+              <div class="section-subtitle">收盘股票池（当日）</div>
+              <div class="board-item" v-for="(label, key) in { limitUp: '涨停池', limitDown: '跌停池', plate: '板块行情' }" :key="key">
                 <span>{{ label }}</span>
                 <el-tag size="small" :type="(pools[key] || 0) > 0 ? 'success' : 'info'" class="board-tag">
                   {{ (pools[key] || 0) > 0 ? `${(pools[key] || 0).toLocaleString()} 条` : '未同步' }}
                 </el-tag>
               </div>
-              <div class="dim">近 {{ completenessDays }} 天每日覆盖率 · 板块卡显示所选日四类收盘数据是否已落库</div>
+              <div class="dim">近 {{ completenessDays }} 天每日覆盖率 · 卡片显示当日收盘池是否已落库</div>
             </div>
           </el-col>
         </el-row>
 
-        <div class="chart-row">
+        <div class="chart-row" v-if="marketBreakdown.length">
           <div class="chart-box short" ref="marketChartRef"></div>
         </div>
+        <div v-else class="dim mb-12">按市场拆分需要 stock_basic（股票列表）数据；同步后显示沪/深/北覆盖对比。</div>
       </div>
 
-      <!-- 2.2 数据验证 -->
       <div class="viz-section">
         <div class="section-title">数据验证</div>
         <div class="validate-toolbar">
@@ -482,45 +522,8 @@ onBeforeUnmount(() => {
         </el-row>
         <div class="chart-box" ref="validateChartRef"></div>
         <div class="dim" v-if="validateData">
-          校验规则：最高<最低 / 最高<开盘或收盘 / 最低>开盘或收盘 / 收盘≤0 / 开盘≤0 / 成交量<0 / 涨跌幅缺失 / 成交额缺失或为负。绿色=该类别无异常。
+          校验规则：最高&lt;最低 / 最高&lt;开盘或收盘 / 最低&gt;开盘或收盘 / 收盘≤0 / 开盘≤0 / 成交量&lt;0 / 成交额缺失或为负。绿色=该类别无异常。
         </div>
-      </div>
-
-      <!-- 2.3 数据进度 -->
-      <div class="viz-section">
-        <div class="section-title">数据进度</div>
-        <div class="dim mb-8">
-          实时进度见上方「全市场数据同步」卡片；此处列出最近完成的全市场同步任务记录（进程内保留最近 10 次）。
-        </div>
-        <el-table :data="status?.history || []" size="small" border max-height="260">
-          <el-table-column label="完成时间" width="170">
-            <template #default="{ row }">
-              {{ row.endedAt ? new Date(row.endedAt).toLocaleString('zh-CN', { hour12: false }) : '-' }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="date" label="目标日期" width="110" />
-          <el-table-column label="股票数" width="90" align="right">
-            <template #default="{ row }">{{ row.total?.toLocaleString() }}</template>
-          </el-table-column>
-          <el-table-column label="成功" width="80" align="right">
-            <template #default="{ row }"><span style="color:#67c23a">{{ row.ok }}</span></template>
-          </el-table-column>
-          <el-table-column label="无数据" width="80" align="right">
-            <template #default="{ row }">{{ row.empty }}</template>
-          </el-table-column>
-          <el-table-column label="失败" width="80" align="right">
-            <template #default="{ row }"><span style="color:#f56c6c">{{ row.error }}</span></template>
-          </el-table-column>
-          <el-table-column label="写入行数" width="90" align="right">
-            <template #default="{ row }">{{ row.rows?.toLocaleString() }}</template>
-          </el-table-column>
-          <el-table-column label="结果" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.message || '-' }}</template>
-          </el-table-column>
-          <template #empty>
-            <span class="dim">暂无已完成的同步任务</span>
-          </template>
-        </el-table>
       </div>
     </el-card>
   </div>
@@ -529,19 +532,21 @@ onBeforeUnmount(() => {
 <style scoped>
 .close-data-sync { padding: 20px; }
 .mb-16 { margin-bottom: 16px; }
-.mb-8 { margin-bottom: 8px; }
+.mb-12 { margin-bottom: 12px; }
+.mt-4 { margin-top: 4px; }
 .mt-8 { margin-top: 8px; }
 .mt-12 { margin-top: 12px; }
 .mt-16 { margin-top: 16px; }
 .card-header { display: flex; justify-content: space-between; align-items: center; }
-.header-actions { display: flex; align-items: center; }
-.form-hint { margin-left: 6px; color: #86909c; font-size: 12px; }
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
 .hint { margin-top: 6px; color: #86909c; font-size: 12px; }
 .dim { color: #86909c; font-size: 12px; }
 .progress-block { padding-top: 4px; }
 .pool-result { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-.pool-title { font-size: 13px; color: #606266; }
-.pool-tag { }
+.log-box { border: 1px solid var(--el-border-color-light); border-radius: 6px; padding: 8px 10px; }
+.log-line { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 22px; color: #606266; }
+.log-time { color: #909399; white-space: nowrap; }
+.log-tag { flex-shrink: 0; }
 .viz-section { margin-bottom: 26px; }
 .section-title { font-size: 15px; font-weight: 600; color: #303133; margin-bottom: 12px; }
 .section-subtitle { font-size: 13px; font-weight: 600; color: #606266; margin-bottom: 10px; }
@@ -555,6 +560,5 @@ onBeforeUnmount(() => {
 .board-card { padding: 8px 12px; border: 1px solid var(--el-border-color-light); border-radius: 6px; }
 .board-item { display: flex; justify-content: space-between; align-items: center; padding: 7px 2px; border-bottom: 1px dashed var(--el-border-color-lighter); font-size: 13px; }
 .board-item:last-child { border-bottom: none; }
-.board-tag { }
 .validate-toolbar { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 </style>
