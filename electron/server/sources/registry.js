@@ -21,6 +21,37 @@
 
 const FAIL_THRESHOLD = 3      // 连续失败 N 次进冷却
 const COOLDOWN_MS = 30000     // 冷却时长（秒级，够上游恢复）
+const DEFAULT_SOURCE_TIMEOUT_MS = 8000
+
+/** 各源超时（ms）。单列 default 与按 dataType 覆盖：慢接口（全市场 spot、桥冷启动）
+ *  给更长预算，快接口（本地 tdx_quant）快速失败，避免弱网下每层叠加拖死路由。 */
+const SOURCE_TIMEOUTS = {
+  main: { default: 15000, spot: 45000, kline: 15000, minute: 12000, indexDaily: 15000, industry: 15000 },
+  tencent: { default: 8000, spot: 20000, minute: 10000, kline: 6000, indexDaily: 6000 },
+  tdx_server: { default: 10000, spot: 60000, indexSpot: 20000, kline: 12000, minute: 12000, financial: 20000 },
+  tdx_quant: { default: 5000, spot: 5000, kline: 5000 },
+  tdx_local: { default: 5000 },
+  sina: { default: 10000 },
+  akshare: { default: 30000 }
+}
+
+function timeoutOf(name, dataType) {
+  const conf = SOURCE_TIMEOUTS[name]
+  if (!conf) return DEFAULT_SOURCE_TIMEOUT_MS
+  if (typeof conf === 'number') return conf
+  return conf[dataType] || conf.default || DEFAULT_SOURCE_TIMEOUT_MS
+}
+
+/** 给单源调用加超时：超时按普通失败处理（计入熔断），不阻塞后续源。 */
+function withTimeout(promise, ms, name, dataType) {
+  let timer = null
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${name}/${dataType} 超时(${ms}ms)`)), ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer)
+  })
+}
 
 const stats = new Map()       // name -> {ok, fail, consecutiveFail, cooldownUntil, lastError, lastUsedAt}
 const sources = []            // [{name, capabilities:Set, fetchers, available}]
@@ -68,44 +99,31 @@ function registerSource(src) {
   statOf(src.name)
 }
 
-/** 各数据类型的源优先级（首源为主，后续为兜底）。可被 settings 覆盖（Phase 3）。 */
-// ⚠ 临时冻结非 TDX 源（用户要求测试通达信源效果）。恢复时把 PRIORITY_TDX_ONLY 改回 false。
-const PRIORITY_TDX_ONLY = true
-
-// 原始优先级（恢复时用）：
-const PRIORITY_FULL = {
-  kline: ['tdx_server', 'tdx_quant', 'tdx_local', 'main', 'sina', 'akshare'],
-  spot: ['main', 'sina', 'akshare'],
-  indexDaily: ['main', 'sina', 'akshare'],
-  indexSpot: ['main', 'sina'],
-  minute: ['tdx_server', 'tdx_quant', 'main', 'sina', 'akshare'],
+/** 各数据类型的源优先级（首源为主，后续为兜底）。
+ *
+ *  2026-10-20 解除 TDX-only 冻结：main/sina/akshare 全部恢复参与，并新增独立 tencent 源。
+ *  统一链路（实测依据见 sources/tencent.js 头注释）：
+ *   - 全市场 spot：腾讯批量(800/请求,~1s) → tqs(tdx_server,补北交所/新代码) → 东财/新浪
+ *   - 单股 spot  ：tdx_quant(本地 17709,~20ms) → 腾讯 → tqs → 东财/新浪（在 aktools.getStockSpot 内按 codes 覆盖）
+ *   - 分钟K      ：tqs(0.06s) → 腾讯 mkline/dayquery(320根上限) → 东财/新浪
+ *   - 日K        ：数据包/raw 为主（路由层），在线兜底 tqs → tdx_quant → 本地.day → 腾讯 → 东财
+ *   - 指数 spot  ：腾讯(单请求含OHLC) → tqs → 东财 → 新浪
+ *  榜单/涨停池等仍保留原有主源顺序，避免改变既有字段口径。
+ */
+const PRIORITY = {
+  kline: ['tdx_server', 'tdx_quant', 'tdx_local', 'tencent', 'main', 'sina', 'akshare'],
+  spot: ['tencent', 'tdx_server', 'tdx_quant', 'main', 'sina', 'akshare'],
+  indexDaily: ['tdx_server', 'tdx_local', 'tencent', 'main', 'sina', 'akshare'],
+  indexSpot: ['tencent', 'tdx_server', 'main', 'sina'],
+  minute: ['tdx_server', 'tencent', 'main', 'sina', 'akshare'],
   limitPool: ['tdx_server', 'tdx_quant', 'main', 'akshare'],
-  dropPool: ['main', 'akshare'],
-  ztPrev: ['main', 'akshare'],
-  industry: ['main', 'akshare'],
+  dropPool: ['main', 'tdx_server', 'tdx_quant', 'akshare'],
+  ztPrev: ['main', 'tdx_server', 'akshare'],
+  industry: ['main', 'tdx_server', 'akshare'],
   info: ['tdx_server', 'tdx_quant', 'main', 'akshare'],
-  holding: ['main']
+  financial: ['tdx_server', 'tdx_quant', 'akshare'],
+  holding: ['main', 'tdx_server']
 }
-
-// TDX-only 优先级（冻结 main/sina/akshare，仅 tdx_server/tdx_quant/tdx_local）
-// indexDaily 增加 tdx_local 兜底：tqs 桥（tdx_server）未运行时回落读本机 vipdoc
-// 指数 .day 文件（1998 起深历史），保证 TDX 冻结模式下指数K线仍可回填历史。
-const PRIORITY_TDX = {
-  kline: ['tdx_server', 'tdx_quant', 'tdx_local'],
-  spot: ['tdx_server', 'tdx_quant'],
-  indexDaily: ['tdx_server', 'tdx_local'],
-  indexSpot: ['tdx_server'],
-  minute: ['tdx_server', 'tdx_quant'],
-  limitPool: ['tdx_server', 'tdx_quant'],
-  dropPool: ['tdx_server', 'tdx_quant'],
-  ztPrev: ['tdx_server'],
-  industry: ['tdx_server'],
-  info: ['tdx_server', 'tdx_quant'],
-  financial: ['tdx_server', 'tdx_quant'],
-  holding: ['tdx_server'],
-}
-
-const PRIORITY = PRIORITY_TDX_ONLY ? PRIORITY_TDX : PRIORITY_FULL
 
 /** 串行 failover：按优先级逐源尝试，空数组/抛错都继续下一源，全部失败抛聚合错误。 */
 async function failover(dataType, params, order) {
@@ -121,7 +139,7 @@ async function failover(dataType, params, order) {
     if (typeof fn !== 'function') { reasons.push(`${name}:无${dataType}fetcher`); continue }
     const t0 = Date.now()
     try {
-      const data = await fn(params)
+      const data = await withTimeout(Promise.resolve().then(() => fn(params)), timeoutOf(name, dataType), name, dataType)
       const arr = Array.isArray(data) ? data : (data == null ? [] : [data])
       if (arr.length > 0) {
         markOk(name)
@@ -173,7 +191,7 @@ async function race(dataType, params, order) {
     let firstErr = null
     const reasons = []
     fns.forEach(({ name, fn }) => {
-      Promise.resolve().then(() => fn(params)).then(
+      Promise.resolve().then(() => withTimeout(fn(params), timeoutOf(name, dataType), name, dataType)).then(
         (data) => {
           const arr = Array.isArray(data) ? data : (data == null ? [] : [data])
           if (arr.length > 0) { markOk(name); resolve(data) }

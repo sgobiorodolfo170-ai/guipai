@@ -9,7 +9,14 @@
  *   get_zdt_data(涨跌停) / get_stock_info(基础信息) / get_divid_factors(除权)
  *
  * 只在 TdxW（支持TQ的通达信终端）运行时可用——天然带登录态，无需额外 token。
- * HTTP/JSON 直调，无 pytdx 二进制协议问题。返回实时数据（含当日）+ 全市场按需。
+ * HTTP/JSON 直调，无 pytdx 二进制协议问题。返回实时数据（含当日）。
+ *
+ * 实测边界（2026-10-20）：
+ *   - get_market_snapshot 只接受 stock_code（单只），不支持 stock_list / batch；
+ *     tqcenter 未注册 get_market_snapshot_batch（-32601），故批量按单只并发；
+ *   - get_market_data 的 1m/5m/15m/30m 对个股/指数/BSE 均返回空，60m 报 period error，
+ *     仅 1d/1w 可用 → 分钟K能力已移除（分钟链走 tqs/腾讯）；
+ *   - get_zdt_data / get_financial_data 必须带 stock_list / table_list，且日期用紧凑格式。
  */
 
 const http = require('http')
@@ -125,80 +132,165 @@ async function getKLine({ symbol, period = 'daily', start_date, end_date, count,
   return out
 }
 
+/** 单只快照 → 中文键行。tqcenter 字段为大写（Now/LastClose/Open/Max/Min/Volume/Amount），
+ *  Amount 单位为万元（×10000 转元）；涨跌额/涨跌幅/振幅由昨收推导。 */
+function mapSnapshotOne(code, result) {
+  if (!result || typeof result !== 'object') return null
+  if (result.ErrorId && String(result.ErrorId) !== '0') return null
+  const v = result.Value || result.data || result
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const price = num(v.Now != null ? v.Now : v.now)
+  const prev = num(v.LastClose != null ? v.LastClose : v.last_close)
+  if (price == null) return null
+  const open = num(v.Open != null ? v.Open : v.open)
+  const high = num(v.Max != null ? v.Max : v.max)
+  const low = num(v.Min != null ? v.Min : v.min)
+  const vol = num(v.Volume != null ? v.Volume : v.volume)
+  const amtWan = num(v.Amount != null ? v.Amount : v.amount)
+  const chg = prev == null ? null : round2(price - prev)
+  return {
+    '代码': code,
+    '名称': null,
+    '最新价': price,
+    '涨跌额': chg,
+    '涨跌幅': chg == null || !prev ? null : round2(chg / prev * 100),
+    '成交量': vol,
+    '成交额': amtWan == null ? null : amtWan * 10000,
+    '最高': high,
+    '最低': low,
+    '今开': open,
+    '昨收': prev,
+    '振幅': high == null || low == null || !prev ? null : round2((high - low) / prev * 100),
+    '量比': null,
+    '换手率': null
+  }
+}
+
+/** 批量响应（数组或 Value 字典）→ 中文键行；兼容不同 tqcenter 版本。 */
+function mapSnapshotBatch(result, stockList) {
+  if (!result) return []
+  const rows = []
+  if (Array.isArray(result)) {
+    result.forEach((item, i) => {
+      const code = String(item.stock_code || item.code || stockList[i] || '').replace(/\.\w+$/, '')
+      const mapped = mapSnapshotOne(code, item)
+      if (mapped) rows.push(mapped)
+    })
+    return rows
+  }
+  const box = result.Value || result.data || result
+  if (box && typeof box === 'object') {
+    for (const [full, item] of Object.entries(box)) {
+      const mapped = mapSnapshotOne(String(full).replace(/\.\w+$/, ''), item)
+      if (mapped) rows.push(mapped)
+    }
+  }
+  return rows
+}
+
 /**
- * 实时快照（get_market_snapshot_batch 或 get_market_snapshot）。
+ * 实时快照（按代码列表）。
  *
- * 注意：xtquant 的 snapshot 接口是「按代码列表」查询，没有全市场快照语义。
- * 调度器派发 spot 时 params 是普通对象（无 codes 字段），此时必须返回空数组交由下一源，
- * 否则下面 arr 里的 params 对象会走到 c.includes 上抛 TypeError，把整个 spot
- * failover 链的聚合错误顶掉（表现为上游报 "reading 'includes'" 而非真实原因）。
+ * tqcenter(17709) 实测：get_market_snapshot_batch 未注册（-32601），
+ * get_market_snapshot 只接受 stock_code（单只，~20ms），传 stock_list 报错。
+ * 因此批量路径改为「先试 batch（兼容其他版本）→ 失败按单只 8 并发」。
  *
- * @param codes 单代码 / 代码数组 / 调度器 params 对象；返回 [{...}] 中文键
+ * 调度器派发 spot 时 params 是普通对象（无 codes 字段）→ 返回空数组交由下一源，
+ * 避免把 params 对象当代码抛出 TypeError 顶掉整条 failover 链。
  */
 async function getSnapshot(codes) {
-  // 兼容调度器传 params 对象：仅当明确给出 codes 时才走本接口
   const raw = (codes && typeof codes === 'object' && !Array.isArray(codes))
     ? (codes.codes != null ? codes.codes : (codes.symbol != null ? [codes.symbol] : null))
     : codes
   const arr = (Array.isArray(raw) ? raw : (raw != null ? [raw] : []))
     .map(c => (c == null ? null : String(c)))
     .filter(c => c && /^\d{6}/.test(c))
-  if (arr.length === 0) return [] // 无有效代码 → 本源不提供全市场快照
-  const stockList = arr.map(c => (c.includes('.') ? c : `${c}.${suffix(c)}`))
-  let result
+  if (arr.length === 0) return []
+  const stockList = [...new Set(arr.map(c => (c.includes('.') ? c : `${c}.${suffix(c)}`)))]
   try {
-    result = await call('get_market_snapshot_batch', { stock_list: stockList })
-  } catch (_) {
-    result = await call('get_market_snapshot', { stock_list: stockList })
+    const result = await call('get_market_snapshot_batch', { stock_list: stockList }, { timeout: 5000 })
+    const list = mapSnapshotBatch(result, stockList)
+    if (list.length) return list
+  } catch (_) { /* -32601: 当前 tqcenter 不支持批量 */ }
+  const rows = await runPool(stockList, 8, async (full) => {
+    try {
+      const r = await call('get_market_snapshot', { stock_code: full }, { timeout: 5000 })
+      return mapSnapshotOne(full.replace(/\.\w+$/, ''), r)
+    } catch (_) { return null }
+  })
+  return rows.filter(Boolean)
+}
+
+/** 本地 stock_basic 全量代码（zdt 接口必须显式传 stock_list，无全市场默认语义）。 */
+function allLocalCodes() {
+  try {
+    const { getDb } = require('../db')
+    const rows = getDb().prepare('SELECT code FROM stock_basic').all()
+    return rows.map(r => String(r.code || '').trim()).filter(c => /^\d{6}$/.test(c))
+  } catch (_) { return [] }
+}
+
+/** 涨跌停数据（get_zdt_data）。必须传 stock_list + date（紧凑格式）。
+ *  返回字段与东财涨停池仅部分同构：价格/名称/换手等 tqcenter 不提供，置 null，
+ *  保证 converter 可安全跳过；本源仅作 tqs 之后的兜底。 */
+async function getZdt(p) {
+  const date = typeof p === 'string' ? p : (p && (p.date || p.start_date))
+  const list = (p && typeof p === 'object' && Array.isArray(p.stock_list) && p.stock_list.length)
+    ? p.stock_list
+    : allLocalCodes()
+  if (!list.length) throw new Error('get_zdt_data 需要 stock_list，且本地 stock_basic 为空')
+  const params = {
+    stock_list: [...new Set(list.map(c => (String(c).includes('.') ? String(c) : `${c}.${suffix(c)}`)))]
   }
-  // 响应结构以 Value 或直接数组；适配两种可能
-  const list = (result && (result.Value || result.data)) || result || []
-  if (!Array.isArray(list)) return []
-  return list.map(r => ({
-    '代码': String(r.stock_code || r.code || '').replace(/\.\w+$/, ''),
-    '名称': r.stock_name || r.name,
-    '最新价': num(r.last_price || r.close || r.price),
-    '涨跌额': num(r.price_change || r.change),
-    '涨跌幅': num(r.price_change_rate || r.pct_chg || r.changepercent),
-    '成交量': num(r.volume || r.vol),
-    '成交额': num(r.amount || r.turnover),
-    '最高': num(r.high), '最低': num(r.low),
-    '今开': num(r.open), '昨收': num(r.pre_close || r.settlement)
-  }))
-}
-
-/** 涨跌停数据（get_zdt_data）。返回中文键数组（与东财涨停池同构）。 */
-async function getZdt(date) {
   const d = dashed(date).replace(/-/g, '')
-  const result = await call('get_zdt_data', { date: d })
-  const list = (result && (result.Value || result.data)) || result || []
-  if (!Array.isArray(list)) return []
-  return list.map(r => ({
-    '代码': String(r.stock_code || r.code || '').replace(/\.\w+$/, ''),
-    '名称': r.stock_name || r.name,
-    '涨跌幅': num(r.price_change_rate || r.pct_chg),
-    '最新价': num(r.last_price || r.close),
-    '成交额': num(r.amount),
-    '换手率': num(r.turnover_rate),
-    '封板资金': num(r.fund || r.fd_amount),
-    '连板数': num(r.lbc || r.continuous_limit),
-    '所属行业': r.hybk || r.industry
-  }))
+  if (d) params.date = d
+  const result = await call('get_zdt_data', params, { timeout: 15000 })
+  const box = result && (result.Value || result.data)
+  if (!box || typeof box !== 'object' || Array.isArray(box)) return []
+  const out = []
+  for (const [full, r] of Object.entries(box)) {
+    if (!r || typeof r !== 'object') continue
+    out.push({
+      '代码': String(full).replace(/\.\w+$/, ''),
+      '名称': null,
+      '最新价': null,
+      '涨跌幅': null,
+      '成交额': null,
+      '换手率': null,
+      '封板资金': num(r.FDVolMaxZT),
+      '首次封板时间': fmtZdtTime(r.FirstTimeZT),
+      '最后封板时间': fmtZdtTime(r.LastTimeZT),
+      '炸板次数': num(r.OpenTimesZT),
+      '连板数': null,
+      '所属行业': null
+    })
+  }
+  return out
 }
 
-/** 财务数据（get_financial_data）。返回中文键数组。 */
-async function getFinancial({ symbol }) {
-  const code = `${symbol}.${suffix(symbol)}`
-  const result = await call('get_financial_data', { stock_list: [code] })
+/** 财务数据（get_financial_data）。实测必填：stock_list / table_list / report_type /
+ *  start_time / end_time（日期紧凑 YYYYMMDD）。结构随 tqcenter 版本变化，按数组字段容错映射。 */
+async function getFinancial(p) {
+  const symbol = typeof p === 'string' ? p : (p && p.symbol)
+  if (!symbol) return []
+  const code = `${String(symbol).replace(/\.\w+$/, '')}.${suffix(symbol)}`
+  const params = {
+    stock_list: [code],
+    table_list: (p && p.table_list) || ['BalanceSheet', 'IncomeStatement', 'CashFlowStatement'],
+    report_type: (p && p.report_type) || '1',
+    start_time: compact(p && p.start_time) || '20000101',
+    end_time: compact(p && p.end_time) || compact(new Date())
+  }
+  const result = await call('get_financial_data', params, { timeout: 15000 })
   const v = result && result.Value && result.Value[code]
-  if (!v) return []
-  // 财务数据结构以字段→数组形式返回（如 Revenue:[...], NetProfit:[...]）；按报告期对齐
+  if (!v || typeof v !== 'object') return []
   const dates = v.Date || v.report_date || []
-  if (!dates.length) return []
+  if (!Array.isArray(dates) || !dates.length) return []
   const out = []
   for (let i = 0; i < dates.length; i++) {
     out.push({
-      code: symbol, report_date: String(dates[i]).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'),
+      code: String(symbol).replace(/\.\w+$/, ''),
+      report_date: String(dates[i]).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3'),
       revenue: num(v.Revenue ? v.Revenue[i] : null),
       net_profit: num(v.NetProfit ? v.NetProfit[i] : null),
       total_assets: num(v.TotalAssets ? v.TotalAssets[i] : null),
@@ -210,17 +302,38 @@ async function getFinancial({ symbol }) {
 }
 
 function num(v) { const n = Number(v); return Number.isFinite(n) ? n : null }
+function round2(x) { return Number.isFinite(x) ? Math.round(x * 100) / 100 : null }
+function compact(v) {
+  const s = String(v == null ? '' : v).replace(/\D/g, '')
+  return s.length === 8 ? s : ''
+}
+function fmtZdtTime(v) {
+  const n = num(v)
+  return n ? String(Math.trunc(n)).padStart(6, '0') : null
+}
+async function runPool(items, limit, worker) {
+  const out = new Array(items.length)
+  let next = 0
+  const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length || 1)) }, async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await worker(items[i], i)
+    }
+  })
+  await Promise.all(lanes)
+  return out
+}
 
 module.exports = {
   name: 'tdx_quant',
-  capabilities: ['kline', 'spot', 'limitPool', 'financial', 'minute', 'dropPool'],
+  // minute 已移除：tqcenter 的 1m/5m/15m/30m 实测全空、60m 报 period error。
+  capabilities: ['kline', 'spot', 'limitPool', 'financial', 'dropPool'],
   fetchers: {
     kline: getKLine,
     spot: getSnapshot,
     limitPool: getZdt,
     dropPool: getZdt,
-    financial: getFinancial,
-    minute: getKLine
+    financial: getFinancial
   },
   available: () => available,
   setAvailable,
