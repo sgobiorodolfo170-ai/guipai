@@ -15,8 +15,8 @@ const marketRoutes = require('./routes/market')
 const watchlistRoutes = require('./routes/watchlist')
 const noteRoutes = require('./routes/note')
 const templateRoutes = require('./routes/template')
-const dataPullRoutes = require('./routes/data-pull')
 const marketSyncRoutes = require('./market-sync')
+const packageSync = require('./package-sync')
 
 let server = null
 
@@ -102,8 +102,8 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/watchlist', watchlistRoutes)
   app.use('/api/notes', noteRoutes)
   app.use('/api/templates', templateRoutes)
-  app.use('/api/data-pull', dataPullRoutes)
   app.use('/api/market-sync', marketSyncRoutes.router)
+  app.use('/api/package-sync', packageSync.router)
   app.use('/api/settings/akshare', require('./routes/akshare'))
 
   // ---- 通达信 Key 多账号管理（与 Tushare 同模式）----
@@ -222,6 +222,8 @@ function startServer(port = 8080, dataDir) {
       // 并预热全市场快照缓存，避免用户第一次打开页面就等 2~4s。均为 best-effort，不阻塞启动。
       require('./aktools').warmupUpstream().catch(() => {})
       if (typeof aktoolsRoutes.primeCache === 'function') aktoolsRoutes.primeCache().catch(() => {})
+      // 通达信数据包：启动补跑最近 5 个交易日 + 每天 18:10 自动同步
+      packageSync.startScheduler()
       resolve({ port, app })
     })
   })
@@ -229,6 +231,7 @@ function startServer(port = 8080, dataDir) {
 }
 
 function stopServer() {
+  try { packageSync.stopScheduler() } catch (_) {}
   if (server) { server.close(); server = null }
   closeDb()
 }
