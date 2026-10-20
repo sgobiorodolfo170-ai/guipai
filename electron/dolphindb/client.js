@@ -271,9 +271,9 @@ async function ensureSchema(dbPath) {
     `  db.createPartitionedTable(t, \`daily_k, \`trade_date)\n` +
     `}`
   )
-  // 原始不复权日K表（daily_k_raw）—— 通达信 .day 导入的只读基线，不可删除/修改
-  // 1998-01-05 ~ 2026-10-08，9482只股票，~2427万条，硬编入项目
-  // 注意：此表在 dfs://tradeinsight_raw 独立库中（分区从1990起，支持历史数据）
+  // 原始不复权日K表（daily_k_raw）—— 通达信 .day 全量导入 + 每日数据包增量维护
+  // 1998-01-05 起全史，独立库 dfs://tradeinsight_raw（分区从1990起，支持历史数据）
+  // 每日 18:10 由 package-sync 写入当日全市场（个股 + 北交所），按日期先删后插保证幂等。
   const rawBounds = []
   for (let y = 1990; y <= endYear; y++) rawBounds.push(`${y}.01.01`)
   await execute(
