@@ -16,7 +16,10 @@ Node 端 sources/akshare.js 作为 registry 的末级兜底源调用本服务。
 import argparse
 import math
 import re
+import threading
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 
 from flask import Flask, jsonify, request
 
@@ -754,18 +757,20 @@ def tdxs_snapshot():
     codes = [_tqs_code(c.strip()) for c in raw.split(',') if c.strip()]
     try:
         r = _tqs.get_market_snapshot_batch(stock_list=codes)
-        items = _safe(r)
-        # tqs 可能返回 dict（单只/字段→值映射）或 list，统一转为 list
-        if isinstance(items, dict):
-            # 判断是单条记录（含 stock_code/code 键）还是字段→值映射
-            if 'stock_code' in items or 'code' in items or 'symbol' in items:
-                items = [items]
-            else:
-                # 字段→值映射，按 codes 顺序展开
-                items = [{k: items.get(k) for k in items} for _ in codes]
-        elif not isinstance(items, list):
-            items = []
-        return _ok(items)
+        box = _safe(r)
+        names = _stock_name_map()
+        out = []
+        if isinstance(box, dict):
+            for i, c in enumerate(codes):
+                rec = box.get(c) or box.get(c.split('.')[0])
+                if isinstance(rec, dict):
+                    out.append(_map_snapshot(rec, i, names.get(c, ''), code=c))
+        elif isinstance(box, list):
+            for i, rec in enumerate(box):
+                if isinstance(rec, dict):
+                    c = rec.get('stock_code') or rec.get('code') or (codes[i] if i < len(codes) else '')
+                    out.append(_map_snapshot(rec, i, names.get(c, ''), code=c))
+        return _ok(out)
     except Exception as e:
         traceback.print_exc()
         return _err(f'tqs snapshot 失败: {e}')
@@ -882,29 +887,117 @@ _INDEX_NAMES = {
 }
 
 
-def _map_snapshot(r, idx=0, fallback_name=''):
-    """tqs 快照记录 → 东财同构中文键（与 aktools.js mapIndexSpot/mapSpotItem 对齐）。"""
-    raw_code = str(r.get('stock_code', r.get('code', '')) or r.get('symbol', ''))
-    code = re.sub(r'\.\w+$', '', raw_code)
-    name = r.get('stock_name', r.get('name', '')) or fallback_name
-    price = r.get('last_price', r.get('close', 0))
-    pre_close = r.get('pre_close', r.get('settlement', 0))
-    chg = r.get('price_change')
-    if chg is None and price and pre_close:
-        chg = round(float(price) - float(pre_close), 2)
-    pct = r.get('price_change_rate', r.get('pct_chg', r.get('changepercent')))
-    if pct is None and chg is not None and pre_close:
-        pct = round(float(chg) / float(pre_close) * 100, 2) if float(pre_close) else 0
+def _map_snapshot(r, idx=0, fallback_name='', code=None):
+    """tqs 快照记录 → 东财同构中文键（与 aktools.js mapSpotItem 对齐）。
+
+    修正（2026-10-20）：tqs 返回的键是首字母大写（Now/LastClose/Open/Max/Min/
+    Volume/Amount/Zangsu），旧实现按小写键取值导致全市场映射全为空。
+    Amount 单位为万元 → ×10000 转元；涨跌额/涨跌幅/振幅由昨收推导。
+    """
+    raw_code = code or r.get('stock_code') or r.get('code') or r.get('symbol') or ''
+    code = re.sub(r'\.\w+$', '', str(raw_code))
+    name = r.get('stock_name') or r.get('name') or r.get('Name') or fallback_name
+    price = r.get('Now', r.get('last_price', r.get('close')))
+    pre_close = r.get('LastClose', r.get('pre_close', r.get('settlement')))
+    open_ = r.get('Open', r.get('open'))
+    high = r.get('Max', r.get('high'))
+    low = r.get('Min', r.get('low'))
+    vol = r.get('Volume', r.get('volume', r.get('vol')))
+    amt = r.get('Amount', r.get('amount', r.get('turnover')))
+    amt = _n(amt)
+    if amt is not None:
+        amt = amt * 10000  # tqs Amount 单位万元 → 元
+    price_n = _n(price)
+    pre_n = _n(pre_close)
+    chg = None
+    if price_n is not None and pre_n:
+        chg = round(price_n - pre_n, 2)
+    pct = None
+    if chg is not None and pre_n:
+        pct = round(chg / pre_n * 100, 2)
+    amp = None
+    high_n, low_n = _n(high), _n(low)
+    if high_n is not None and low_n is not None and pre_n:
+        amp = round((high_n - low_n) / pre_n * 100, 2)
     return {
-        '序号': idx + 1, '代码': code, '名称': name,
-        '最新价': _n(price), '涨跌幅': _n(pct), '涨跌额': _n(chg),
-        '成交量': _n(r.get('volume', r.get('vol'))),
-        '成交额': _n(r.get('amount', r.get('turnover'))),
-        '振幅': _n(r.get('amplitude')), '最高': _n(r.get('high')),
-        '最低': _n(r.get('low')), '今开': _n(r.get('open')),
-        '昨收': _n(pre_close), '量比': _n(r.get('quantity_ratio')),
-        '换手率': _n(r.get('turnover_rate'))
+        '序号': idx + 1, '代码': code, '名称': name or code,
+        '最新价': price_n, '涨跌幅': pct, '涨跌额': chg,
+        '成交量': _n(vol), '成交额': amt,
+        '振幅': amp, '最高': high_n, '最低': low_n, '今开': _n(open_),
+        '昨收': pre_n, '量比': None, '换手率': None,
+        '涨速': _n(r.get('Zangsu'))
     }
+
+
+# ---- tqs 全市场代码池 / 名称缓存（全市场快照的映射依赖名称，分批取名称很贵） ----
+_STOCK_CACHE = {'at': 0.0, 'codes': None, 'names': None}
+_STOCK_CACHE_LOCK = threading.RLock()
+_STOCK_CACHE_TTL = 6 * 3600  # 6h：盘中代码池/名称基本不变
+
+
+def _all_stock_codes():
+    """全市场 A 股代码（tqs.get_stock_list(market='5')，含北交所）。带 6h 缓存。"""
+    now = time.time()
+    with _STOCK_CACHE_LOCK:
+        if _STOCK_CACHE['codes'] and now - _STOCK_CACHE['at'] < _STOCK_CACHE_TTL:
+            return list(_STOCK_CACHE['codes'])
+    codes = []
+    try:
+        r = _tqs.get_stock_list(market='5')
+        if isinstance(r, list):
+            codes = [str(x).strip() for x in r if x]
+        elif isinstance(r, dict):
+            codes = [str(k).strip() for k in r.keys() if k]
+    except Exception as e:
+        print(f'[tdxs] get_stock_list 失败: {str(e)[:100]}')
+    if not codes:
+        # 兼容旧板块接口（不同 tqs 版本支持的板块名不同）
+        for sector_name in ('沪深A股', '全部A股', 'A股'):
+            try:
+                r = _tqs.get_stock_list_in_sector(block_code=sector_name)
+                if isinstance(r, list) and r:
+                    codes = [str(x).strip() for x in r if x]
+                    break
+            except Exception:
+                continue
+    codes = [c for c in codes if re.match(r'^\d{6}(\.\w+)?$', c)]
+    with _STOCK_CACHE_LOCK:
+        _STOCK_CACHE['codes'] = codes
+        _STOCK_CACHE['at'] = now
+    return list(codes)
+
+
+def _stock_name_map():
+    """代码 → 名称（get_stock_info_batch 分块并发，全市场约 1~3s）。带 6h 缓存。"""
+    now = time.time()
+    with _STOCK_CACHE_LOCK:
+        if _STOCK_CACHE['names'] is not None and now - _STOCK_CACHE['at'] < _STOCK_CACHE_TTL:
+            return dict(_STOCK_CACHE['names'])
+    codes = _all_stock_codes()
+    names = {}
+    if codes:
+        chunks = [codes[i:i + 1000] for i in range(0, len(codes), 1000)]
+
+        def fetch(chunk):
+            try:
+                r = _tqs.get_stock_info_batch(stock_list=chunk)
+                if isinstance(r, dict):
+                    for c, v in r.items():
+                        nm = v.get('Name') if isinstance(v, dict) else None
+                        if nm:
+                            names[c] = nm
+            except Exception as e:
+                print(f'[tdxs] 名称批次失败: {str(e)[:80]}')
+
+        try:
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                list(pool.map(fetch, chunks))
+        except Exception as e:
+            print(f'[tdxs] 名称池失败: {str(e)[:80]}')
+    with _STOCK_CACHE_LOCK:
+        _STOCK_CACHE['names'] = names
+        _STOCK_CACHE['at'] = now
+    return dict(names)
 
 
 def _n(v):
@@ -961,63 +1054,47 @@ def tdxs_index_spot():
 
 @app.route('/tdxs_market_spot')
 def tdxs_market_spot():
-    """全市场快照（沪深A股）。先取全部代码，分批快照后合并。
-    冷调用较慢（~5-10s），路由层应缓存 60-300s。"""
+    """全市场快照（沪深京 A 股，含北交所）。
+
+    修正（2026-10-20）：旧实现用 get_stock_list_in_sector('沪深A股' 等) 取代码池，
+    该接口在 tqs 上不存在/板块名无效 → 全市场恒为空；现改用 get_stock_list(market='5')
+    （实测 5580 只，SH2318/SZ2908/BJ354）。
+    批次 1000 只/6 并发（实测 6×1000 约 2.7s）；名称走 _stock_name_map 6h 缓存。
+    冷调用约 5-10s（含名称首次拉取），路由层应缓存 60-300s。
+    """
     if not TQS_OK:
         return _err('tdxaidata 未配置', 503)
     try:
-        # 1. 尝试从板块成分获取全部 A 股代码
-        all_codes = []
-        for sector_name in ('沪深A股', '全部A股', 'A股'):
-            try:
-                r = _tqs.get_stock_list_in_sector(block_code=sector_name)
-                if r and isinstance(r, list):
-                    all_codes = [str(x) for x in r if x]
-                    break
-                if r and isinstance(r, dict):
-                    vals = list(r.values()) if 'stock_code' not in r else [r]
-                    all_codes = [str(x.get('stock_code', x.get('code', '')))
-                                 for x in vals if x and x.get('stock_code', x.get('code'))]
-                    if all_codes:
-                        break
-            except Exception:
-                continue
+        all_codes = _all_stock_codes()
         if not all_codes:
             return _ok([])
-        # 2. 分批快照（200 只/批）
-        import threading
-        results = [None] * len(all_codes)
-        batch_size = 200
+        names = _stock_name_map()
+        results = {}
 
         def fetch_batch(start):
-            chunk = all_codes[start:start + batch_size]
+            chunk = all_codes[start:start + 1000]
             try:
                 r = _tqs.get_market_snapshot_batch(stock_list=chunk)
-                items = _safe(r)
-                if isinstance(items, list):
-                    for j, item in enumerate(items):
-                        if start + j < len(results):
-                            results[start + j] = item
-                elif isinstance(items, dict):
-                    for j, c in enumerate(chunk):
-                        rec = items.get(c) or items.get(c.split('.')[0])
-                        if rec and start + j < len(results):
-                            results[start + j] = rec
-            except Exception:
-                pass
+                box = _safe(r)
+                if isinstance(box, dict):
+                    for c, rec in box.items():
+                        if isinstance(rec, dict):
+                            results[c] = rec
+                elif isinstance(box, list):
+                    for j, rec in enumerate(box):
+                        if j < len(chunk) and isinstance(rec, dict):
+                            results[chunk[j]] = rec
+            except Exception as e:
+                print(f'[tdxs_market_spot] 批次失败(start={start}): {str(e)[:80]}')
 
-        threads = []
-        for s in range(0, len(all_codes), batch_size):
-            t = threading.Thread(target=fetch_batch, args=(s,))
-            t.start()
-            threads.append(t)
-        for t in threads:
-            t.join(timeout=30)
-        # 3. 映射为东财同构格式
+        starts = list(range(0, len(all_codes), 1000))
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            list(pool.map(fetch_batch, starts))
         out = []
-        for i, rec in enumerate(results):
-            if rec:
-                out.append(_map_snapshot(rec, i))
+        for c in all_codes:
+            rec = results.get(c) or results.get(c.split('.')[0])
+            if rec and isinstance(rec, dict):
+                out.append(_map_snapshot(rec, len(out), names.get(c, ''), code=c))
         return _ok(out)
     except Exception as e:
         traceback.print_exc()
