@@ -89,7 +89,7 @@ onMounted(() => {
   <div class="stock-boards">
     <div class="page-header">
       <h1 class="page-title">行业板块</h1>
-      <p class="page-description">浏览行业板块行情，点击板块查看成分股（数据来自新浪行业板块）</p>
+      <p class="page-description">浏览行业板块行情，点击板块查看成分股（数据来自本地数据库，由数据管理 → 收盘数据同步更新）</p>
     </div>
 
     <el-card>
@@ -99,8 +99,8 @@ onMounted(() => {
           <el-button size="small" @click="fetchBoards" :loading="boardLoading">刷新</el-button>
         </div>
       </template>
-      <el-table :data="boards" v-loading="boardLoading" size="small" stripe @row-click="openBoardCons" style="cursor:pointer">
-        <el-table-column prop="板块" label="板块" min-width="120" sortable />
+      <el-table :data="boards" v-loading="boardLoading" size="small" stripe border allow-drag-last-column @row-click="openBoardCons" style="cursor:pointer">
+        <el-table-column prop="板块" label="板块" width="150" sortable />
         <el-table-column prop="公司家数" label="家数" width="70" align="right" sortable />
         <el-table-column label="涨跌幅" width="100" sortable :sort-method="(a, b) => (a['涨跌幅'] || 0) - (b['涨跌幅'] || 0)">
           <template #default="{ row }">
@@ -115,9 +115,9 @@ onMounted(() => {
         <el-table-column label="平均价格" width="100" align="right" sortable :sort-method="(a, b) => (a['平均价格'] || 0) - (b['平均价格'] || 0)">
           <template #default="{ row }">{{ row['平均价格'] != null ? Number(row['平均价格']).toFixed(2) : '--' }}</template>
         </el-table-column>
-        <el-table-column label="领涨股" min-width="160">
+        <el-table-column label="领涨股" width="180">
           <template #default="{ row }">
-            <span v-if="row['股票名称']">{{ row['股票名称'] }}（{{ row['股票代码'] }}）</span>
+            <span v-if="row['股票名称']">{{ row['股票名称'] }}<template v-if="row['股票代码']">（{{ row['股票代码'] }}）</template></span>
             <span v-else class="dim-text">-</span>
           </template>
         </el-table-column>
@@ -127,7 +127,7 @@ onMounted(() => {
           </template>
         </el-table-column>
         <template #empty>
-          <span class="dim-text">{{ boardLoading ? '加载中…' : '板块列表为空（需数据源服务运行，点上方刷新）' }}</span>
+          <span class="dim-text">{{ boardLoading ? '加载中…' : '板块列表为空（请先在数据管理 → 收盘数据同步同步板块行情）' }}</span>
         </template>
       </el-table>
       <div class="dim-text board-tip">点击板块行查看成分股</div>
@@ -135,9 +135,9 @@ onMounted(() => {
 
     <!-- 成分股抽屉 -->
     <el-drawer v-model="consDrawer" :title="`${currentBoard} · 成分股`" size="720px" direction="rtl">
-      <el-table :data="consList" v-loading="consLoading" size="small" stripe @row-click="(row) => viewStockDetail(row['代码'])" style="cursor:pointer">
+      <el-table :data="consList" v-loading="consLoading" size="small" stripe border allow-drag-last-column @row-click="(row) => viewStockDetail(row['代码'])" style="cursor:pointer">
         <el-table-column prop="代码" label="代码" width="90" sortable />
-        <el-table-column prop="名称" label="名称" min-width="120" sortable />
+        <el-table-column prop="名称" label="名称" width="140" sortable />
         <el-table-column label="最新价" width="90" align="right" sortable :sort-method="(a, b) => (a['最新价'] || 0) - (b['最新价'] || 0)">
           <template #default="{ row }">{{ row['最新价'] != null ? Number(row['最新价']).toFixed(2) : '--' }}</template>
         </el-table-column>
