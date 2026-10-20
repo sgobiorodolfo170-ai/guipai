@@ -37,6 +37,20 @@ const COLS = {
     { name: 'amplitude', type: 'double' }, { name: 'change', type: 'double' },
     { name: 'price_change', type: 'double' }, { name: 'turnover_rate', type: 'double' },
     { name: 'create_time', type: 'timestamp' }, { name: 'update_time', type: 'timestamp' }
+  ],
+  // 全市场实时行情快照（与 spot-repository.SPOT_COLS 一致；供收盘数据同步「全市场实时行情」阶段写库复用）。
+  // timestamp 由通用写入路径填 NULL（前端不用该字段，实时数据读 latest 快照即可）。
+  stock_spot: [
+    { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
+    { name: 'timestamp', type: 'timestamp' },
+    { name: 'open', type: 'double' }, { name: 'close', type: 'double' },
+    { name: 'high', type: 'double' }, { name: 'low', type: 'double' },
+    { name: 'preclose', type: 'double' },
+    { name: 'volume', type: 'long' }, { name: 'amount', type: 'double' },
+    { name: 'pct_chg', type: 'double' }, { name: 'change_amount', type: 'double' },
+    { name: 'turnover_rate', type: 'double' }, { name: 'amplitude', type: 'double' },
+    { name: 'total_market_value', type: 'double' }, { name: 'circulation_market_value', type: 'double' },
+    { name: 'pe_ttm', type: 'double' }, { name: 'pb', type: 'double' }
   ]
 }
 
