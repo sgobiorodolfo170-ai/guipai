@@ -33,6 +33,9 @@ const DAILY_MINUTE = 10
 const TICK_MS = 10 * 60 * 1000
 const FINANCIAL_INTERVAL_DAYS = 30
 const STARTUP_DELAY_MS = 8000
+// DolphinDB 冷启动可能超过 8s（datanode 未初始化），启动补跑需等待而不是一次判死
+const STARTUP_DDB_WAIT_MS = 60 * 1000
+const DDB_RETRY_MS = 3000
 const LOG_LIMIT = 200
 
 const state = {
@@ -218,8 +221,8 @@ function isTradingWeekday(d) {
 }
 
 async function catchUpMissing() {
-  if (!(await ensureDdb())) {
-    pushLog('warn', 'DolphinDB 未连接，跳过启动补跑')
+  if (!(await waitForDdb())) {
+    pushLog('warn', `DolphinDB 等待 ${STARTUP_DDB_WAIT_MS / 1000}s 后仍未就绪，跳过启动补跑`)
     return
   }
   const now = new Date()
@@ -245,6 +248,19 @@ async function ensureDdb() {
     return true
   } catch (_) {
     return false
+  }
+}
+
+/**
+ * 等待 DolphinDB 就绪：引擎冷启动（尤其是首次建库）可能晚于 8s 启动补跑定时器。
+ * 每 3s 重试一次，最多等待 60s；避免因一次连接失败就整天不补数据。
+ */
+async function waitForDdb(timeoutMs = STARTUP_DDB_WAIT_MS) {
+  const deadline = Date.now() + timeoutMs
+  for (;;) {
+    if (await ensureDdb()) return true
+    if (Date.now() >= deadline) return false
+    await new Promise(r => setTimeout(r, DDB_RETRY_MS))
   }
 }
 
