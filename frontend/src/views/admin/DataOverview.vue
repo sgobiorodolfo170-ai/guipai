@@ -4,7 +4,7 @@
  *
  * 设计：
  *   - 数据源 /api/data-mgmt/overview（一次请求返回 sql.js + DolphinDB 两库全况）
- *   - DolphinDB 未连接时不报错，显示提示 + 一键重连（复用 /api/data-pull/connect 的 force 重连）
+ *   - DolphinDB 未连接时不报错，显示提示 + 一键重连（复用 /api/package-sync/connect 的 force 重连）
  *   - 10 秒自动刷新关闭，改为手动刷新（总览是低频查看页，不需要轮询）
  */
 import { ref, computed, onMounted } from 'vue'
@@ -48,7 +48,7 @@ const fetchOverview = async () => {
 const reconnectDdb = async () => {
   reconnecting.value = true
   try {
-    const res = await api.post('/data-pull/connect')
+    const res = await api.post('/package-sync/connect')
     if (res.data?.connected) {
       ElMessage.success('DolphinDB 连接成功')
     } else {
