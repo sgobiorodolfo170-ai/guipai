@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-15T12:17:57Z",
-  "updated_at": "2026-10-16T17:47:30Z",
+  "updated_at": "2026-10-19T17:51:01Z",
   "files": {
     ".gitattributes": {
       "sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476",
@@ -19,14 +19,14 @@
       "normalized_sha256": "5c816f01f3211095dce870ec60fa4c53badef3912bff0fe2899e8827fb5c6ee2"
     },
     "CHANGELOG.md": {
-      "sha256": "a7dfc87e0ef53fde8beaa82556301b2bf642a68c0d871f9cdf485019ecd2e6cc",
-      "size": 16734,
-      "normalized_sha256": "a7dfc87e0ef53fde8beaa82556301b2bf642a68c0d871f9cdf485019ecd2e6cc"
+      "sha256": "dcda16401c8f576cc872892d4d8b4de6c9d90bd4ce2ec11898bc6f0e556b89f5",
+      "size": 18863,
+      "normalized_sha256": "dcda16401c8f576cc872892d4d8b4de6c9d90bd4ce2ec11898bc6f0e556b89f5"
     },
     "aoci.code.txt": {
-      "sha256": "200c88d79eceb06a1fd54b4811b953eb6963929da64022be5bafa5af397384b9",
-      "size": 44903,
-      "normalized_sha256": "200c88d79eceb06a1fd54b4811b953eb6963929da64022be5bafa5af397384b9"
+      "sha256": "896b648c9a3ccf038c0e2ced71cd8756f8c548b29c9e5b320ebbcdc43178e446",
+      "size": 47384,
+      "normalized_sha256": "896b648c9a3ccf038c0e2ced71cd8756f8c548b29c9e5b320ebbcdc43178e446"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -126,9 +126,9 @@
       "normalized_sha256": "3727b0a3991a93706ef63c8c7645ccd426cec66628cab1c43b7d2ac08766f061"
     },
     "electron/server/aktools.js": {
-      "sha256": "0eac284ea1cd5aa65dda9d53b3e66076b8929796e36909136b7c92b409bc26f0",
-      "size": 52722,
-      "normalized_sha256": "0eac284ea1cd5aa65dda9d53b3e66076b8929796e36909136b7c92b409bc26f0"
+      "sha256": "3fe8e5fa77d5c036c012722797ecd941be54981705445ce4753ed7a22e6633a9",
+      "size": 54561,
+      "normalized_sha256": "3fe8e5fa77d5c036c012722797ecd941be54981705445ce4753ed7a22e6633a9"
     },
     "electron/server/cache.js": {
       "sha256": "1d2f46eadb2ac874e3395d97ed74fe386e38dff56f93ad6c26add44fa187fed8",
@@ -136,9 +136,9 @@
       "normalized_sha256": "1d2f46eadb2ac874e3395d97ed74fe386e38dff56f93ad6c26add44fa187fed8"
     },
     "electron/server/col-defs.js": {
-      "sha256": "976d8ea80acca821e176dd0ce09e7b4a3a925d90ec3881c433c2fbe0ef4dabfd",
-      "size": 2990,
-      "normalized_sha256": "976d8ea80acca821e176dd0ce09e7b4a3a925d90ec3881c433c2fbe0ef4dabfd"
+      "sha256": "96bc0cf5c01223c4cf62710746ff4ad1ef7756636173f34d65737d267f97da06",
+      "size": 4002,
+      "normalized_sha256": "96bc0cf5c01223c4cf62710746ff4ad1ef7756636173f34d65737d267f97da06"
     },
     "electron/server/converter.js": {
       "sha256": "b84120c213b0bdec2aaa1b661eca42043b71ce6f09e6eeb1206c9145785d38f8",
@@ -156,9 +156,14 @@
       "normalized_sha256": "f0ee3afdfae1de423b540b9119bcbf02209642866b7465b8ed90795d0e73a339"
     },
     "electron/server/market-sync.js": {
-      "sha256": "b8f6e8e47eb64b2caa73674e955f17d68010dbe164c07967e7029f3ab2314ec6",
-      "size": 20188,
-      "normalized_sha256": "b8f6e8e47eb64b2caa73674e955f17d68010dbe164c07967e7029f3ab2314ec6"
+      "sha256": "2b69dc5aa56de622074f3faa291d20eac555d584e3d6b4e2db154d7bd5ad6376",
+      "size": 21851,
+      "normalized_sha256": "2b69dc5aa56de622074f3faa291d20eac555d584e3d6b4e2db154d7bd5ad6376"
+    },
+    "electron/server/market-time.js": {
+      "sha256": "52e60ffdff58b0477dce8599d129deeea08cc69246daab4b27448a3f64afac2b",
+      "size": 1389,
+      "normalized_sha256": "52e60ffdff58b0477dce8599d129deeea08cc69246daab4b27448a3f64afac2b"
     },
     "electron/server/routes/akshare.js": {
       "sha256": "0e67ff62f099890251a3df11c2da9eb6dd3e01f12c3f5809215f8b0ff9a569c4",
@@ -166,14 +171,14 @@
       "normalized_sha256": "0e67ff62f099890251a3df11c2da9eb6dd3e01f12c3f5809215f8b0ff9a569c4"
     },
     "electron/server/routes/aktools.js": {
-      "sha256": "9cab4d538977adc6948cd6bd21e5bc6166261e44bb7919baa71bc29876bddefa",
-      "size": 16829,
-      "normalized_sha256": "9cab4d538977adc6948cd6bd21e5bc6166261e44bb7919baa71bc29876bddefa"
+      "sha256": "7ea7125d96d2cb0ea8a0c86ac20e8bfa4ec8d5784363a3bbcf0acb815f37d957",
+      "size": 19656,
+      "normalized_sha256": "7ea7125d96d2cb0ea8a0c86ac20e8bfa4ec8d5784363a3bbcf0acb815f37d957"
     },
     "electron/server/routes/boards.js": {
-      "sha256": "d255e6b51ff78db932ad651362d2e012936d9d81b8f00471cc1c5fa23a7f2051",
-      "size": 7455,
-      "normalized_sha256": "d255e6b51ff78db932ad651362d2e012936d9d81b8f00471cc1c5fa23a7f2051"
+      "sha256": "bc9d77d64804fdcd26472769d40c724a3962d634edb7d2273e1d114279b392bc",
+      "size": 4040,
+      "normalized_sha256": "bc9d77d64804fdcd26472769d40c724a3962d634edb7d2273e1d114279b392bc"
     },
     "electron/server/routes/data-mgmt.js": {
       "sha256": "e751d341c2d140b44a4e1fe35202832febbc032bf8b532efdcda678c1bef6894",
@@ -191,9 +196,9 @@
       "normalized_sha256": "aec83731373209e877eed920db279e429e4014a06623821a6841102198b04d5a"
     },
     "electron/server/routes/market.js": {
-      "sha256": "c3edbd6dd1e7e374875ee97ba27425663d66ff77be6123007238b65ecf52bcb5",
-      "size": 20048,
-      "normalized_sha256": "c3edbd6dd1e7e374875ee97ba27425663d66ff77be6123007238b65ecf52bcb5"
+      "sha256": "7082fec6f42dd12d304921e5f09961278ba9d0475030a58a45ba03ba85bbbf9e",
+      "size": 22460,
+      "normalized_sha256": "7082fec6f42dd12d304921e5f09961278ba9d0475030a58a45ba03ba85bbbf9e"
     },
     "electron/server/routes/note.js": {
       "sha256": "aeb7fd74c39f6b69c03510d5a9773ecc1bb0abd91d21848db9e606e30db95ccb",
@@ -206,9 +211,9 @@
       "normalized_sha256": "d03208f0e6bc94551bf9a2ab8c119237f75a131c50744f9d70ce3d4c0bc841f5"
     },
     "electron/server/routes/stock.js": {
-      "sha256": "54ba94ef7b028e95843ef5266a8daee6a84890693b861e51442da72e90580ae3",
-      "size": 29200,
-      "normalized_sha256": "54ba94ef7b028e95843ef5266a8daee6a84890693b861e51442da72e90580ae3"
+      "sha256": "c4b9d5c9ac720930b0bb9b27de902d71c9bc8679c8d49a5f70ebb9f1b4e649ee",
+      "size": 31577,
+      "normalized_sha256": "c4b9d5c9ac720930b0bb9b27de902d71c9bc8679c8d49a5f70ebb9f1b4e649ee"
     },
     "electron/server/routes/template.js": {
       "sha256": "a43133790120fee84f71af5f2f4a20ff3049fcecd01429300ef2e76a9bf25713",
@@ -246,9 +251,9 @@
       "normalized_sha256": "d67716d9603357ae11f963a948da7d2be8753ee22225d106a9692656808f2dd3"
     },
     "electron/server/sources/registry.js": {
-      "sha256": "ae205301c8bb5fd87c8fdde0eb5d6d480f4194983ff406515dc46d81d9e926ff",
-      "size": 8939,
-      "normalized_sha256": "ae205301c8bb5fd87c8fdde0eb5d6d480f4194983ff406515dc46d81d9e926ff"
+      "sha256": "d4908708169c4e43e100d032c2a606c4ab3ac28b508f2fe5c5eb8232abc1927e",
+      "size": 10476,
+      "normalized_sha256": "d4908708169c4e43e100d032c2a606c4ab3ac28b508f2fe5c5eb8232abc1927e"
     },
     "electron/server/sources/sina.js": {
       "sha256": "8546e0b8f38d4d94f51605eff6f31b39061abe6ec4a415a0ef8d7d15ed117261",
@@ -261,14 +266,19 @@
       "normalized_sha256": "7c872c638c72c88b54d9f42264df1f1f0420cbcbf5cc0e9191d044c23bd7d652"
     },
     "electron/server/sources/tdx_quant.js": {
-      "sha256": "8f87b7070b389516fd6ff2f3c34cc9827c1ea668db8c4e412fa30e881408a7d7",
-      "size": 10124,
-      "normalized_sha256": "8f87b7070b389516fd6ff2f3c34cc9827c1ea668db8c4e412fa30e881408a7d7"
+      "sha256": "e19c58adadaec30f3ce01d40691bfaa3d662a5d676e67bf3ea689b8e93fe3e2f",
+      "size": 14662,
+      "normalized_sha256": "e19c58adadaec30f3ce01d40691bfaa3d662a5d676e67bf3ea689b8e93fe3e2f"
     },
     "electron/server/sources/tdx_server.js": {
       "sha256": "f4632d87ce10d4a11ac9aad627108e2a14662a4500ec79a48097d7eef0c43a62",
       "size": 3840,
       "normalized_sha256": "f4632d87ce10d4a11ac9aad627108e2a14662a4500ec79a48097d7eef0c43a62"
+    },
+    "electron/server/sources/tencent.js": {
+      "sha256": "ad07c4c2f69b0ed3c9e928860b21aefb8bf75310e5090469f5832f61533918d4",
+      "size": 21874,
+      "normalized_sha256": "ad07c4c2f69b0ed3c9e928860b21aefb8bf75310e5090469f5832f61533918d4"
     },
     "electron/server/tushare.js": {
       "sha256": "687e7efde3288532dbb5513b2862b66b841025174470ccdc5bc54eefb40f7d62",
@@ -641,9 +651,9 @@
       "normalized_sha256": "9c391e75b422b543bdc97d11ddf8e326e8dc4522c4921a7aca4212f1b2fbfa99"
     },
     "frontend/src/views/admin/CloseDataSync.vue": {
-      "sha256": "f97918d1c1999e40256f98aa659a3939c7282999a3b771202095bb749de48e12",
-      "size": 25074,
-      "normalized_sha256": "f97918d1c1999e40256f98aa659a3939c7282999a3b771202095bb749de48e12"
+      "sha256": "f01cabd6ff70821add9a44add66a594c9a6a16582ef8b9b0162e8b2eb265d145",
+      "size": 25553,
+      "normalized_sha256": "f01cabd6ff70821add9a44add66a594c9a6a16582ef8b9b0162e8b2eb265d145"
     },
     "frontend/src/views/admin/DataOverview.vue": {
       "sha256": "3b111bd516dc7c96d20574a29449d92296c38d6e45203f2a31a88cfc12c356af",
@@ -691,9 +701,9 @@
       "normalized_sha256": "4d45d7d71e3ccb2bfabf0e44245e7f0d96e4514a3eb001d5726dc10542b341da"
     },
     "frontend/src/views/stock/StockBoards.vue": {
-      "sha256": "b925abeae79c600b227b535ddedce92f11904f9fe73b329162c871b7ede7e87b",
-      "size": 7895,
-      "normalized_sha256": "b925abeae79c600b227b535ddedce92f11904f9fe73b329162c871b7ede7e87b"
+      "sha256": "fb07bda8bd3ff27a4ba8884d9bb43b65e2e69faf8ddceaf4588382b96eaf4efd",
+      "size": 8055,
+      "normalized_sha256": "fb07bda8bd3ff27a4ba8884d9bb43b65e2e69faf8ddceaf4588382b96eaf4efd"
     },
     "frontend/src/views/stock/StockDetail.vue": {
       "sha256": "50b658cd653ef5c9ee7d66ae07fd51dcccf9e2914106677183489fc6834ebdd6",
@@ -701,9 +711,9 @@
       "normalized_sha256": "209775fc6e0bd1f0368499564375f502166b39d6cf032086303c03a82b401c33"
     },
     "frontend/src/views/stock/StockList.vue": {
-      "sha256": "130d0715647cdb849a30048f0b50c25fcafcff2773b8d752af177cb44f9d62e0",
-      "size": 11874,
-      "normalized_sha256": "130d0715647cdb849a30048f0b50c25fcafcff2773b8d752af177cb44f9d62e0"
+      "sha256": "fcb9554358e078ed493fa773a92ad0b604334c68f79da6ce914d7cb72650453d",
+      "size": 11402,
+      "normalized_sha256": "fcb9554358e078ed493fa773a92ad0b604334c68f79da6ce914d7cb72650453d"
     },
     "frontend/src/views/template/TemplateEdit.vue": {
       "sha256": "dce1a400c67126ea2871ec0d05a05e1ed30b8a38bfda4750b482165fd221075e",
@@ -781,9 +791,9 @@
       "normalized_sha256": "5334fb31a41f6d635add114cd59ba0f67930df98c8310dcf05113a41aee03edb"
     },
     "python/aktools_server/server.py": {
-      "sha256": "d020422fb73f94400cbf64807bfb260f124b9c4a9d1670094d1e8e361345844f",
-      "size": 40310,
-      "normalized_sha256": "d020422fb73f94400cbf64807bfb260f124b9c4a9d1670094d1e8e361345844f"
+      "sha256": "f8aa7d7f5a060238648e67598e89db2eebb06ec217a63d55dfeb20234acaac14",
+      "size": 43309,
+      "normalized_sha256": "f8aa7d7f5a060238648e67598e89db2eebb06ec217a63d55dfeb20234acaac14"
     }
   },
   "managed_scope": {
