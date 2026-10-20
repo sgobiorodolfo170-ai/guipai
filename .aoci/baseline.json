@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-15T12:17:57Z",
-  "updated_at": "2026-10-19T17:51:01Z",
+  "updated_at": "2026-10-20T07:56:57Z",
   "files": {
     ".gitattributes": {
       "sha256": "21fa16a2122e2b0360b47502c577428b645437e08e9e87ffba661f84853cb476",
@@ -19,14 +19,14 @@
       "normalized_sha256": "5c816f01f3211095dce870ec60fa4c53badef3912bff0fe2899e8827fb5c6ee2"
     },
     "CHANGELOG.md": {
-      "sha256": "dcda16401c8f576cc872892d4d8b4de6c9d90bd4ce2ec11898bc6f0e556b89f5",
-      "size": 18863,
-      "normalized_sha256": "dcda16401c8f576cc872892d4d8b4de6c9d90bd4ce2ec11898bc6f0e556b89f5"
+      "sha256": "4ef78be2b6aabd85d1c1db9d9c7c910cfa5f8a7b5c8950f1dc1e8ae09f67f12c",
+      "size": 21093,
+      "normalized_sha256": "4ef78be2b6aabd85d1c1db9d9c7c910cfa5f8a7b5c8950f1dc1e8ae09f67f12c"
     },
     "aoci.code.txt": {
-      "sha256": "896b648c9a3ccf038c0e2ced71cd8756f8c548b29c9e5b320ebbcdc43178e446",
-      "size": 47384,
-      "normalized_sha256": "896b648c9a3ccf038c0e2ced71cd8756f8c548b29c9e5b320ebbcdc43178e446"
+      "sha256": "c85213c345d5da59f838c73ddfc9859a731dc62a1119b3b49135d4f66dc7d17a",
+      "size": 49750,
+      "normalized_sha256": "c85213c345d5da59f838c73ddfc9859a731dc62a1119b3b49135d4f66dc7d17a"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -56,9 +56,9 @@
       "normalized_sha256": "9549ed4d34bdf4856a20be5886cd7049c0c4b4e734cc02a3964878527baca9f9"
     },
     "electron/dolphindb/client.js": {
-      "sha256": "5ea95112789e6dd8fb7d0d3a149be30e94c26fee92f9e34c69939f63db70649a",
-      "size": 15984,
-      "normalized_sha256": "5ea95112789e6dd8fb7d0d3a149be30e94c26fee92f9e34c69939f63db70649a"
+      "sha256": "8a13c518309df6a149d7444feee6eb181d035ec30647c0ebca1672c20388b875",
+      "size": 16027,
+      "normalized_sha256": "8a13c518309df6a149d7444feee6eb181d035ec30647c0ebca1672c20388b875"
     },
     "electron/dolphindb/e2e.js": {
       "sha256": "32137d7a464a027dddedfed1f8de324910fb8676ec528cf8fef66763dec09856",
@@ -69,6 +69,11 @@
       "sha256": "645395e140eb2ea8f9cd0c0dd7f4282ed29ece5da1487b4720324bee5444d935",
       "size": 2307,
       "normalized_sha256": "645395e140eb2ea8f9cd0c0dd7f4282ed29ece5da1487b4720324bee5444d935"
+    },
+    "electron/dolphindb/import-package.js": {
+      "sha256": "233d7d6ba908e3b72f3c3d83948e27383235b9910e19fa32a259cac371421e67",
+      "size": 4462,
+      "normalized_sha256": "233d7d6ba908e3b72f3c3d83948e27383235b9910e19fa32a259cac371421e67"
     },
     "electron/dolphindb/import-tdx.js": {
       "sha256": "cbdd251d1c50d97aba4c81f7cef35ca9319c03009f07b1c4fc56f98c64efbde0",
@@ -90,6 +95,11 @@
       "size": 2841,
       "normalized_sha256": "024be529c2433051f74aef7b7462f83785afdd4d28e29719364219f2520af69e"
     },
+    "electron/dolphindb/package-import.js": {
+      "sha256": "4df4d5d198f47dfa13f1fcace9b91470d96e1245dc7ec43b211cac26af6ec30b",
+      "size": 16140,
+      "normalized_sha256": "4df4d5d198f47dfa13f1fcace9b91470d96e1245dc7ec43b211cac26af6ec30b"
+    },
     "electron/dolphindb/params.js": {
       "sha256": "8fe6a5b3999c88fbfebe90b64b863184f280a93861a41f49f1ebcf1d9ac6c9ec",
       "size": 1412,
@@ -109,6 +119,11 @@
       "sha256": "4aec65423a27bf150d36f85f5559115ddaf78df589a943fe3c7cfc55555d6ed7",
       "size": 10638,
       "normalized_sha256": "4aec65423a27bf150d36f85f5559115ddaf78df589a943fe3c7cfc55555d6ed7"
+    },
+    "electron/dolphindb/tdx-package.js": {
+      "sha256": "c064c491c1dce5dcb4d8f6f3cc6d12dc0a60e14e1c6b409630ee9838f287ad4d",
+      "size": 17565,
+      "normalized_sha256": "c064c491c1dce5dcb4d8f6f3cc6d12dc0a60e14e1c6b409630ee9838f287ad4d"
     },
     "electron/main.js": {
       "sha256": "41f8ed51ef6a65a3f73bc4933b5c9af86f2aef3103dc0bf13a091226f1ad34b4",
@@ -151,19 +166,24 @@
       "normalized_sha256": "c0ca46864a363eca9891bad38834758d8f6f413ce3cefde6e6eb46eed59eae61"
     },
     "electron/server/index.js": {
-      "sha256": "f0ee3afdfae1de423b540b9119bcbf02209642866b7465b8ed90795d0e73a339",
-      "size": 10263,
-      "normalized_sha256": "f0ee3afdfae1de423b540b9119bcbf02209642866b7465b8ed90795d0e73a339"
+      "sha256": "e3553162fea36208b0d194059f1bf25790de76f07ef278503300cb2b44e1489c",
+      "size": 10441,
+      "normalized_sha256": "e3553162fea36208b0d194059f1bf25790de76f07ef278503300cb2b44e1489c"
     },
     "electron/server/market-sync.js": {
-      "sha256": "2b69dc5aa56de622074f3faa291d20eac555d584e3d6b4e2db154d7bd5ad6376",
-      "size": 21851,
-      "normalized_sha256": "2b69dc5aa56de622074f3faa291d20eac555d584e3d6b4e2db154d7bd5ad6376"
+      "sha256": "d09bd14bee1c3360457f4d025a7248d36682dc1eeaa55900b3565edee7dec82f",
+      "size": 17153,
+      "normalized_sha256": "d09bd14bee1c3360457f4d025a7248d36682dc1eeaa55900b3565edee7dec82f"
     },
     "electron/server/market-time.js": {
       "sha256": "52e60ffdff58b0477dce8599d129deeea08cc69246daab4b27448a3f64afac2b",
       "size": 1389,
       "normalized_sha256": "52e60ffdff58b0477dce8599d129deeea08cc69246daab4b27448a3f64afac2b"
+    },
+    "electron/server/package-sync.js": {
+      "sha256": "32e54cbe45d9154e9807afb2f84d0c160af2dc2618469de8d9ed1a9593a9dca4",
+      "size": 12624,
+      "normalized_sha256": "32e54cbe45d9154e9807afb2f84d0c160af2dc2618469de8d9ed1a9593a9dca4"
     },
     "electron/server/routes/akshare.js": {
       "sha256": "0e67ff62f099890251a3df11c2da9eb6dd3e01f12c3f5809215f8b0ff9a569c4",
@@ -651,14 +671,14 @@
       "normalized_sha256": "9c391e75b422b543bdc97d11ddf8e326e8dc4522c4921a7aca4212f1b2fbfa99"
     },
     "frontend/src/views/admin/CloseDataSync.vue": {
-      "sha256": "f01cabd6ff70821add9a44add66a594c9a6a16582ef8b9b0162e8b2eb265d145",
-      "size": 25553,
-      "normalized_sha256": "f01cabd6ff70821add9a44add66a594c9a6a16582ef8b9b0162e8b2eb265d145"
+      "sha256": "c0cf0de723d8395cd70701dcfed999b0ea53bb24480cb1f6f5fdae8e4469fc7c",
+      "size": 24444,
+      "normalized_sha256": "c0cf0de723d8395cd70701dcfed999b0ea53bb24480cb1f6f5fdae8e4469fc7c"
     },
     "frontend/src/views/admin/DataOverview.vue": {
-      "sha256": "3b111bd516dc7c96d20574a29449d92296c38d6e45203f2a31a88cfc12c356af",
-      "size": 12093,
-      "normalized_sha256": "3b111bd516dc7c96d20574a29449d92296c38d6e45203f2a31a88cfc12c356af"
+      "sha256": "9b86b764e2a805b78866181dc72b8abb01539212453fab5c0f5366fbe407b11d",
+      "size": 12099,
+      "normalized_sha256": "9b86b764e2a805b78866181dc72b8abb01539212453fab5c0f5366fbe407b11d"
     },
     "frontend/src/views/dashboard/Dashboard.vue": {
       "sha256": "ebd271447da490afc34b356a987d0e71b4129a6eb32f52cd416ddd1b8a2d64ca",
