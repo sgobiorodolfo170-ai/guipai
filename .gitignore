@@ -11,6 +11,10 @@ dist/
 resources/backend/
 resources/redis/
 
+# Python 缓存
+__pycache__/
+*.py[cod]
+
 # 日志与本地数据
 *.log
 data/
