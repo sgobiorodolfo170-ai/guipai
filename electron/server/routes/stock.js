@@ -11,6 +11,7 @@ const holdingRepo = require('../../dolphindb/holding-repository')
 const converter = require('../converter')
 const { getDb } = require('../db')
 const akshareSource = require('../sources/akshare')
+const marketTime = require('../market-time')
 
 const router = express.Router()
 
@@ -215,43 +216,76 @@ function mapSpotRow(r) {
   }
 }
 
-// 实时行情 — DB-first from stock_spot
-// 三层：内存缓存 → DolphinDB → aktools 补写后读回。任一层命中即返回，全程不直连行情源。
+/** 行情源中文键行 → 前端契约（与 mapSpotRow 输出同构，网络优先路径使用） */
+function mapSpotRaw(r) {
+  return {
+    code: r['代码'],
+    name: r['名称'] || r['代码'],
+    price: Number(r['最新价']) || 0,
+    changePercent: Number(r['涨跌幅']) || 0,
+    turnover: Number(r['成交额']) || 0,
+    volume: Number(r['成交量']) || 0,
+    totalMarketValue: Number(r['总市值']) || 0,
+    market: 'A股'
+  }
+}
+
+// 全市场快照写库节流：insertSpot 是「删今日 + 全量插入」，5s 缓存每次过期都全量重写
+// 会带来无谓写入放大；60s 一次足够让盘后/降级路径拿到当日快照。
+let lastSpotWriteAt = 0
+
+// 实时行情：
+//   - 盘中：网络优先（有 codes → tdx_quant/腾讯批量；无 codes → 腾讯全市场），5s 缓存；
+//   - 盘后/网络失败：库存快照 stock_spot → daily_k_raw 派生（原逻辑，60s 缓存）。
+// 旧实现为纯 DB 读取，盘中依赖上一次收盘同步，属于已知盘中不实时问题。
 router.get('/realtime', async (req, res) => {
-  const cacheKey = 'ddb:spot:realtime'
   const { codes } = req.query
-  const codeList = codes ? String(codes).split(',') : []
+  const codeList = codes ? String(codes).split(',').map(s => s.trim()).filter(Boolean) : []
+  const trading = marketTime.isTradingTime()
   try {
-    // 1. 内存缓存
+    // 1. 盘中网络优先（best-effort；失败静默回落库内）
+    if (trading) {
+      const netKey = 'ddb:spot:realtime:net'
+      let list = cache.get(netKey)
+      if (!list) {
+        try {
+          const raw = await aktools.getStockSpot(codeList)
+          if (raw && raw.length) {
+            list = raw.map(mapSpotRaw)
+            cache.set(netKey, list, marketTime.spotTtl())
+            if (!codeList.length && ddb.isConnected() && Date.now() - lastSpotWriteAt > 60000) {
+              lastSpotWriteAt = Date.now()
+              spotRepo.insertSpotSafe(raw).catch(e => console.error('[stock] realtime 快照入库失败:', e.message))
+            }
+          }
+        } catch (e) {
+          console.error('[stock] realtime 网络优先失败，降级库内快照:', e.message)
+        }
+      }
+      if (list && list.length) {
+        const filtered = codeList.length ? list.filter(s => codeList.includes(s.code)) : list
+        if (filtered.length) return ok(res, filtered, '成功(实时)')
+      }
+    }
+
+    // 2. 内存缓存 → DolphinDB
+    const cacheKey = 'ddb:spot:realtime'
     let cached = cache.get(cacheKey)
     if (!cached) {
-      // 2. DolphinDB
       cached = await spotRepo.getSpot()
-      if (cached && cached.length) cache.set(cacheKey, cached, 60)
+      if (cached && cached.length) cache.set(cacheKey, cached, marketTime.spotTtl())
     }
     if (cached && cached.length) {
       const list = (codeList.length ? cached.filter(s => codeList.includes(s.symbol)) : cached).map(mapSpotRow)
       return ok(res, list, '成功(缓存)')
     }
 
-    // 3. aktools → 转换入库 → 读回（保证前端只见数据库数据）
-    let raw = await aktools.getStockSpot()
-    if (raw && raw.length) {
-      await spotRepo.insertSpotSafe(raw)
-      const rows = await spotRepo.getSpot()
-      if (rows && rows.length) {
-        cache.set(cacheKey, rows, 60)
-        const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
-        return ok(res, list, '成功(已入库)')
-      }
-    }
-
-    // 4. 上游全挂 → 从 daily_k_raw 派生收盘快照兜底
+    // 3. stock_spot 为空 → 从 daily_k_raw 派生收盘快照兜底（纯库内，不联网）
     const derived = await spotRepo.deriveFromRaw()
     if (derived > 0) {
       const rows = await spotRepo.getSpot()
       if (rows && rows.length) {
-        cache.set(cacheKey, rows, 60)
+        cache.set(cacheKey, rows, marketTime.spotTtl())
         const list = (codeList.length ? rows.filter(s => codeList.includes(s.symbol)) : rows).map(mapSpotRow)
         return ok(res, list, '成功(daily_k_raw 派生快照)')
       }
@@ -562,18 +596,33 @@ router.get('/:code/kline', async (req, res) => {
   }
 })
 
-// 分钟K线 — DB-first from minute_k（write-on-miss）
+// 分钟K线 — 盘中网络优先（tqs→腾讯），盘后 DB-first from minute_k（write-on-miss）
 router.get('/:code/minute', async (req, res) => {
   const { code } = req.params
   const { period = 5, startDate, endDate } = req.query
-  const sd = startDate || endDate || new Date().toISOString().slice(0, 10)
+  const sd = startDate || endDate || nowLocal().slice(0, 10)
   const cacheKey = `ddb:minute:${code}:${sd}:${period}`
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached, '成功(缓存)')
   try {
+    // 盘中：网络优先（分钟链实测 tqs 0.06s / 腾讯 ~0.2s），入库 best-effort
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await aktools.getStockMinute({ symbol: code, period, start_date: sd, end_date: endDate || sd })
+        if (raw && raw.length > 0) {
+          cache.set(cacheKey, raw, marketTime.minuteTtl())
+          if (ddb.isConnected()) {
+            minuteRepo.insertMinuteK(raw, code, period).catch(e => console.error('[stock] minute 入库失败:', e.message))
+          }
+          return ok(res, raw, '成功(实时)')
+        }
+      } catch (e) {
+        console.error('[stock] minute 网络优先失败，降级库内:', e.message)
+      }
+    }
     let data = await minuteRepo.getMinuteK(code, sd, period)
     if (data && data.length > 0) {
-      cache.set(cacheKey, data, 60)
+      cache.set(cacheKey, data, marketTime.minuteTtl())
       return ok(res, data)
     }
     const raw = await aktools.getStockMinute({ symbol: code, period, start_date: sd, end_date: endDate || sd })
@@ -581,7 +630,7 @@ router.get('/:code/minute', async (req, res) => {
       await minuteRepo.insertMinuteK(raw, code, period)
       data = await minuteRepo.getMinuteK(code, sd, period)
       if (data && data.length > 0) {
-        cache.set(cacheKey, data, 60)
+        cache.set(cacheKey, data, marketTime.minuteTtl())
         return ok(res, data, '成功(已入库)')
       }
     }
