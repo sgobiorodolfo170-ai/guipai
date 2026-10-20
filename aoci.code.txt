@@ -1,10 +1,10 @@
 #AOCI-CODE-VOLUME: 1
 
 ===G:/pj/pj--ing/111111/guipai/===
-.gitattributes[FG3T]: F:强制所有文本文件以 LF 检出，保证跨平台 checkout 与 AOCI 基线字节一致 | R:- | A:- | S:-
-.gitignore[FG4T]: F:定义依赖/构建产物/日志/本地数据忽略规则；AOCI 运行资产与主机集成配置不入库 | R:- | A:- | S:opencode.json、.aoci/与 aoci*.txt 为机器绑定运行资产，本地存在但不入库
+.gitattributes[FG3T]: F:全局文本强制 LF 检出，并将 DolphinDB 可执行文件与动态库声明为 Git LFS 对象 | R:- | A:- | S:两二进制经 LFS 存储；克隆后需 git lfs pull 取实体
+.gitignore[FG4T]: F:定义依赖/构建产物/日志/本地数据/Python 缓存忽略规则；AOCI 运行资产与主机集成配置不入库 | R:- | A:- | S:AOCI 资产与 opencode.json 不入库；Python 缓存 __pycache__/*.py[cod] 忽略
 AGENTS.md[SG9L]: F:定义龟派项目 AI Agent 开发规范与方法论（目标前置/自审/质量护栏/Loop Engineering） | R:- | A:- | S:每次编码任务后必须运行 frontend 下 npm run build 作为验收信号；sql.js/DolphinDB 表字段变更必须同步 electron/server/routes/data-mgmt.js 的 FIELD_DEFS/SQLITE_COVERAGE 与 frontend/src/views/admin/DataOverview.vue；所有会话汇报（session 汇报、进度汇报等）必须使用中文撰写
-CHANGELOG.md[SG6T]: F:项目根 SemVer 版本迭代记录：倒序表格一行一条，记录功能/修复/架构变更与实测结果，最新 v1.20.0 数据包链路 | R:- | A:- | S:摘要必须单行；新增版本插入表头下第一行；版本号与提交类型对应（feat→次版本、fix/refactor→修订号）
+CHANGELOG.md[SG6T]: F:项目根 SemVer 版本迭代记录：倒序表格一行一条，记录功能/修复/架构变更与实测结果，最新 v1.20.1 数据包链路收尾 | R:- | A:- | S:摘要必须单行；新增版本插入表头下第一行；版本号与提交类型对应（feat→次版本、fix/refactor→修订号）
 electron-builder.yml[FV7T]: F:Electron 打包配置（NSIS/DMG、extraResources 携带 dolphindb-server 与 aktools-server） | R:code:electron/main.js | A:- | S:asar=false 因 dolphindb ESM 经动态 import 从 asar 加载不可靠；npmRebuild=false 因无原生模块需重编译
 package-lock.json[FG3L]: F:根依赖锁文件（Electron/electron-builder/dolphindb/sql.js/express 等） | R:- | A:- | S:手工修改无效，必须经 npm install 生成
 package.json[FV6T]: F:根工程：dev(dev-runner)/build(build:frontend+electron-builder)/build:akshare-server 脚本，生产依赖 electron main 用 | R:code:electron/main.js | A:- | S:dependencies 为 Electron 运行时需（express/cors/sql.js/dolphindb），electron-builder 打包只纳入此段；build:akshare-server 调 build.bat
@@ -43,7 +43,7 @@ market-sync.js[PB8L]: F:收盘股票池单飞同步（涨停/跌停/板块/实�
 settings.js[CC7M]: F:应用设置模块：Tushare 多账号/AKShare 配置/通达信配置与 Key 多账号，settings.json 持久化 | R:code:electron/server/index.js,code:electron/server/tushare.js | A:- | S:旧版单 tushareToken 字段读取时自动迁移为「默认账号」并立即落盘；token/key 存取只负责 CRUD 不实现选号冷却策略
 tushare.js[IN8M]: F:Tushare Pro 客户端：多账号池轮询+故障转移/限频冷却，limit_list_d 涨跌停/daily+adj_factor 前复权日K | R:code:electron/server/settings.js,code:electron/server/aktools.js | A:- | S:错误分类（无效token停用/限频60s/网络10s/无权限不冷却）决定换号策略；无 pro_bar 接口须 daily+adj_factor 自算前复权且锚点取最新因子非区间末日；amount 千元→元 ×1000
 market-time.js[CC6T]: F:A股交易时段判断：isTradingDay/isTradingTime（工作日 09:15-11:30/13:00-15:00）与盘中/盘后分档缓存 TTL（spot 5s|60s、分钟 15s|300s） | R:code:electron/server/routes/stock.js,code:electron/server/routes/market.js,code:electron/server/routes/aktools.js | A:- | S:无节假日历：节假日按工作日处理，仅多一次网络请求（失败自动回落库内）；TTL 只服务路由层缓存，不改变数据口径
-package-sync.js[AW8M]: F:数据包同步路由与调度：status/start/stop/connect；18:10 定时、启动补跑 5 交易日、财务 30 天窗口、进度与日志 | R:code:electron/dolphindb/package-import.js,code:electron/dolphindb/client.js,code:electron/server/db.js | A:router/startScheduler/stopScheduler/runBatch/startBatch/recentCoverage | S:单飞 runningPromise；DDB 未连接时补跑与定时直接跳过；收盘前补跑排除当日；财务状态写 <userData>/tdx-packages/financial-state.json；每日包缓存保留 30 天
+package-sync.js[AW8M]: F:数据包同步路由与调度：status/start/stop/connect；18:10 定时、启动补跑 5 交易日（等待 DDB 就绪）、财务 30 天窗口、进度与日志 | R:code:electron/dolphindb/package-import.js,code:electron/dolphindb/client.js,code:electron/server/db.js | A:router/startScheduler/stopScheduler/runBatch/startBatch/recentCoverage | S:启动补跑每 3s 重试连接 DDB，最多 60s，避免冷启动晚于 8s 定时器导致当天漏补；18:10 tick 未连接直接跳过；单飞 runningPromise；收盘前补跑排除当日；财务状态写 <userData>/tdx-packages/financial-state.json；每日包缓存保留 30 天
 
 ===G:/pj/pj--ing/111111/guipai/electron/server/routes/===
 akshare.js[EU6T]: F:AKShare Python 桥设置路由：配置读写/探活/启停标记/安装/探测本机 Python+akshare | R:code:electron/server/settings.js,code:electron/server/sources/akshare.js | A:- | S:进程 spawn 在 main.js；/install 流式输出 pip 日志；/start 仅标记启用需重启生效
