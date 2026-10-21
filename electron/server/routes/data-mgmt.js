@@ -60,6 +60,7 @@ const DDB_TABLES = [
   { name: 'review_statistics', label: '复盘日统计(最高板/涨停/跌停/一字板等)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'minute_k', label: '分钟K线', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_holding', label: '十大股东', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'stock_dividend', label: '权息事件(分红送转配)', dateCol: 'ex_date', db: 'dfs://tradeinsight_raw' },
   { name: 'stock_basic', label: '股票基础信息', dateCol: null, db: 'dfs://tradeinsight' },
   { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date', db: 'dfs://tradeinsight' }
 ]
@@ -172,6 +173,16 @@ const DDB_FIELD_DEFS = {
     { column: 'turnover_rate', label: '换手率(%)' },
     { column: 'pct_chg', label: '涨跌幅(%)' },
     { column: 'amplitude', label: '振幅(%)' }
+  ],
+  stock_dividend: [
+    { column: 'symbol', label: '股票代码' },
+    { column: 'ex_date', label: '除权除息日', desc: '分红送转配生效日', source: 'tqcenter get_divid_factors' },
+    { column: 'event_type', label: '事件类型', desc: '实测恒为1，语义待确认' },
+    { column: 'cash_per_10', label: '每10股派息(税前,元)' },
+    { column: 'share_per_10', label: '每10股送股(股)' },
+    { column: 'transfer_per_10', label: '每10股转增(股)' },
+    { column: 'rights_per_10', label: '每10股配股(股)' },
+    { column: 'create_time', label: '写入时间' }
   ],
   stock_basic: [
     { column: 'code', label: '股票代码', source: '东财' },

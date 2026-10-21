@@ -221,6 +221,38 @@ async function getSnapshot(codes) {
   return rows.filter(Boolean)
 }
 
+/**
+ * 权息事件（get_divid_factors，逐股全历史）。
+ * 返回结构（2026-10-22 实测）：{ Date:[除权除息生效日], Type:[事件类型,实测恒为1], Value:[[每10股派息, 送股, 转增, 配股],...] }。
+ * 语义：Value[i][0]=每10股派息税前(元)、[1]=每10股送股、[2]=每10股转增、[3]=每10股配股；
+ * 样本交叉验证（茅台/招行/五粮液/平安银行）与公开分红记录一致。
+ * 用作权息事件表采集；也可据此离线推导复权因子（后续迭代）。
+ */
+async function getDividFactors(symbol) {
+  const code = `${String(symbol).replace(/\.\w+$/, '')}.${suffix(symbol)}`
+  const result = await call('get_divid_factors', { stock_code: code }, { timeout: 20000 })
+  const dates = result && result.Date
+  const types = result && result.Type
+  const values = result && result.Value
+  if (!Array.isArray(dates) || !dates.length) return []
+  const n = dates.length
+  const out = []
+  for (let i = 0; i < n; i++) {
+    const v = Array.isArray(values && values[i]) ? values[i] : []
+    const ex = String(dates[i]).replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')
+    out.push({
+      '股票代码': String(symbol).replace(/\.\w+$/, ''),
+      '除权除息日': /^\d{4}-\d{2}-\d{2}$/.test(ex) ? ex : null,
+      '事件类型': num(types && types[i]),
+      '每10股派息': num(v[0]),
+      '每10股送股': num(v[1]),
+      '每10股转增': num(v[2]),
+      '每10股配股': num(v[3])
+    })
+  }
+  return out
+}
+
 /** 本地 stock_basic 全量代码（zdt 接口必须显式传 stock_list，无全市场默认语义）。 */
 function allLocalCodes() {
   try {
@@ -311,6 +343,26 @@ function fmtZdtTime(v) {
   const n = num(v)
   return n ? String(Math.trunc(n)).padStart(6, '0') : null
 }
+
+/** 行业板块快照（get_market_snapshot 支持板块指数 881xxx.SH，返回涨跌幅/量额/涨跌家数） */
+async function getSectorSnapshot(code) {
+  return call('get_market_snapshot', { stock_code: code })
+}
+
+/** 板块成分股列表（get_stock_list_in_sector，block_code 需带 .SH/.SZ 后缀；返回 result.Value 数组） */
+async function getSectorConsts(code) {
+  const r = await call('get_stock_list_in_sector', { block_code: code })
+  if (Array.isArray(r)) return r
+  if (r && Array.isArray(r.Value)) return r.Value
+  if (r && Array.isArray(r.data)) return r.data
+  return []
+}
+
+/** 透出底层 JSON-RPC 调用（供 tdx_sector / tdx_pool 复用同一连接）；可指定超时 */
+function callRaw(method, params, timeout) {
+  return call(method, params || {}, { timeout })
+}
+
 async function runPool(items, limit, worker) {
   const out = new Array(items.length)
   let next = 0
@@ -338,6 +390,10 @@ module.exports = {
   available: () => available,
   setAvailable,
   getPort: () => quantPort,
+  getSectorSnapshot,
+  getSectorConsts,
+  getDividFactors,
+  callRaw,
   // 健康探针：POST get_trading_dates（轻量），返回有数据则 TdxW 量化接口可用
   health: async () => {
     try {
