@@ -802,6 +802,54 @@ function summarizeLevels(levels) {
   return { maxLevel, cont2 }
 }
 
+/** GET /review/range?startDate=&endDate= — 复盘日汇总（范围，供历史弹窗）。
+ *  字段契约同 /review/:date，返回数组（按 tradeDate 升序）。
+ *  ⚠ 必须注册在 /review/:date 之前：Express 按注册顺序匹配，/review/:date 会吞掉 '/range'。 */
+router.get('/review/range', async (req, res) => {
+  const { startDate, endDate } = req.query
+  const sd = safeDate(startDate), ed = safeDate(endDate)
+  if (!sd || !ed) return err(res, '日期参数不合法')
+  const cacheKey = `stats:review:range:${sd}:${ed}`
+  const cached = cache.get(cacheKey)
+  if (cached) return ok(res, cached)
+  try {
+    // 始终聚合计算（不做 DB-first）：range 内若仅部分日期已落 review_statistics，
+    // 直接读汇总会静默丢失未落库日期；聚合仅 3 次查询（池+昨日池+推导窗口），代价可接受。
+    // ⚠ DolphinDB 方言：group by 列别名须写在 GROUP BY 子句，不能 `select x as y ... group by x`，
+    //   故 select 用原始列名 trade_date，别名留到 JS 侧处理（与历史 /basic/range 的写法不同，避免同样报错）。
+    const rows = await list(`select trade_date, count(*) as cnt,
+      sum(iif(data_type=='LIMIT_UP',1,0)) as limitUpCount,
+      sum(iif(data_type=='LIMIT_DOWN',1,0)) as limitDownCount,
+      sum(iif(data_type=='LIMIT_UP' and not isNull(first_limit_time) and first_limit_time<='09:25:04' and blast_times==0,1,0)) as oneWordCount,
+      sum(iif(data_type=='LIMIT_UP' and blast_times>=1,1,0)) as blastResealCount
+      from ${TBL} where trade_date between ${sd} and ${ed} group by trade_date order by trade_date`)
+    const yRows = await list(`select trade_date, avg(pct_chg) as a from ${TBL_ZT_PREV}
+      where trade_date between ${sd} and ${ed} group by trade_date`)
+    const yMap = new Map(yRows.map(r => [isoD(r.trade_date), r.a]))
+    const dates = rows.map(r => isoD(r.trade_date)).filter(Boolean)
+    const levelsMap = await deriveLevelsForDates(dates)
+    const out = []
+    for (const r of rows) {
+      const iso = isoD(r.trade_date)
+      const { maxLevel, cont2 } = summarizeLevels(levelsMap.get(iso) || new Map())
+      const upCount = N(r.limitUpCount)
+      const a = yMap.get(iso)
+      out.push({
+        tradeDate: iso,
+        maxContinuousLevel: maxLevel,
+        limitUpCount: upCount,
+        limitDownCount: N(r.limitDownCount),
+        oneWordCount: N(r.oneWordCount),
+        continuousLimitRate: upCount > 0 ? Math.round(cont2 * 100 / upCount * 100) / 100 : 0,
+        blastResealCount: N(r.blastResealCount),
+        yesterdayLimitupAvgChange: a != null ? Math.round(N(a) * 100) / 100 : null
+      })
+    }
+    cache.set(cacheKey, out, 300)
+    ok(res, out)
+  } catch (e) { err(res, e.message) }
+})
+
 /** GET /review/:date — 复盘日汇总（DB-first from review_statistics；未落库时按公式聚合写回）。
  *  字段契约：tradeDate/maxContinuousLevel/limitUpCount/limitDownCount/oneWordCount/
  *            continuousLimitRate(%,两位小数)/blastResealCount/yesterdayLimitupAvgChange(%,可 null) */
@@ -865,51 +913,6 @@ router.get('/review/:date', async (req, res) => {
     }
     cache.set(cacheKey, row, 300)
     ok(res, row)
-  } catch (e) { err(res, e.message) }
-})
-
-/** GET /review/range?startDate=&endDate= — 复盘日汇总（范围，供历史弹窗）。
- *  字段契约同 /review/:date，返回数组（按 tradeDate 升序）。 */
-router.get('/review/range', async (req, res) => {
-  const { startDate, endDate } = req.query
-  const sd = safeDate(startDate), ed = safeDate(endDate)
-  if (!sd || !ed) return err(res, '日期参数不合法')
-  const cacheKey = `stats:review:range:${sd}:${ed}`
-  const cached = cache.get(cacheKey)
-  if (cached) return ok(res, cached)
-  try {
-    // 始终聚合计算（不做 DB-first）：range 内若仅部分日期已落 review_statistics，
-    // 直接读汇总会静默丢失未落库日期；聚合仅 3 次查询（池+昨日池+推导窗口），代价可接受。
-    const rows = await list(`select trade_date as tradeDate, count(*) as cnt,
-      sum(iif(data_type=='LIMIT_UP',1,0)) as limitUpCount,
-      sum(iif(data_type=='LIMIT_DOWN',1,0)) as limitDownCount,
-      sum(iif(data_type=='LIMIT_UP' and not isNull(first_limit_time) and first_limit_time<='09:25:04' and blast_times==0,1,0)) as oneWordCount,
-      sum(iif(data_type=='LIMIT_UP' and blast_times>=1,1,0)) as blastResealCount
-      from ${TBL} where trade_date between ${sd} and ${ed} group by trade_date order by trade_date`)
-    const yRows = await list(`select trade_date as tradeDate, avg(pct_chg) as a from ${TBL_ZT_PREV}
-      where trade_date between ${sd} and ${ed} group by trade_date`)
-    const yMap = new Map(yRows.map(r => [isoD(r.tradeDate), r.a]))
-    const dates = rows.map(r => isoD(r.tradeDate)).filter(Boolean)
-    const levelsMap = await deriveLevelsForDates(dates)
-    const out = []
-    for (const r of rows) {
-      const iso = isoD(r.tradeDate)
-      const { maxLevel, cont2 } = summarizeLevels(levelsMap.get(iso) || new Map())
-      const upCount = N(r.limitUpCount)
-      const a = yMap.get(iso)
-      out.push({
-        tradeDate: iso,
-        maxContinuousLevel: maxLevel,
-        limitUpCount: upCount,
-        limitDownCount: N(r.limitDownCount),
-        oneWordCount: N(r.oneWordCount),
-        continuousLimitRate: upCount > 0 ? Math.round(cont2 * 100 / upCount * 100) / 100 : 0,
-        blastResealCount: N(r.blastResealCount),
-        yesterdayLimitupAvgChange: a != null ? Math.round(N(a) * 100) / 100 : null
-      })
-    }
-    cache.set(cacheKey, out, 300)
-    ok(res, out)
   } catch (e) { err(res, e.message) }
 })
 
