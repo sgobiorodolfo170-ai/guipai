@@ -1,211 +1,255 @@
 /**
- * 图标生成器 —— 龟派（guipai）应用图标
+ * 图标生成器 —— 从源图片生成龟派（guipai）全套应用图标
  *
- * 零外部依赖：手写 PNG 编码（zlib 为 Node 内置）+ 手写 ICO 封装（内嵌 PNG 帧）。
- * 设计：深色底 #0d1117（与应用 backgroundColor 一致）+ A股红涨上升折线 #ef232a。
+ * 零外部依赖：手写 PNG 解码/编码（zlib 为 Node 内置）+ 手写 ICO 封装（内嵌 PNG 帧）
+ * + 手写 ICNS 封装（macOS 支持内嵌 PNG）。
  *
- * 用法：node build/generate-icon.js
- * 产出：build/icon.ico（16/24/32/48/64/128/256 多尺寸）、build/icon.png（1024 源图）
+ * 用法：node build/generate-icon.js [源图片路径]
+ *   - 缺省源路径为 build/source-icon.png（可复现的仓库内源图）；
+ *     也可传入外部图片路径覆盖，如
+ *     node build/generate-icon.js "C:\Users\Administrator\Pictures\软件图标\福运上涨：吉祥龟攀升股市.png"
+ *
+ * 产出：
+ *   - build/icon.ico      Windows 图标（16/24/32/48/64/128/256 七帧内嵌 PNG）
+ *   - build/icon.png      1024×1024 参考大图（由源图重采样，供设计迭代/展示用）
+ *   - build/icon.icns     macOS 图标（16/32/64/128/256/512/1024 内嵌 PNG）
+ *   - frontend/public/favicon.ico、frontend/public/icon.png 同步副本
+ *
+ * 重采样策略：缩小用面积平均（area-average），放大用双线性（bilinear），
+ * 通道在预乘 alpha 空间内插值以避免半透明边缘黑边。
  */
 
 const zlib = require('zlib')
 const fs = require('fs')
 const path = require('path')
 
-// ---- 主题色（与项目配色统一） ----
-const BG = [0x0d, 0x11, 0x17]      // 深色底
-const UP = [0xef, 0x23, 0x2a]      // 涨（红）
-const UP_SOFT = [0xff, 0x6b, 0x6b] // 折线高光
+// ---- 源图片（缺省走仓库内 source-icon.png，保证可复现） ----
+const DEFAULT_SRC = path.join(__dirname, 'source-icon.png')
+const SRC = process.argv[2] || DEFAULT_SRC
 
-// ============ 基础绘图工具（RGBA 画布） ============
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
+const ICNS_SIZES = [16, 32, 64, 128, 256, 512, 1024]
+const PNG_SIZE = 1024
 
-function createCanvas(size) {
-  return { size, data: new Uint8Array(size * size * 4) }
-}
+// ============ PNG 解码 ============
 
-/** alpha 混合写点 */
-function blend(c, x, y, rgb, a) {
-  if (x < 0 || y < 0 || x >= c.size || y >= c.size || a <= 0) return
-  const i = (y * c.size + x) * 4
-  const da = c.data[i + 3] / 255
-  const outA = a + da * (1 - a)
-  if (outA <= 0) return
-  c.data[i] = (rgb[0] * a + c.data[i] * da * (1 - a)) / outA
-  c.data[i + 1] = (rgb[1] * a + c.data[i + 1] * da * (1 - a)) / outA
-  c.data[i + 2] = (rgb[2] * a + c.data[i + 2] * da * (1 - a)) / outA
-  c.data[i + 3] = outA * 255
-}
-
-/** 圆角矩形内部覆盖率（0=外部, 1=内部），用于遮罩裁剪 */
-function roundRectCoverage(c, x0, y0, w, h, r, px, py) {
-  const x1 = x0 + w, y1 = y0 + h
-  const cx = Math.min(Math.max(px, x0 + r), x1 - r)
-  const cy = Math.min(Math.max(py, y0 + r), y1 - r)
-  const dx = px - cx, dy = py - cy
-  const dist = Math.sqrt(dx * dx + dy * dy) - r
-  return Math.min(Math.max(0.5 - dist, 0), 1)
-}
-
-/** 抗锯齿填充圆角矩形：signed distance 决定覆盖率 */
-function fillRoundRect(c, x0, y0, w, h, r, rgb, alpha = 1) {
-  const S = c.size
-  for (let y = 0; y < S; y++) {
-    for (let x = 0; x < S; x++) {
-      const cov = roundRectCoverage(c, x0, y0, w, h, r, x + 0.5, y + 0.5)
-      if (cov > 0) blend(c, x, y, rgb, cov * alpha)
-    }
+function readChunks(buf) {
+  const chunks = []
+  let off = 8
+  while (off + 8 <= buf.length) {
+    const len = buf.readUInt32BE(off)
+    const type = buf.toString('ascii', off + 4, off + 8)
+    chunks.push({ type, data: buf.subarray(off + 8, off + 8 + len) })
+    off += 12 + len
   }
+  return chunks
 }
 
-/** 抗锯齿画粗线段（圆头圆角） */
-function strokeLine(c, x1, y1, x2, y2, width, rgb, alpha = 1) {
-  const S = c.size
-  const hw = width / 2
-  const minX = Math.floor(Math.min(x1, x2) - hw - 2)
-  const maxX = Math.ceil(Math.max(x1, x2) + hw + 2)
-  const minY = Math.floor(Math.min(y1, y2) - hw - 2)
-  const maxY = Math.ceil(Math.max(y1, y2) + hw + 2)
-  const vx = x2 - x1, vy = y2 - y1
-  const len2 = vx * vx + vy * vy || 1
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const px = x + 0.5 - x1, py = y + 0.5 - y1
-      // 投影参数 t
-      let t = (px * vx + py * vy) / len2
-      t = Math.min(Math.max(t, 0), 1)
-      const dx = px - t * vx, dy = py - t * vy
-      const dist = Math.sqrt(dx * dx + dy * dy) - hw
-      const cov = Math.min(Math.max(0.5 - dist, 0), 1)
-      if (cov > 0) blend(c, x, y, rgb, cov * alpha)
-    }
-  }
-}
-
-// ============ 图标绘制 ============
-
-/**
- * 绘制图标到画布。
- * 设计：深色圆角底 + A股红涨上升折线（锐利箭头收尾）+ 节点高亮点。
- * 保持底色纯净，不加大面积填充，确保小尺寸（16px）下轮廓依然清晰可辨。
- */
-function drawIcon(size) {
-  const c = createCanvas(size)
-  const S = size
-  const u = S / 256 // 基准单位（设计稿 256）
-
-  // 圆角底
-  const pad = 8 * u
-  const bw = S - pad * 2
-  const radius = 56 * u
-  fillRoundRect(c, pad, pad, bw, bw, radius, BG, 1)
-
-  // 上升折线数据点（设计稿 256 空间）
-  // 末点下移留出箭头空间，保证箭头尖端完整落在圆角底内
-  const pts = [
-    [56, 196],
-    [104, 154],
-    [140, 176],
-    [168, 126]
-  ]
-
-  // 主折线（红）
-  const lineW = 22 * u
-  for (let k = 0; k < pts.length - 1; k++) {
-    strokeLine(c, pts[k][0] * u, pts[k][1] * u, pts[k + 1][0] * u, pts[k + 1][1] * u, lineW, UP, 1)
-  }
-
-  // 末端箭头：从末点沿趋势方向延伸，总长受控不越界
-  const last = pts[pts.length - 1]
-  const prev = pts[pts.length - 2]
-  const dx = last[0] - prev[0], dy = last[1] - prev[1]
-  const len = Math.hypot(dx, dy)
-  const ux = dx / len, uy = dy / len
-  const px = -uy, py = ux // 法线方向
-
-  // 箭头三角形：尖端沿趋势方向延伸，底边与折线末端重叠以避免断口
-  const tipLen = 52 * u
-  const halfW = 21 * u
-  const tipX = (last[0] + ux * tipLen) * u
-  const tipY = (last[1] + uy * tipLen) * u
-  // 底边后移到折线末点内侧（-6u），与圆头线段充分重叠
-  const baseCX = (last[0] - ux * 6) * u
-  const baseCY = (last[1] - uy * 6) * u
-  fillTriangle(c,
-    tipX, tipY,
-    baseCX + px * halfW, baseCY + py * halfW,
-    baseCX - px * halfW, baseCY - py * halfW,
-    UP, 1)
-
-  // 折线节点高亮点（浅红小圆）——跳过末点，避免干扰箭头
-  for (let k = 0; k < pts.length - 1; k++) {
-    const p = pts[k]
-    fillCircle(c, p[0] * u, p[1] * u, 8 * u, UP_SOFT, 1)
-  }
-
-  return c
-}
-
-/** 抗锯齿填充三角形：按到三边的最短内向距离做覆盖率羽化 */
-function fillTriangle(c, ax, ay, bx, by, cx2, cy2, rgb, alpha = 1) {
-  const S = c.size
-  const verts = [[ax, ay], [bx, by], [cx2, cy2]]
-  // 有向面积：判断顶点绕向
-  const area2 = (bx - ax) * (cy2 - ay) - (by - ay) * (cx2 - ax)
-  if (Math.abs(area2) < 1e-9) return
-  const sgn = area2 >= 0 ? 1 : -1
-
-  // 重心：用于判定每条边的"内侧"朝向
-  const gx = (ax + bx + cx2) / 3
-  const gy = (ay + by + cy2) / 3
-
-  // 构造三条边，保证 (px*nx+py*ny+d) 在三角形内部为正
-  const edges = []
-  for (let i = 0; i < 3; i++) {
-    const [x1, y1] = verts[i]
-    const [x2, y2] = verts[(i + 1) % 3]
-    const ex = x2 - x1, ey = y2 - y1
-    const len = Math.hypot(ex, ey)
-    if (len < 1e-9) continue
-    // 两种候选法线，取使重心落在正侧的那个
-    let nx = ey / len, ny = -ex / len
-    let d = -(x1 * nx + y1 * ny)
-    if (gx * nx + gy * ny + d < 0) { nx = -nx; ny = -ny; d = -d }
-    edges.push({ nx, ny, d })
-  }
-
-  const minX = Math.max(0, Math.floor(Math.min(ax, bx, cx2) - 2))
-  const maxX = Math.min(S - 1, Math.ceil(Math.max(ax, bx, cx2) + 2))
-  const minY = Math.max(0, Math.floor(Math.min(ay, by, cy2) - 2))
-  const maxY = Math.min(S - 1, Math.ceil(Math.max(ay, by, cy2) + 2))
-
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-      const px = x + 0.5, py = y + 0.5
-      let dmin = Infinity
-      for (const e of edges) {
-        const dist = px * e.nx + py * e.ny + e.d
-        if (dist < dmin) dmin = dist
+/** 逆滤波：原始扫描线字节 → 去滤波后的逐行字节 */
+function defilter(raw, w, h, bpp) {
+  const stride = w * bpp
+  const out = Buffer.alloc(h * stride)
+  let prev = Buffer.alloc(stride)
+  for (let y = 0; y < h; y++) {
+    const filter = raw[y * (stride + 1)]
+    const row = out.subarray(y * stride, (y + 1) * stride)
+    const line = raw.subarray(y * (stride + 1) + 1, (y + 1) * (stride + 1))
+    for (let x = 0; x < stride; x++) {
+      const a = x >= bpp ? row[x - bpp] : 0
+      const b = prev[x]
+      const c = x >= bpp ? prev[x - bpp] : 0
+      let v = line[x]
+      switch (filter) {
+        case 0: break
+        case 1: v = (v + a) & 0xff; break
+        case 2: v = (v + b) & 0xff; break
+        case 3: v = (v + ((a + b) >> 1)) & 0xff; break
+        case 4: {
+          const p = a + b - c
+          const pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c)
+          const pr = (pa <= pb && pa <= pc) ? a : (pb <= pc ? b : c)
+          v = (v + pr) & 0xff
+          break
+        }
+        default: throw new Error('[icon] PNG 滤波类型不支持: ' + filter)
       }
-      const cov = Math.min(Math.max(dmin + 0.5, 0), 1)
-      if (cov > 0) blend(c, x, y, rgb, cov * alpha)
+      row[x] = v
     }
+    prev = row
   }
+  return out
 }
 
-/** 抗锯齿实心圆 */
-function fillCircle(c, cx, cy, r, rgb, alpha = 1) {
-  const S = c.size
-  for (let y = Math.floor(cy - r - 2); y <= Math.ceil(cy + r + 2); y++) {
-    for (let x = Math.floor(cx - r - 2); x <= Math.ceil(cx + r + 2); x++) {
-      const dx = x + 0.5 - cx, dy = y + 0.5 - cy
-      const dist = Math.sqrt(dx * dx + dy * dy) - r
-      const cov = Math.min(Math.max(0.5 - dist, 0), 1)
-      if (cov > 0) blend(c, x, y, rgb, cov * alpha)
+/** 解析 PNG → { width, height, data: Uint8Array(width*height*4) RGBA } */
+function decodePNG(buf) {
+  let ihdr = null, palette = null, trns = null
+  const idat = []
+  for (const c of readChunks(buf)) {
+    if (c.type === 'IHDR') ihdr = c.data
+    else if (c.type === 'PLTE') palette = c.data
+    else if (c.type === 'tRNS') trns = c.data
+    else if (c.type === 'IDAT') idat.push(c.data)
+  }
+  if (!ihdr) throw new Error('[icon] 缺少 IHDR，非有效 PNG')
+  const width = ihdr.readUInt32BE(0)
+  const height = ihdr.readUInt32BE(4)
+  const bitDepth = ihdr[8]
+  const colorType = ihdr[9]
+  const interlace = ihdr[12]
+  if (interlace !== 0) throw new Error('[icon] Adam7 隔行 PNG 不支持')
+
+  const channels = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 }[colorType]
+  if (channels === undefined) throw new Error('[icon] 颜色类型不支持: ' + colorType)
+
+  const raw = zlib.inflateSync(Buffer.concat(idat))
+  const out = new Uint8Array(width * height * 4)
+
+  if (bitDepth === 8) {
+    const dec = defilter(raw, width, height, channels)
+    for (let i = 0, p = 0; i < dec.length; i += channels, p += 4) {
+      if (colorType === 0) {
+        out[p] = out[p + 1] = out[p + 2] = dec[i]; out[p + 3] = 255
+      } else if (colorType === 2) {
+        out[p] = dec[i]; out[p + 1] = dec[i + 1]; out[p + 2] = dec[i + 2]; out[p + 3] = 255
+      } else if (colorType === 3) {
+        const idx = dec[i]
+        const po = idx * 3
+        if (po + 2 < palette.length) {
+          out[p] = palette[po]; out[p + 1] = palette[po + 1]; out[p + 2] = palette[po + 2]
+        }
+        out[p + 3] = trns && idx < trns.length ? trns[idx] : 255
+      } else if (colorType === 4) {
+        out[p] = out[p + 1] = out[p + 2] = dec[i]; out[p + 3] = dec[i + 1]
+      } else {
+        out[p] = dec[i]; out[p + 1] = dec[i + 1]; out[p + 2] = dec[i + 2]; out[p + 3] = dec[i + 3]
+      }
+    }
+  } else if (bitDepth === 16) {
+    const bpp = channels * 2
+    const dec = defilter(raw, width, height, bpp)
+    for (let i = 0, p = 0; i < dec.length; i += bpp, p += 4) {
+      if (colorType === 0) {
+        out[p] = out[p + 1] = out[p + 2] = dec[i]; out[p + 3] = 255
+      } else if (colorType === 2) {
+        out[p] = dec[i]; out[p + 1] = dec[i + 2]; out[p + 2] = dec[i + 4]; out[p + 3] = 255
+      } else if (colorType === 4) {
+        out[p] = out[p + 1] = out[p + 2] = dec[i]; out[p + 3] = dec[i + 2]
+      } else {
+        out[p] = dec[i]; out[p + 1] = dec[i + 2]; out[p + 2] = dec[i + 4]; out[p + 3] = dec[i + 6]
+      }
+    }
+  } else {
+    // 亚字节位深（1/2/4）：仅灰度与调色板，按位解包
+    const bpp = Math.ceil((channels * bitDepth) / 8)
+    const dec = defilter(raw, width, height, bpp)
+    const maxv = (1 << bitDepth) - 1
+    const mask = maxv
+    let i = 0
+    for (let y = 0; y < height; y++) {
+      const rowStart = y * Math.ceil((width * channels * bitDepth) / 8)
+      for (let x = 0; x < width; x++) {
+        const bitpos = x * channels * bitDepth
+        const byteIdx = rowStart + (bitpos >> 3)
+        const shift = 8 - bitDepth - (bitpos & 7)
+        const v = (dec[byteIdx] >> shift) & mask
+        i = (y * width + x) * 4
+        if (colorType === 0) {
+          const g = Math.round((v / maxv) * 255)
+          out[i] = out[i + 1] = out[i + 2] = g; out[i + 3] = 255
+        } else {
+          const po = v * 3
+          if (po + 2 < palette.length) {
+            out[i] = palette[po]; out[i + 1] = palette[po + 1]; out[i + 2] = palette[po + 2]
+          }
+          out[i + 3] = trns && v < trns.length ? trns[v] : 255
+        }
+      }
     }
   }
+  return { width, height, data: out }
 }
 
-function clamp01(v) { return Math.min(Math.max(v, 0), 1) }
+// ============ 重采样 ============
+
+/** 面积平均缩小：目标像素覆盖的源区域按重叠面积加权平均（预乘 alpha 空间） */
+function areaDownscale(src, sw, sh, dw, dh) {
+  const dst = new Uint8Array(dw * dh * 4)
+  for (let dy = 0; dy < dh; dy++) {
+    const sy0 = (dy * sh) / dh
+    const sy1 = ((dy + 1) * sh) / dh
+    const ys = Math.floor(sy0)
+    const ye = Math.ceil(sy1)
+    for (let dx = 0; dx < dw; dx++) {
+      const sx0 = (dx * sw) / dw
+      const sx1 = ((dx + 1) * sw) / dw
+      const xs = Math.floor(sx0)
+      const xe = Math.ceil(sx1)
+      let r = 0, g = 0, b = 0, a = 0
+      for (let y = ys; y < ye; y++) {
+        const wy = Math.max(0, Math.min(1, Math.min(y + 1, sy1) - Math.max(y, sy0)))
+        for (let x = xs; x < xe; x++) {
+          const wx = Math.max(0, Math.min(1, Math.min(x + 1, sx1) - Math.max(x, sx0)))
+          const w = wx * wy
+          if (w <= 0) continue
+          const i = (y * sw + x) * 4
+          const al = src[i + 3]
+          if (al === 0) continue
+          r += src[i] * al * w
+          g += src[i + 1] * al * w
+          b += src[i + 2] * al * w
+          a += al * w
+        }
+      }
+      const o = (dy * dw + dx) * 4
+      if (a > 0) {
+        dst[o] = Math.round(r / a)
+        dst[o + 1] = Math.round(g / a)
+        dst[o + 2] = Math.round(b / a)
+        dst[o + 3] = Math.min(255, Math.round(a))
+      }
+    }
+  }
+  return dst
+}
+
+/** 双线性放大：四邻域预乘 alpha 空间内插值 */
+function bilinearUpscale(src, sw, sh, dw, dh) {
+  const dst = new Uint8Array(dw * dh * 4)
+  for (let dy = 0; dy < dh; dy++) {
+    const y = ((dy + 0.5) * sh) / dh - 0.5
+    const y0 = Math.max(0, Math.floor(y))
+    const y1 = Math.min(sh - 1, y0 + 1)
+    const fy = y - y0
+    for (let dx = 0; dx < dw; dx++) {
+      const x = ((dx + 0.5) * sw) / dw - 0.5
+      const x0 = Math.max(0, Math.floor(x))
+      const x1 = Math.min(sw - 1, x0 + 1)
+      const fx = x - x0
+      let r = 0, g = 0, b = 0, a = 0
+      for (let ty = 0; ty < 2; ty++) {
+        for (let tx = 0; tx < 2; tx++) {
+          const sx = tx === 0 ? x0 : x1
+          const sy = ty === 0 ? y0 : y1
+          const w = (tx === 0 ? 1 - fx : fx) * (ty === 0 ? 1 - fy : fy)
+          const i = (sy * sw + sx) * 4
+          const al = src[i + 3]
+          r += src[i] * al * w
+          g += src[i + 1] * al * w
+          b += src[i + 2] * al * w
+          a += al * w
+        }
+      }
+      const o = (dy * dw + dx) * 4
+      if (a > 0) {
+        dst[o] = Math.round(r / a)
+        dst[o + 1] = Math.round(g / a)
+        dst[o + 2] = Math.round(b / a)
+      }
+      dst[o + 3] = Math.round(a)
+    }
+  }
+  return dst
+}
 
 // ============ PNG 编码 ============
 
@@ -233,7 +277,7 @@ function chunk(type, data) {
   return Buffer.concat([len, typeBuf, data, crcBuf])
 }
 
-/** 画布 -> PNG buffer（RGBA, 8bit, 非隔行） */
+/** 画布 {size, data} → PNG buffer（RGBA 8bit 非隔行） */
 function encodePNG(c) {
   const { size, data } = c
   const stride = size * 4
@@ -241,9 +285,7 @@ function encodePNG(c) {
   for (let y = 0; y < size; y++) {
     const rowStart = y * (stride + 1)
     raw[rowStart] = 0 // filter type 0 (None)
-    for (let x = 0; x < stride; x++) {
-      raw[rowStart + 1 + x] = data[y * stride + x]
-    }
+    for (let x = 0; x < stride; x++) raw[rowStart + 1 + x] = data[y * stride + x]
   }
   const ihdr = Buffer.alloc(13)
   ihdr.writeUInt32BE(size, 0)
@@ -264,10 +306,6 @@ function encodePNG(c) {
 
 // ============ ICO 编码（PNG 帧） ============
 
-/**
- * 将多个 PNG buffer 打包为 ICO。
- * @param {Array<{size:number, png:Buffer}>} frames
- */
 function encodeICO(frames) {
   const count = frames.length
   const header = Buffer.alloc(6)
@@ -283,8 +321,8 @@ function encodeICO(frames) {
     e[1] = f.size >= 256 ? 0 : f.size // height
     e[2] = 0  // color palette
     e[3] = 0  // reserved
-    e.writeUInt16LE(1, 4)  // color planes
-    e.writeUInt16LE(32, 6) // bits per pixel
+    e.writeUInt16LE(1, 4)   // color planes
+    e.writeUInt16LE(32, 6)  // bits per pixel
     e.writeUInt32LE(f.png.length, 8)
     e.writeUInt32LE(offset, 12)
     entries.push(e)
@@ -293,29 +331,64 @@ function encodeICO(frames) {
   return Buffer.concat([header, ...entries, ...frames.map(f => f.png)])
 }
 
+// ============ ICNS 编码（内嵌 PNG 帧） ============
+
+function encodeICNS(frames) {
+  const types = { 16: 'icp4', 32: 'icp5', 64: 'icp6', 128: 'ic07', 256: 'ic08', 512: 'ic09', 1024: 'ic10' }
+  const entries = []
+  for (const f of frames) {
+    const t = types[f.size]
+    if (!t) continue
+    const head = Buffer.alloc(8)
+    head.write(t, 0, 'ascii')
+    head.writeUInt32BE(f.png.length + 8, 4)
+    entries.push(Buffer.concat([head, f.png]))
+  }
+  const total = 8 + entries.reduce((s, e) => s + e.length, 0)
+  const out = Buffer.alloc(total)
+  out.write('icns', 0, 'ascii')
+  out.writeUInt32BE(total, 4)
+  let off = 8
+  for (const e of entries) { e.copy(out, off); off += e.length }
+  return out
+}
+
 // ============ 主流程 ============
 
 function main() {
   const buildDir = __dirname
-  const sizes = [16, 24, 32, 48, 64, 128, 256]
-
-  // 缓存各尺寸画布（避免重复绘制同一尺寸）
-  const cache = new Map()
-  const getCanvas = (s) => {
-    if (!cache.has(s)) cache.set(s, drawIcon(s))
-    return cache.get(s)
+  if (!fs.existsSync(SRC)) {
+    console.error('[icon] 源图片不存在: ' + SRC)
+    console.error('[icon] 请传入源图片路径：node build/generate-icon.js <path-to-png>')
+    process.exit(1)
   }
 
-  const frames = sizes.map(s => ({ size: s, png: encodePNG(getCanvas(s)) }))
-  const ico = encodeICO(frames)
+  const { width, height, data } = decodePNG(fs.readFileSync(SRC))
+
+  const resize = (size) => (size <= width && size <= height)
+    ? areaDownscale(data, width, height, size, size)
+    : bilinearUpscale(data, width, height, size, size)
+  const toCanvas = (size) => ({ size, data: resize(size) })
+
+  const icoFrames = ICO_SIZES.map(s => ({ size: s, png: encodePNG(toCanvas(s)) }))
+  const ico = encodeICO(icoFrames)
   fs.writeFileSync(path.join(buildDir, 'icon.ico'), ico)
 
-  // 1024 源图（供后续设计迭代）
-  const src = encodePNG(getCanvas(1024))
-  fs.writeFileSync(path.join(buildDir, 'icon.png'), src)
+  const pngBig = encodePNG(toCanvas(PNG_SIZE))
+  fs.writeFileSync(path.join(buildDir, 'icon.png'), pngBig)
 
-  console.log('[icon] build/icon.ico 已生成:', ico.length, 'bytes, sizes =', sizes.join(','))
-  console.log('[icon] build/icon.png 已生成:', src.length, 'bytes, 1024x1024')
+  const icnsFrames = ICNS_SIZES.map(s => ({ size: s, png: encodePNG(toCanvas(s)) }))
+  fs.writeFileSync(path.join(buildDir, 'icon.icns'), encodeICNS(icnsFrames))
+
+  // 同步前端 public 副本（favicon 与参考大图）
+  fs.copyFileSync(path.join(buildDir, 'icon.ico'), path.join(buildDir, '..', 'frontend', 'public', 'favicon.ico'))
+  fs.copyFileSync(path.join(buildDir, 'icon.png'), path.join(buildDir, '..', 'frontend', 'public', 'icon.png'))
+
+  console.log('[icon] 源图:', SRC, '(' + width + 'x' + height + ')')
+  console.log('[icon] build/icon.ico 已生成:', ico.length, 'bytes, sizes =', ICO_SIZES.join(','))
+  console.log('[icon] build/icon.png 已生成:', pngBig.length, 'bytes, ' + PNG_SIZE + 'x' + PNG_SIZE)
+  console.log('[icon] build/icon.icns 已生成:', fs.statSync(path.join(buildDir, 'icon.icns')).size, 'bytes, sizes =', ICNS_SIZES.join(','))
+  console.log('[icon] 已同步 frontend/public/favicon.ico 与 frontend/public/icon.png')
 }
 
 main()
