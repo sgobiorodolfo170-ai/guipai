@@ -1,6 +1,7 @@
 # 涨跌停板统计分析 API 接口详细说明
 
 ## 目录
+- [0. 复盘日汇总接口（Review 页 7 项指标，推荐）](#0-复盘日汇总接口review-页-7-项指标推荐)
 - [1. 基础统计接口](#1-基础统计接口)
 - [2. 详细分析接口](#2-详细分析接口)
 - [3. 质量分析接口](#3-质量分析接口)
@@ -11,6 +12,68 @@
 - [8. 历史对比接口](#8-历史对比接口)
 - [9. 管理接口](#9-管理接口)
 - [10. 数据模型](#10-数据模型)
+
+## 0. 复盘日汇总接口（Review 页 7 项指标，推荐）
+
+> 复盘页全部 7 项指标（最高板/涨停股/跌停股/一字板/连板率/炸板回封数/昨日涨停涨幅）
+> 由本接口一处计算，命名全链路统一（DB snake_case ↔ API camelCase ↔ 前端组件同名）。
+> 数据源：`stock_limit_pool`、`zt_pool_previous`；结果落库 `review_statistics`（write-on-miss，5 分钟缓存）。
+
+### 0.1 获取单日复盘汇总
+
+**接口地址**: `GET /api/limit-board-statistics/review/{date}`
+
+**路径参数**:
+| 参数名 | 类型 | 必填 | 描述 | 示例 |
+|--------|------|------|------|------|
+| date | LocalDate | 是 | 查询日期，格式：yyyy-MM-dd | 2025-01-15 |
+
+**响应数据**: `ReviewStatisticsResponse`
+
+**字段说明与计算公式**:
+| 字段名 | 类型 | 描述 | 计算公式 | 边界 |
+|--------|------|------|----------|------|
+| tradeDate | LocalDate | 交易日期 | — | — |
+| maxContinuousLevel | Integer | 最高板 | MAX(连板数) over 当日 LIMIT_UP | 无涨停 → 0 |
+| limitUpCount | Integer | 涨停股 | COUNT(LIMIT_UP) | — |
+| limitDownCount | Integer | 跌停股 | COUNT(LIMIT_DOWN) | — |
+| oneWordCount | Integer | 一字板 | COUNT(LIMIT_UP 且 first_limit_time<='09:25:04' 且 blast_times=0) | 集合竞价封板且未开板 |
+| continuousLimitRate | BigDecimal | 连板率(%) | COUNT(连板数≥2) / 涨停股数 × 100 | 涨停股=0 → 0 |
+| blastResealCount | Integer | 炸板回封数 | COUNT(LIMIT_UP 且 blast_times>=1) | 涨停池行天然已回封 |
+| yesterdayLimitupAvgChange | BigDecimal | 昨日涨停涨幅(%) | AVG(zt_pool_previous.pct_chg) | 无数据 → null |
+
+> **连板数定义（自研推导）**：连板数(X,D) = X 连续出现在涨停池(LIMIT_UP)的交易日数（截至 D，含 D）。
+> 不依赖源字段（当前通达信源连板数恒 0），以 `stock_limit_pool` 实际日期序列回退计数，窗口上限 90 自然日。
+> **单位约定**：`continuousLimitRate`、`yesterdayLimitupAvgChange` 统一为百分比值（0.00–100.00，两位小数）。
+
+**响应示例**:
+```json
+{
+  "code": 200, "msg": "成功",
+  "data": {
+    "tradeDate": "2025-01-15",
+    "maxContinuousLevel": 6,
+    "limitUpCount": 45,
+    "limitDownCount": 3,
+    "oneWordCount": 12,
+    "continuousLimitRate": 28.89,
+    "blastResealCount": 7,
+    "yesterdayLimitupAvgChange": 2.15
+  }
+}
+```
+
+### 0.2 获取范围复盘汇总
+
+**接口地址**: `GET /api/limit-board-statistics/review/range`
+
+**查询参数**:
+| 参数名 | 类型 | 必填 | 描述 | 示例 |
+|--------|------|------|------|------|
+| startDate | LocalDate | 是 | 开始日期，格式：yyyy-MM-dd | 2025-01-01 |
+| endDate | LocalDate | 是 | 结束日期，格式：yyyy-MM-dd | 2025-01-15 |
+
+**响应数据**: `List<ReviewStatisticsResponse>`（按 tradeDate 升序）
 
 ## 1. 基础统计接口
 

@@ -195,6 +195,27 @@ export const getPercentileAnalysis = (targetDate, days = 60) => {
 }
 
 /**
+ * 获取复盘日汇总（单日）
+ * @param {string} date 查询日期 (yyyy-MM-dd)
+ * @returns {Promise<{tradeDate, maxContinuousLevel, limitUpCount, limitDownCount, oneWordCount, continuousLimitRate, blastResealCount, yesterdayLimitupAvgChange}>}
+ */
+export const getReviewStatistics = (date) => {
+  return api.get(`/limit-board-statistics/review/${date}`)
+}
+
+/**
+ * 获取复盘日汇总（范围，供历史弹窗）
+ * @param {string} startDate 开始日期 (yyyy-MM-dd)
+ * @param {string} endDate 结束日期 (yyyy-MM-dd)
+ * @returns {Promise<Array>}
+ */
+export const getReviewStatisticsRange = (startDate, endDate) => {
+  return api.get('/limit-board-statistics/review/range', {
+    params: { startDate, endDate }
+  })
+}
+
+/**
  * 刷新统计缓存
  * @param {string} date 日期 (yyyy-MM-dd)
  * @returns {Promise}

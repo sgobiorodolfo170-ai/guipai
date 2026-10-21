@@ -6,7 +6,8 @@ import {
     getStockIndustry,
     getStockLimit,
     getStockLimitYesterday,
-    getStockSpot
+    getStockSpot,
+    getReviewSummary
 } from '@/services/review.service'
 import StockDateUtil from "@/utils/StockDateUtil.js";
 import cacheStorage from "@/utils/cacheStorage.js";
@@ -24,6 +25,8 @@ export function useReview() {
     const industryData = ref([])
     const marketData = ref([])
     const indexData = ref([])
+    // 复盘日汇总（7 项指标来自后端 /limit-board-statistics/review/:date 一处计算）
+    const reviewSummary = ref(null)
 
     // 格式化金额
     const formatAmount = (amount) => {
@@ -396,6 +399,7 @@ export function useReview() {
         limitUpData.value = cached.limitUpData || []
         limitDownData.value = cached.limitDownData || []
         yesterdayLimit.value = cached.yesterdayLimit || []
+        reviewSummary.value = cached.reviewSummary || null
         return { tradingDay: cached.tradingDay || null }
     }
 
@@ -412,17 +416,36 @@ export function useReview() {
                 fetchLimitUpData(),
                 fetchLimitDownData(),
                 fetchYesterdayLimitUpData(),
+                fetchReviewSummary(StockDateUtil.getRecentTradingDay()),
             ])
             cacheStorage.set(REVIEW_CACHE_KEY, {
                 indexData: indexData.value.filter(item => REVIEW_INDEX_CODES.includes(item.代码)),
                 limitUpData: limitUpData.value,
                 limitDownData: limitDownData.value,
                 yesterdayLimit: yesterdayLimit.value,
+                reviewSummary: reviewSummary.value,
                 tradingDay: StockDateUtil.getRecentTradingDay(),
             })
             return true
         } finally {
             loading.value = false
+        }
+    }
+
+    /**
+     * 拉取复盘日汇总（最高板/涨停/跌停/一字板/连板率/炸板回封/昨日涨停涨幅）
+     * @param {string} dateStr 'YYYY-MM-DD'，缺省取最近交易日
+     */
+    const fetchReviewSummary = async (dateStr) => {
+        try {
+            const date = dateStr || StockDateUtil.getRecentTradingDay()
+            const response = await getReviewSummary(date)
+            reviewSummary.value = (response.code === 200 && response.data) ? response.data : null
+            return reviewSummary.value
+        } catch (error) {
+            console.error('获取复盘汇总失败:', error)
+            reviewSummary.value = null
+            return null
         }
     }
 
@@ -437,6 +460,7 @@ export function useReview() {
         yesterdayLimit,
         industryData,
         marketData,
+        reviewSummary,
 
         // 计算属性
         stockCategories,
@@ -451,6 +475,7 @@ export function useReview() {
         fetchLimitDownData,
         fetchIndustryData,
         fetchMarketData,
+        fetchReviewSummary,
         formatAmount,
         getCurrentDateString,
         getTradeDates,

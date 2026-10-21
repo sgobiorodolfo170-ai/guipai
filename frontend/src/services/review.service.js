@@ -8,7 +8,7 @@
  * 对应关系：
  *   getStockSpot        → GET /stocks/realtime          (stock_spot 表)
  *   getStockIndustry    → GET /boards                    (plate_market_quotation 表)
- *   getStockIndexSpot   → GET /market/overview           (stock_index_spot 表，合并两类指数)
+ *   getStockIndexSpot   → GET /market/overview           (stock_index_spot + stock_zh_index_daily 双源取最新)
  *   getStockLimit       → GET /limit-board-statistics/limit-pool/:date  (stock_limit_pool LIMIT_UP)
  *   getStockDrop        → GET /limit-board-statistics/drop-pool/:date   (stock_limit_pool LIMIT_DOWN)
  *   getStockLimitYesterday → GET /limit-board-statistics/zt-previous/:date (zt_pool_previous 表)
@@ -137,6 +137,28 @@ export const getStockLimitYesterday = async (date) => {
   const resp = await api.get(`/limit-board-statistics/zt-previous/${date}`)
   if (resp.code === 200 && Array.isArray(resp.data)) {
     return { code: 200, msg: resp.msg, data: resp.data.map(mapZtPrevRow) }
+  }
+  return resp
+}
+
+/** 复盘日汇总（单日）→ GET /limit-board-statistics/review/:date
+ *  字段契约后端已统一为 camelCase：maxContinuousLevel/limitUpCount/limitDownCount/
+ *  oneWordCount/continuousLimitRate/blastResealCount/yesterdayLimitupAvgChange，无需翻译。 */
+export const getReviewSummary = async (date) => {
+  const resp = await api.get(`/limit-board-statistics/review/${date}`)
+  if (resp.code === 200 && resp.data) {
+    return { code: 200, msg: resp.msg, data: resp.data }
+  }
+  return resp
+}
+
+/** 复盘日汇总（范围，历史弹窗）→ GET /limit-board-statistics/review/range */
+export const getReviewSummaryRange = async (startDate, endDate) => {
+  const resp = await api.get('/limit-board-statistics/review/range', {
+    params: { startDate, endDate }
+  })
+  if (resp.code === 200 && Array.isArray(resp.data)) {
+    return { code: 200, msg: resp.msg, data: resp.data }
   }
   return resp
 }

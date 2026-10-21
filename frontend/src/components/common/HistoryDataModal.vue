@@ -68,9 +68,9 @@
 <!--              {{ (scope.row.continuousLimitRate * 100).toFixed(2) }}%-->
 <!--            </template>-->
 <!--          </el-table-column>-->
-<!--          <el-table-column prop="yesterdayLimitUpAvgIncrease" label="昨日涨停涨幅" width="120" v-if="dataType === 'yesterdayAvgChange'">-->
+<!--          <el-table-column prop="yesterdayLimitupAvgChange" label="昨日涨停涨幅" width="120" v-if="dataType === 'yesterdayAvgChange'">-->
 <!--            <template #default="scope">-->
-<!--              {{ (scope.row.yesterdayLimitUpAvgIncrease * 100).toFixed(2) }}%-->
+<!--              {{ (scope.row.yesterdayLimitupAvgChange).toFixed(2) }}%-->
 <!--            </template>-->
 <!--          </el-table-column>-->
 <!--          <el-table-column prop="totalSealFunds" label="总封单资金(亿)" width="120" v-if="showFunds">-->
@@ -100,7 +100,7 @@
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import * as echarts from 'echarts'
 import { ElMessage } from 'element-plus'
-import { getBasicStatisticsRange } from '@/services/limitBoardStatistics.service.js'
+import { getReviewStatisticsRange } from '@/services/limitBoardStatistics.service.js'
 
 const props = defineProps({
   visible: {
@@ -132,12 +132,12 @@ let chartInstance = null
 const modalTitle = computed(() => {
   const titles = {
     limitUp: '涨停股历史数据',
-    limitDown: '跌停股历史数据', 
-    oneWord: '一字板数量历史数据',
+    limitDown: '跌停股历史数据',
+    oneWord: '一字板历史数据',
     continuousRate: '连板率历史数据',
     breakAndRecover: '炸板回封数历史数据',
-    maxLevel: '最高连板历史数据',
-    yesterdayAvgChange: '昨日涨停平均涨幅历史数据'
+    maxLevel: '最高板历史数据',
+    yesterdayAvgChange: '昨日涨停涨幅历史数据'
   }
   return titles[props.dataType] || '历史数据'
 })
@@ -146,11 +146,11 @@ const dataTypeDesc = computed(() => {
   const descs = {
     limitUp: '涨停股数量',
     limitDown: '跌停股数量',
-    oneWord: '一字板数量', 
+    oneWord: '一字板',
     continuousRate: '连板率',
     breakAndRecover: '炸板回封数',
-    maxLevel: '最高连板数',
-    yesterdayAvgChange: '昨日涨停平均涨幅'
+    maxLevel: '最高板',
+    yesterdayAvgChange: '昨日涨停涨幅'
   }
   return descs[props.dataType] || '数据'
 })
@@ -159,11 +159,11 @@ const valueField = computed(() => {
   const fields = {
     limitUp: 'limitUpCount',
     limitDown: 'limitDownCount',
-    oneWord: 'limitUpOneWordCount',
-    continuousRate: 'limitUpContinuousRate',
-    breakAndRecover: 'limitUpBlastResealCount',
-    maxLevel: 'limitUpMaxContinuous',
-    yesterdayAvgChange: 'yesterdayLimitUpAvgIncrease'
+    oneWord: 'oneWordCount',
+    continuousRate: 'continuousLimitRate',
+    breakAndRecover: 'blastResealCount',
+    maxLevel: 'maxContinuousLevel',
+    yesterdayAvgChange: 'yesterdayLimitupAvgChange'
   }
   return fields[props.dataType] || 'value'
 })
@@ -175,14 +175,11 @@ const showFunds = computed(() => ['limitUp', 'limitDown'].includes(props.dataTyp
 // 判断是否为百分比类型
 const isPercentageType = computed(() => ['continuousRate', 'yesterdayAvgChange'].includes(props.dataType))
 
-// 统计数据
+// 统计数据（连板率/昨日涨停涨幅后端已统一为 % 值，两小数，直接取用）
 const averageValue = computed(() => {
   if (!tableData.value.length) return 0
   const sum = tableData.value.reduce((acc, item) => {
-    let value = item[valueField.value] || 0
-    if (isPercentageType.value && props.dataType !== 'continuousRate') {
-      value = value * 100
-    }
+    const value = item[valueField.value] || 0
     return acc + value
   }, 0)
   const avg = sum / tableData.value.length
@@ -191,25 +188,13 @@ const averageValue = computed(() => {
 
 const maxValue = computed(() => {
   if (!tableData.value.length) return 0
-  const max = Math.max(...tableData.value.map(item => {
-    let value = item[valueField.value] || 0
-    if (isPercentageType.value && props.dataType !== 'continuousRate') {
-      value = value * 100
-    }
-    return value
-  }))
+  const max = Math.max(...tableData.value.map(item => item[valueField.value] || 0))
   return isPercentageType.value ? `${max.toFixed(2)}%` : max
 })
 
 const minValue = computed(() => {
   if (!tableData.value.length) return 0
-  const min = Math.min(...tableData.value.map(item => {
-    let value = item[valueField.value] || 0
-    if (isPercentageType.value && props.dataType !== 'continuousRate') {
-      value = value * 100
-    }
-    return value
-  }))
+  const min = Math.min(...tableData.value.map(item => item[valueField.value] || 0))
   return isPercentageType.value ? `${min.toFixed(2)}%` : min
 })
 
@@ -261,10 +246,10 @@ const fetchHistoryData = async () => {
     const endDateStr = formatDate(endDate)
     console.log('查询日期范围:', startDateStr, '到', endDateStr)
     
-    // 尝试从历史统计接口获取数据
+    // 尝试从复盘日汇总接口获取数据
     let result
     try {
-      result = await getBasicStatisticsRange(startDateStr, endDateStr)
+      result = await getReviewStatisticsRange(startDateStr, endDateStr)
       console.log('API响应:', result)
     } catch (apiError) {
       console.warn('API调用失败:', apiError)
@@ -279,20 +264,14 @@ const fetchHistoryData = async () => {
       console.log('获取到数据条数:', responseData.length)
       console.log('第一条数据:', responseData[0])
       
-      // 处理数据并计算环比
+      // 处理数据并计算环比（百分比字段后端已是 % 值，直接相减）
       const processedData = responseData.map((item, index) => {
         const prevItem = responseData[index - 1]
         let diff = 0
-        
+
         if (prevItem) {
-          let currentVal = item[valueField.value] || 0
-          let prevVal = prevItem[valueField.value] || 0
-          
-          if (props.dataType === 'continuousRate') {
-            currentVal = currentVal * 100
-            prevVal = prevVal * 100
-          }
-          
+          const currentVal = item[valueField.value] || 0
+          const prevVal = prevItem[valueField.value] || 0
           diff = Math.round((currentVal - prevVal) * 100) / 100 // 保留两位小数
         }
         
@@ -371,14 +350,8 @@ const renderChart = async () => {
         return 0
       }
       
-      // 数据类型转换
-      if (props.dataType === 'continuousRate') {
-        // value = parseFloat((value * 100).toFixed(2))
-      } else if (props.dataType === 'yesterdayAvgChange') {
-        value = parseFloat((value * 100).toFixed(2))
-      } else {
-        value = parseFloat(value) || 0
-      }
+      // 数值化（连板率/昨日涨停涨幅后端统一返回 % 值，两小数）
+      value = parseFloat(value) || 0
       return value
     })
     

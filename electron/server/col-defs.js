@@ -51,6 +51,19 @@ const COLS = {
     { name: 'turnover_rate', type: 'double' }, { name: 'amplitude', type: 'double' },
     { name: 'total_market_value', type: 'double' }, { name: 'circulation_market_value', type: 'double' },
     { name: 'pe_ttm', type: 'double' }, { name: 'pb', type: 'double' }
+  ],
+  // 复盘日汇总表（每交易一行：最高板/涨停/跌停/一字板/连板率/炸板回封/昨日涨停涨幅）。
+  // 写库方 statistics.js /review；列序须与 ensureSchema 中 review_statistics 一致。
+  review_statistics: [
+    { name: 'trade_date', type: 'date' },
+    { name: 'max_continuous_level', type: 'int' },
+    { name: 'limit_up_count', type: 'int' },
+    { name: 'limit_down_count', type: 'int' },
+    { name: 'one_word_count', type: 'int' },
+    { name: 'continuous_limit_rate', type: 'double' },
+    { name: 'blast_reseal_count', type: 'int' },
+    { name: 'yesterday_limitup_avg_change', type: 'double' },
+    { name: 'create_time', type: 'timestamp' }
   ]
 }
 

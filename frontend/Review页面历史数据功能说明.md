@@ -18,35 +18,35 @@
 - **显示内容**: 最近30天跌停股数量趋势
 - **相关字段**: `limitDownCount`
 
-### 3. 一字板数量
-- **点击位置**: "一字板数量" 指标卡片
+### 3. 一字板
+- **点击位置**: "一字板" 指标卡片
 - **数据类型**: `oneWord`
 - **显示内容**: 最近30天一字板数量趋势
-- **相关字段**: `limitUpOneWordCount`
+- **相关字段**: `oneWordCount`
 
 ### 4. 连板率
 - **点击位置**: "连板率" 指标卡片
 - **数据类型**: `continuousRate`
 - **显示内容**: 最近30天连板率趋势（百分比）
-- **相关字段**: `limitUpContinuousRate`
+- **相关字段**: `continuousLimitRate`
 
 ### 5. 炸板回封数
 - **点击位置**: "炸板回封数" 指标卡片
 - **数据类型**: `breakAndRecover`
 - **显示内容**: 最近30天炸板回封数趋势
-- **相关字段**: `limitUpBlastResealCount`
+- **相关字段**: `blastResealCount`
 
-### 6. 最高连板
-- **点击位置**: "最高连板" 指标卡片
+### 6. 最高板
+- **点击位置**: "最高板" 指标卡片
 - **数据类型**: `maxLevel`
 - **显示内容**: 最近30天最高连板数趋势
-- **相关字段**: `limitUpMaxContinuous`
+- **相关字段**: `maxContinuousLevel`
 
-### 7. 昨日涨停平均涨幅
+### 7. 昨日涨停涨幅
 - **点击位置**: "昨日涨停涨幅" 指标卡片
 - **数据类型**: `yesterdayAvgChange`
 - **显示内容**: 最近30天昨日涨停平均涨幅趋势（百分比）
-- **相关字段**: `yesterdayLimitUpAvgIncrease`
+- **相关字段**: `yesterdayLimitupAvgChange`
 
 ## 弹窗内容
 
@@ -86,10 +86,12 @@ src/
 ```
 
 ### API接口
-使用后端提供的涨跌停板统计分析API：
-- **基础统计范围查询**: `GET /api/limit-board-statistics/basic/range`
+使用后端复盘日汇总接口（7 项指标由后端一处计算，命名与数据库统一）：
+- **复盘日汇总（范围）**: `GET /api/limit-board-statistics/review/range`
 - **参数**: `startDate`, `endDate` (yyyy-MM-dd格式)
-- **返回**: 指定日期范围内的基础统计数据数组
+- **返回**: 指定日期范围内的复盘汇总数组，字段契约：
+  `tradeDate / maxContinuousLevel / limitUpCount / limitDownCount / oneWordCount / continuousLimitRate(%,两位小数) / blastResealCount / yesterdayLimitupAvgChange(%,可 null)`
+- 单位约定：连板率、昨日涨停涨幅统一为百分比值（0.00–100.00），前端不再做 ×100。
 
 ### 数据处理
 1. **日期计算**: 自动计算30天前的日期作为查询起始日期

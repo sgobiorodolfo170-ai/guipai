@@ -214,7 +214,17 @@ async function ensureSchema(dbPath) {
   // 快速短路：tradeinsight 库 + daily_k 表都已存在 → 跳过全套建表检查
   try {
     const hasTable = await execute(`existsTable("${dbPath}", "daily_k")`)
-    if (hasTable) return
+    if (hasTable) {
+      // 增量建表：历史库已存在时，仅补齐新增的 review_statistics（幂等，一次 existsTable 往返）
+      await execute(
+        `if (!existsTable("${dbPath}", "review_statistics")) {\n` +
+        `  t = table(1:0, \`trade_date\`max_continuous_level\`limit_up_count\`limit_down_count\`one_word_count\`continuous_limit_rate\`blast_reseal_count\`yesterday_limitup_avg_change\`create_time, ` +
+        `[DATE, INT, INT, INT, INT, DOUBLE, INT, DOUBLE, TIMESTAMP]);\n` +
+        `  db = database("${dbPath}"); db.createPartitionedTable(t, \`review_statistics, \`trade_date)\n` +
+        `}`
+      )
+      return
+    }
   } catch (_) { /* 库不存在或查询失败 → 走下方完整建表 */ }
 
   const startYear = 2024
@@ -330,6 +340,15 @@ async function ensureSchema(dbPath) {
     `  t = table(1:0, \`symbol\`trade_date\`name\`latest_price\`limit_price\`pct_chg\`amount\`circulation_mv\`total_mv\`turnover_rate\`amplitude\`speed\`last_limit_time\`consecutive_limit\`industry\`limit_stats, ` +
     `[SYMBOL, DATE, SYMBOL, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, STRING, INT, STRING, STRING]);\n` +
     `  db.createPartitionedTable(t, \`zt_pool_previous, \`trade_date)\n` +
+    `}`
+  )
+  // 复盘日汇总表（每日复盘指标：最高板/涨停/跌停/一字板/连板率/炸板回封/昨日涨停涨幅；
+  // 写库方见 statistics.js /review，列序与 col-defs.js review_statistics 一致）
+  await execute(
+    `if (!existsTable("${dbPath}", "review_statistics")) {\n` +
+    `  t = table(1:0, \`trade_date\`max_continuous_level\`limit_up_count\`limit_down_count\`one_word_count\`continuous_limit_rate\`blast_reseal_count\`yesterday_limitup_avg_change\`create_time, ` +
+    `[DATE, INT, INT, INT, INT, DOUBLE, INT, DOUBLE, TIMESTAMP]);\n` +
+    `  db = database("${dbPath}"); db.createPartitionedTable(t, \`review_statistics, \`trade_date)\n` +
     `}`
   )
 }

@@ -37,12 +37,17 @@ Review页面（复盘页）是龟派桌面应用中的股票复盘分析页面�
 
 ### 4. 详细指标网格（点击查看 30 天历史）
 - 涨停股 / 跌停股 数量
-- 一字板数量
+- 一字板
 - 连板率
 - 炸板回封数
-- 最高连板
+- 最高板（第一行卡片，点击查看历史）
 - 昨日涨停涨幅
 - 均支持点击弹出历史趋势弹窗
+
+> 7 项复盘指标（最高板/涨停股/跌停股/一字板/连板率/炸板回封数/昨日涨停涨幅）由后端
+> `GET /api/limit-board-statistics/review/:date` 一处计算（连板数按"连续在涨停池交易日数"自研推导），
+> 命名全链路统一为 `maxContinuousLevel/limitUpCount/limitDownCount/oneWordCount/continuousLimitRate/
+> blastResealCount/yesterdayLimitupAvgChange`，连板率与昨日涨停涨幅统一为 % 值。
 
 ## 缓存机制（重要）
 
@@ -55,14 +60,14 @@ Review页面（复盘页）是龟派桌面应用中的股票复盘分析页面�
 
 ## API接口
 
-页面经内嵌后端（Electron 主进程 Express，默认 `http://localhost:8080`）调用以下 AKTOOLS 接口：
+页面经内嵌后端（Electron 主进程 Express，默认 `http://localhost:8080`）调用以下接口：
 
-1. **获取涨停池**: `/api/aktools/stock/limit?date=yyyyMMdd`
-2. **获取跌停池**: `/api/aktools/stock/drop?date=yyyyMMdd`
-3. **昨日涨停池**: `/api/aktools/stock/ztPoolPrevious?date=yyyyMMdd`
-4. **指数行情**: `/api/aktools/stock/indexSpot?symbol=上证系列指数|深证系列指数`
-5. **个股K线**: `/api/aktools/stock/history`（展开迷你K线时按需加载）
-6. **涨跌停统计历史**: `/api/limit-board-statistics/*`（历史弹窗）
+1. **获取涨停池**: `/api/limit-board-statistics/limit-pool/yyyy-MM-dd`（涨停池列表，连板数由后端推导补全）
+2. **获取跌停池**: `/api/limit-board-statistics/drop-pool/yyyy-MM-dd`
+3. **昨日涨停池**: `/api/limit-board-statistics/zt-previous/yyyy-MM-dd`
+4. **指数行情**: `/api/market/overview`
+5. **个股K线**: `/api/stocks/kline`（展开迷你K线时按需加载）
+6. **复盘日汇总**: `/api/limit-board-statistics/review/:date` 与 `/review/range`（7 项指标卡片 + 历史弹窗）
 
 ## 技术实现
 

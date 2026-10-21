@@ -55,9 +55,9 @@
             </span>
             </div>
           </div>
-          <div class="core-item">
+          <div class="core-item clickable" @click="showHistoryModal('maxLevel')">
             <div class="core-label">最高板</div>
-            <div class="core-value">{{ maxLimitUpLevel }}板</div>
+            <div class="core-value">{{ maxContinuousLevel }}板</div>
           </div>
         </div>
 
@@ -84,8 +84,8 @@
           <div class="indicator-card clickable" @click="showHistoryModal('oneWord')">
             <img src="/images/oneWord.png" alt="" class="indicator-icon">
             <div class="indicator-info">
-              <div class="indicator-name">一字板数量</div>
-              <div class="indicator-value">{{ oneWordLimitUpCount }}</div>
+              <div class="indicator-name">一字板</div>
+              <div class="indicator-value">{{ oneWordCount }}</div>
             </div>
             <div class="click-hint">点击查看历史</div>
           </div>
@@ -94,7 +94,7 @@
             <img src="/images/continuousLimitUpRate.png" alt="" class="indicator-icon">
             <div class="indicator-info">
               <div class="indicator-name">连板率</div>
-              <div class="indicator-value">{{ continuousLimitUpRate }}%</div>
+              <div class="indicator-value">{{ continuousLimitRate }}%</div>
             </div>
             <div class="click-hint">点击查看历史</div>
           </div>
@@ -103,28 +103,19 @@
             <img src="/images/kLine.png" alt="" class="indicator-icon">
             <div class="indicator-info">
               <div class="indicator-name">炸板回封数</div>
-              <div class="indicator-value">{{ breakAndRecoverCount }}</div>
+              <div class="indicator-value">{{ blastResealCount }}</div>
             </div>
             <div class="click-hint">点击查看历史</div>
           </div>
 
-          <div class="indicator-card clickable" @click="showHistoryModal('maxLevel')">
-            <img src="/images/maxLimitUpLevel.png" alt="" class="indicator-icon">
-            <div class="indicator-info">
-              <div class="indicator-name">最高连板</div>
-              <div class="indicator-value">{{ maxLimitUpLevel }}</div>
-            </div>
-            <div class="click-hint">点击查看历史</div>
-          </div>
-
-<!--          昨日涨停平均涨幅-->
+          <!--          昨日涨停平均涨幅-->
           <div class="indicator-card clickable" @click="showHistoryModal('yesterdayAvgChange')">
             <div class="indicator-icon">
               <img src="/images/highFlagStock.png" alt="" class="indicator-icon">
             </div>
             <div class="indicator-info">
               <div class="indicator-name">昨日涨停涨幅</div>
-              <div class="indicator-value">{{ yesterdayLimitUpAvgChange }}%</div>
+              <div class="indicator-value">{{ yesterdayLimitupAvgChange }}%</div>
             </div>
             <div class="click-hint">点击查看历史</div>
           </div>
@@ -303,11 +294,13 @@ const {
   highFlagStock,
   limitUpData,
   limitDownData,
+  reviewSummary,
   formatAmount,
   getTradeDates,
   yesterdayStockCategories,
   loadCachedReview,
   fetchAndCacheReview,
+  fetchReviewSummary,
 } = useReview()
 
 //刷新按钮相关
@@ -329,29 +322,27 @@ const recentTradingDay = ref('')
 const historyModalVisible = ref(false)
 const currentDataType = ref('')
 
-// 数据概览区
+// 数据概览区 —— 7 项复盘指标，命名与后端 /review 接口契约对齐（DB→API→前端同键）
 const currentDate = ref('')
 const yesterdayLimitUp = ref('--')
-const maxLimitUpLevel = ref('--')
-const continuousLimitUpRate = ref('--')
-const oneWordLimitUpCount = ref('--')
-const breakAndRecoverCount = ref('--')
+const maxContinuousLevel = ref('--')
+const continuousLimitRate = ref('--')
+const oneWordCount = ref('--')
+const blastResealCount = ref('--')
+const limitUpCount = ref('--')
+const limitDownCount = ref('--')
 const indexValue = ref('--')
 const indexChange = ref('')
 const shenzhenIndexValue = ref('--')
 const shenzhenIndexChange = ref('')
 const chinextIndexValue = ref('--')
 const chinextIndexChange = ref('')
-const yesterdayLimitUpAvgChange = ref('--')
+const yesterdayLimitupAvgChange = ref('--')
 
 
 //k线天数
 const kTradeDates = ref(30)
 const tradeDates = ref(null)
-
-// 计算属性
-const limitUpCount = computed(() => limitUpData.value.length)
-const limitDownCount = computed(() => limitDownData.value.length)
 
 // 市场选项（4个）
 const marketOptions = [
@@ -389,43 +380,19 @@ const applyIndexCards = () => {
   })
 }
 
-// 计算连板转换数据
-const calculateBoardTransition = (limitUpData) => {
-  // 总涨停数
-  const totalLimitUp = limitUpData.length;
-  maxLimitUpLevel.value = totalLimitUp > 0
-      ? Math.max(...limitUpData.map(item => item.连板数))
-      : 0;
-
-  // 2. 连板率（continuousLimitUpRate）
-  // 连板股：连板数 ≥ 2 的股票
-  const continuousLimitUpCount = limitUpData.filter(item => item.连板数 >= 2).length;
-  continuousLimitUpRate.value = totalLimitUp > 0
-      ? (continuousLimitUpCount / totalLimitUp * 100).toFixed(2)
-      : '0.00';
-
-  // 3. 一字板数量（oneWordLimitUpCount）
-  // 一字板判定：首次封板时间为 09:25:00（开盘即涨停）且未炸板
-  oneWordLimitUpCount.value = limitUpData.filter(item =>
-      item.首次封板时间  <= '092504'  && item.炸板次数 === 0
-  ).length;
-
-  // 4. 炸板回封数（breakAndRecoverCount）
-  // 炸板回封：炸板次数 ≥ 1 且最后封板时间存在（最终封板）
-  breakAndRecoverCount.value = limitUpData.filter(item =>
-      item.炸板次数 >= 1 && item.最后封板时间
-  ).length;
-
-  //5. 昨日涨停数
-  yesterdayLimitUp.value = yesterdayLimit.value.length
-
-  // 计算昨日涨停平均涨幅
-  if (yesterdayLimit.value.length > 0) {
-    const totalChange = yesterdayLimit.value.reduce((sum, stock) => sum + stock.涨跌幅, 0)
-    yesterdayLimitUpAvgChange.value = (totalChange / yesterdayLimit.value.length).toFixed(2)
-  } else {
-    yesterdayLimitUpAvgChange.value = '--'
-  }
+// 复盘 7 项指标赋值：消费后端 /review/:date 的 reviewSummary（一处计算，前端不再重复推导）。
+// 后端字段契约：tradeDate/maxContinuousLevel/limitUpCount/limitDownCount/oneWordCount/
+//               continuousLimitRate(%,两位小数)/blastResealCount/yesterdayLimitupAvgChange(%,可 null)
+const applyReviewSummaryToCards = (summary) => {
+  const s = summary || reviewSummary.value
+  if (!s) return
+  maxContinuousLevel.value = s.maxContinuousLevel != null ? s.maxContinuousLevel : '--'
+  limitUpCount.value = s.limitUpCount != null ? s.limitUpCount : '--'
+  limitDownCount.value = s.limitDownCount != null ? s.limitDownCount : '--'
+  oneWordCount.value = s.oneWordCount != null ? s.oneWordCount : '--'
+  continuousLimitRate.value = s.continuousLimitRate != null ? s.continuousLimitRate : '--'
+  blastResealCount.value = s.blastResealCount != null ? s.blastResealCount : '--'
+  yesterdayLimitupAvgChange.value = s.yesterdayLimitupAvgChange != null ? s.yesterdayLimitupAvgChange : '--'
 }
 
 // 设置当前日期
@@ -586,10 +553,8 @@ const applyLoadedData = async () => {
   chooseStockCategories.value = stockCategories.value
   // 三大指数卡片独立渲染：只要指数数据到位就显示，不依赖涨停池
   applyIndexCards()
-  // 计算连板转换数据（最高板、连板率等指标依赖涨停池）
-  if (limitUpData.value.length > 0) {
-    calculateBoardTransition(limitUpData.value)
-  }
+  // 复盘 7 项指标直接读后端汇总（缓存命中时随缓存直出，未命中时 reviewSummary 为 null 待下次刷新补齐）
+  applyReviewSummaryToCards()
   await handleMarketChange()
 }
 
@@ -631,6 +596,11 @@ const initializeData = async () => {
   if (cached) {
     recentTradingDay.value = cached.tradingDay || StockDateUtil.getRecentTradingDay()
     await applyLoadedData()
+    // 旧缓存无复盘汇总（本功能上线前的缓存）时后台补齐，不阻塞直出
+    if (!reviewSummary.value) {
+      await fetchReviewSummary(recentTradingDay.value)
+      await applyLoadedData()
+    }
     return
   }
   // 缓存未命中（首次打开）：拉取并写入缓存
@@ -654,15 +624,15 @@ const getCurrentValue = () => {
     case 'limitDown':
       return limitDownCount.value
     case 'oneWord':
-      return oneWordLimitUpCount.value
+      return oneWordCount.value
     case 'continuousRate':
-      return continuousLimitUpRate.value
+      return continuousLimitRate.value
     case 'breakAndRecover':
-      return breakAndRecoverCount.value
+      return blastResealCount.value
     case 'maxLevel':
-      return maxLimitUpLevel.value
+      return maxContinuousLevel.value
     case 'yesterdayAvgChange':
-      return yesterdayLimitUpAvgChange.value
+      return yesterdayLimitupAvgChange.value
     default:
       return 0
   }
@@ -978,6 +948,10 @@ onMounted(async () => {
   background-color: #f9fafb;
   border-radius: 12px;
   transition: background-color 0.3s ease;
+}
+
+.core-item.clickable {
+  cursor: pointer;
 }
 
 .core-item:hover {

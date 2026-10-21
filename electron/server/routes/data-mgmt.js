@@ -43,7 +43,8 @@ const SQLITE_TABLE_LABELS = {
   stock_basic: '股票基础信息(元数据)',
   stock_financial: '定期财报(三大表+指标)',
   stock_indicator: '估值指标快照',
-  board_constituents: '板块成分股'
+  board_constituents: '板块成分股',
+  data_fetch_log: '数据流转日志'
 }
 
 /** DolphinDB 各表及日期列（stock_basic 无日期列） */
@@ -56,6 +57,7 @@ const DDB_TABLES = [
   { name: 'zt_pool_previous', label: '昨日涨停池', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'review_statistics', label: '复盘日统计(最高板/涨停/跌停/一字板等)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'minute_k', label: '分钟K线', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_holding', label: '十大股东', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_basic', label: '股票基础信息', dateCol: null, db: 'dfs://tradeinsight' },
@@ -76,12 +78,12 @@ const SQLJS_FIELD_DEFS = {
     { column: 'code', label: '股票代码', source: 'spot' },
     { column: 'name', label: '名称', source: 'spot' },
     { column: 'market', label: '市场', desc: '沪市主板/科创板/深市主板/创业板/北交所', source: '代码前缀派生' },
-    { column: 'list_date', label: '上市日期', source: 'akshare stock_info_*_name_code' },
-    { column: 'delist_date', label: '退市日期', source: 'akshare' },
+    { column: 'list_date', label: '上市日期', source: '通达信 base.dbf' },
+    { column: 'delist_date', label: '退市日期', source: '通达信 base.dbf（无字段多为空）' },
     { column: 'is_st', label: '是否ST', desc: '0/1', source: '名称含ST' },
     { column: 'is_suspended', label: '是否停牌', desc: '0/1', source: '价=0启发' },
-    { column: 'total_shares', label: '总股本', source: '总市值÷价' },
-    { column: 'float_shares', label: '流通股本', source: '流通市值÷价' }
+    { column: 'total_shares', label: '总股本', source: '通达信 base.dbf（精确）' },
+    { column: 'float_shares', label: '流通股本', source: '通达信 base.dbf（精确）' }
   ],
   stock_financial: [
     { column: 'code', label: '股票代码' },
@@ -100,11 +102,11 @@ const SQLJS_FIELD_DEFS = {
   stock_indicator: [
     { column: 'code', label: '股票代码' },
     { column: 'trade_date', label: '快照日' },
-    { column: 'pe_ttm', label: 'PE(TTM)', source: '百度估值' },
-    { column: 'pb', label: 'PB', source: '百度估值' },
-    { column: 'ps', label: 'PS', source: '百度估值' },
-    { column: 'pcf', label: 'PCF', source: '百度估值' },
-    { column: 'dividend_yield', label: '股息率', source: '百度估值' }
+    { column: 'pe_ttm', label: 'PE(TTM)', source: '已下线（原百度估值）' },
+    { column: 'pb', label: 'PB', source: '已下线（原百度估值）' },
+    { column: 'ps', label: 'PS', source: '已下线（原百度估值）' },
+    { column: 'pcf', label: 'PCF', source: '已下线（原百度估值）' },
+    { column: 'dividend_yield', label: '股息率', source: '已下线（原百度估值）' }
   ],
   note: [
     { column: 'id', label: 'ID' },
@@ -139,6 +141,21 @@ const SQLJS_FIELD_DEFS = {
     { column: 'last_triggered_at', label: '上次触发时间' },
     { column: 'status', label: '状态', desc: 'pending/triggered/dismissed' },
     { column: 'created_at', label: '创建时间' }
+  ],
+  data_fetch_log: [
+    { column: 'id', label: 'ID' },
+    { column: 'created_at', label: '记录时间' },
+    { column: 'data_type', label: '数据类型', desc: 'kline/spot/financial/packageDaily 等' },
+    { column: 'action', label: '操作', desc: '外部取数或导入动作' },
+    { column: 'source_key', label: '数据源代码', desc: 'main/tencent/tdx_quant/akshare/tdx_package 等' },
+    { column: 'source_label', label: '数据源', desc: '最终成功的渠道（东财/腾讯/同花顺/Tushare/AKShare 等）', source: '取数链路自动标记' },
+    { column: 'status', label: '状态', desc: 'success成功/empty空结果/fail失败' },
+    { column: 'row_count', label: '结果行数' },
+    { column: 'duration_ms', label: '耗时(ms)' },
+    { column: 'params', label: '请求参数', desc: 'JSON 摘要' },
+    { column: 'attempts', label: '多源尝试', desc: 'JSON 数组：各源状态/耗时/渠道' },
+    { column: 'error', label: '错误信息' },
+    { column: 'detail', label: '明细', desc: 'JSON：导入文件数/子表行数等' }
   ]
 }
 // DolphinDB 表字段定义（与 sql.js 同名表 schema 不同，单独维护）
@@ -163,6 +180,17 @@ const DDB_FIELD_DEFS = {
     { column: 'list_date', label: '上市日期' },
     { column: 'exchange', label: '交易所' },
     { column: 'status', label: '状态' }
+  ],
+  review_statistics: [
+    { column: 'trade_date', label: '交易日', source: '复盘日' },
+    { column: 'max_continuous_level', label: '最高板', desc: '当日最高连板数（连板数=连续出现在涨停池的交易日数，自研推导）' },
+    { column: 'limit_up_count', label: '涨停股', source: 'stock_limit_pool LIMIT_UP 计数' },
+    { column: 'limit_down_count', label: '跌停股', source: 'stock_limit_pool LIMIT_DOWN 计数' },
+    { column: 'one_word_count', label: '一字板', desc: '首次封板<=09:25:04 且炸板次数=0 的涨停股数' },
+    { column: 'continuous_limit_rate', label: '连板率(%)', desc: '连板>=2 的涨停股 / 涨停股总数 × 100，两位小数' },
+    { column: 'blast_reseal_count', label: '炸板回封数', desc: '炸板次数>=1 的涨停股数（涨停池行天然已回封）' },
+    { column: 'yesterday_limitup_avg_change', label: '昨日涨停涨幅(%)', desc: '昨日涨停池 pct_chg 均值，两位小数；无数据为 NULL' },
+    { column: 'create_time', label: '写入时间' }
   ]
 }
 
@@ -172,7 +200,8 @@ const SQLITE_COVERAGE = {
   stock_financial: ['revenue', 'total_assets', 'roe'],
   stock_indicator: ['pe_ttm', 'pb', 'pcf'],
   note: ['stock_code', 'direction', 'cost', 'holding_status'],
-  note_alert: ['alert_type', 'status']
+  note_alert: ['alert_type', 'status'],
+  data_fetch_log: ['source_label', 'status', 'data_type']
 }
 
 /**
