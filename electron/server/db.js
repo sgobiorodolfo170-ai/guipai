@@ -317,6 +317,74 @@ async function initDb(dataDir) {
       UNIQUE(board_name, stock_code)
     );
     CREATE INDEX IF NOT EXISTS idx_bc_board ON board_constituents(board_name);
+    -- 数据流转日志：外部取数/导入的旁路记录，最多保留 2 万条（fetch-log.js 维护）
+    CREATE TABLE IF NOT EXISTS data_fetch_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      data_type TEXT NOT NULL,
+      action TEXT,
+      source_key TEXT,
+      source_label TEXT,
+      status TEXT NOT NULL,
+      row_count INTEGER DEFAULT 0,
+      duration_ms INTEGER DEFAULT 0,
+      params TEXT,
+      attempts TEXT,
+      error TEXT,
+      detail TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_dfl_created ON data_fetch_log(created_at);
+    CREATE INDEX IF NOT EXISTS idx_dfl_source ON data_fetch_log(source_label);
+    CREATE INDEX IF NOT EXISTS idx_dfl_status ON data_fetch_log(status);
+    CREATE INDEX IF NOT EXISTS idx_dfl_type ON data_fetch_log(data_type);
+    -- 交易流水：结构化成交事实，唯一事实源；持仓由本表流水推导
+    CREATE TABLE IF NOT EXISTS trade (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      stock_code TEXT NOT NULL,
+      stock_name TEXT,
+      direction TEXT NOT NULL CHECK(direction IN ('buy','sell')),
+      trade_price REAL NOT NULL,
+      quantity INTEGER NOT NULL,
+      fee REAL DEFAULT 0,
+      trade_date TEXT NOT NULL,
+      note TEXT,
+      is_demo INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      updated_at TEXT DEFAULT (datetime('now','localtime'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_trade_user_code ON trade(user_id, stock_code);
+    CREATE INDEX IF NOT EXISTS idx_trade_user_date ON trade(user_id, trade_date);
+    CREATE INDEX IF NOT EXISTS idx_trade_user_demo ON trade(user_id, is_demo);
+    -- 持仓快照：由 trade 流水按代码全量回放重算，勿手工编辑
+    CREATE TABLE IF NOT EXISTS position (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      stock_code TEXT NOT NULL,
+      stock_name TEXT,
+      quantity INTEGER NOT NULL,
+      avg_cost REAL NOT NULL,
+      total_invested REAL DEFAULT 0,
+      total_proceeds REAL DEFAULT 0,
+      realized_pnl REAL DEFAULT 0,
+      updated_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(user_id, stock_code)
+    );
+    -- 风控快照：每日最多一行，记录市值/浮盈/仓位/回撤，供趋势回溯
+    CREATE TABLE IF NOT EXISTS risk_snapshot (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER DEFAULT 1,
+      snapshot_date TEXT NOT NULL,
+      total_market_value REAL,
+      total_pnl REAL,
+      total_position_pct REAL,
+      max_single_position_pct REAL,
+      heavy_count INTEGER,
+      drawdown_from_peak REAL,
+      detail TEXT,
+      created_at TEXT DEFAULT (datetime('now','localtime')),
+      UNIQUE(user_id, snapshot_date)
+    );
   `)
 
   // ---- stock_basic 列迁移：旧库已建表无新列时补列（SQLite 无 ADD COLUMN IF NOT EXISTS）----

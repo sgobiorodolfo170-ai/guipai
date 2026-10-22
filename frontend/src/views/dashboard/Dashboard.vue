@@ -1,18 +1,36 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useStockStore } from '@/store/stock.store'
 import KLineChart from '@/components/common/KLineChart.vue'
 
 const stockStore = useStockStore()
 
 const loading = ref(false)
-// date 为快照交易日（后端 /market/overview 提供）：展示在标题后，明确数值是哪天的
+// date 为最新交易日（后端双源比对结果）：展示在标题后，明确数值是哪天的；
+// source 标记该数值来自实时快照(snapshot)还是指数日K(daily)，三指数来源不一致时显示“混合”
 const marketData = ref({
-  shanghai: { index: '--', change: 0, changePercent: 0 },
-  shenzhen: { index: '--', change: 0, changePercent: 0 },
-  chinext: { index: '--', change: 0, changePercent: 0 },
+  shanghai: { index: '--', change: 0, changePercent: 0, source: '' },
+  shenzhen: { index: '--', change: 0, changePercent: 0, source: '' },
+  chinext: { index: '--', change: 0, changePercent: 0, source: '' },
   date: ''
 })
+
+const SOURCE_LABELS = { snapshot: '快照', daily: '日K' }
+const sourceLabel = (source) => SOURCE_LABELS[source] || ''
+
+const marketSourceLabel = computed(() => {
+  const sources = ['shanghai', 'shenzhen', 'chinext']
+    .map(key => marketData.value[key]?.source)
+    .filter(Boolean)
+  if (!sources.length) return ''
+  const unique = [...new Set(sources)]
+  return unique.length === 1 ? sourceLabel(unique[0]) : '混合'
+})
+
+// 指数K线数据源：由 KLineChart 透传后端 meta，随指数/周期切换更新
+const klineMeta = ref(null)
+const klineSourceLabel = computed(() => sourceLabel(klineMeta.value?.latestSource))
+const onKlineLoaded = (meta) => { klineMeta.value = meta }
 
 onMounted(async () => {
   // 1. 立即从 localStorage 加载上次缓存的指数数据（避免页面空白）
@@ -31,7 +49,7 @@ onMounted(async () => {
 /** 从 localStorage 读取上次缓存的指数数据，立即渲染（stale-while-revalidate） */
 const loadCachedMarketData = () => {
   try {
-    const cached = localStorage.getItem('dashboard_market_data')
+    const cached = localStorage.getItem('dashboard_market_data_v2')
     if (cached) {
       marketData.value = JSON.parse(cached)
     }
@@ -41,7 +59,7 @@ const loadCachedMarketData = () => {
 /** 将指数数据写入 localStorage（供下次启动 stale 展示） */
 const saveMarketDataToCache = () => {
   try {
-    localStorage.setItem('dashboard_market_data', JSON.stringify(marketData.value))
+    localStorage.setItem('dashboard_market_data_v2', JSON.stringify(marketData.value))
   } catch (_) { /* ignore quota errors */ }
 }
 
@@ -58,10 +76,10 @@ const fetchMarketOverview = async () => {
     // 仅当新数据有值时才更新（否则保持缓存数据不变）
     if (sh || sz || cy) {
       marketData.value = {
-        shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0 },
-        shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0 },
-        chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0 },
-        // 快照日期：旧缓存/旧后端可能没有该字段，取不到时保留原值（空则模板隐藏）
+        shanghai: { index: sh?.price ?? '--', change: sh?.change ?? 0, changePercent: sh?.changePercent ?? 0, source: sh?.source || '' },
+        shenzhen: { index: sz?.price ?? '--', change: sz?.change ?? 0, changePercent: sz?.changePercent ?? 0, source: sz?.source || '' },
+        chinext: { index: cy?.price ?? '--', change: cy?.change ?? 0, changePercent: cy?.changePercent ?? 0, source: cy?.source || '' },
+        // 最新日期：旧缓存/旧后端可能没有该字段，取不到时保留原值（空则模板隐藏）
         date: sh?.date || sz?.date || cy?.date || marketData.value.date || ''
       }
       saveMarketDataToCache()
@@ -100,6 +118,9 @@ const indexTabs = [
   { code: '399006', name: '创业板指' }
 ]
 const activeIndex = ref('000001')
+
+// 切换指数时 KLineChart 会重建，先清空旧 meta，避免来源标签短暂显示上一指数的数据
+watch(activeIndex, () => { klineMeta.value = null })
 
 // ---- 指数K线卡片高度拖拽（持久化到 localStorage，与 Watchlist 分栏拖拽同模式）----
 // 需求：卡片高度可自由调节。上限仅作防御性封顶（防止拖出远超视口的不可用状态），
@@ -176,8 +197,10 @@ onUnmounted(() => {
             <div class="card-header">
               <div class="market-title">
                 <span>市场概况</span>
-                <!-- 快照日期：与指数数值同属一个交易日的口径，避免"数据是哪天的"歧义 -->
+                <!-- 最新交易日：与指数数值同属一个交易日的口径，避免"数据是哪天的"歧义 -->
                 <span v-if="marketData.date" class="market-date">{{ marketData.date }}</span>
+                <!-- 数据来源：快照/日K，三指数不一致时显示混合 -->
+                <el-tag v-if="marketSourceLabel" size="small" type="info" effect="plain">{{ marketSourceLabel }}</el-tag>
               </div>
               <el-tag type="success" v-if="stockStore.isMarketOpen">交易中</el-tag>
               <el-tag type="info" v-else>休市</el-tag>
@@ -224,7 +247,13 @@ onUnmounted(() => {
         <el-card>
           <template #header>
             <div class="card-header">
-              <span>指数K线</span>
+              <div class="market-title">
+                <span>指数K线</span>
+                <!-- 末根K线来源：盘中跟随快照、盘后跟随日K -->
+                <el-tag v-if="klineSourceLabel" size="small" type="info" effect="plain" :title="klineMeta?.latestDate || ''">
+                  {{ klineSourceLabel }}
+                </el-tag>
+              </div>
               <el-radio-group v-model="activeIndex" size="small">
                 <el-radio-button
                   v-for="idx in indexTabs"
@@ -243,6 +272,7 @@ onUnmounted(() => {
             :show-drawing-tools="false"
             :show-volume="true"
             :height="klineHeight + 'px'"
+            @loaded="onKlineLoaded"
           />
           <!-- 高度拖拽手柄：整条可拖，grip 仅视觉提示；双击复位默认高度 -->
           <div

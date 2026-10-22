@@ -5,6 +5,7 @@ import { useStockData } from '@/composables/useStockData'
 import { useWatchlistStore } from '@/store/watchlist.store'
 import KLineChart from '@/components/common/KLineChart.vue'
 import WatchlistGroupPicker from '@/components/watchlist/WatchlistGroupPicker.vue'
+import { formatPrice } from '@/utils/stock'
 import { ElMessage } from 'element-plus'
 
 const route = useRoute()
@@ -13,13 +14,19 @@ const watchlistStore = useWatchlistStore()
 const stockCode = computed(() => route.params.code)
 const {
   loading,
-  stockData,
+  quote,
   formattedPrice,
   formattedChange,
   formattedChangePercent,
   changeStatus,
   fetchStockDetail
 } = useStockData(stockCode.value)
+
+// 0 / null / 非数字都视为无行情，避免停牌或基础信息兜底时显示 0.00
+const fmtQuotePrice = (v) => {
+  const n = Number(v)
+  return v == null || !Number.isFinite(n) || n <= 0 ? '--' : formatPrice(n)
+}
 
 // K线图状态
 const klinePeriod = ref('daily')
@@ -51,7 +58,7 @@ const toggleWatchlist = async () => {
 // 分组选择确认 → 按所选分组加入自选（传入名称，避免自选列表名称列空白）
 const onGroupConfirm = async (groupId) => {
   try {
-    await watchlistStore.addToWatchlist(stockCode.value, groupId, stockData.value?.name)
+    await watchlistStore.addToWatchlist(stockCode.value, groupId, quote.value?.name)
     ElMessage.success(`已加入自选股分组`)
   } catch (error) {
     console.error('操作自选股失败:', error)
@@ -66,15 +73,15 @@ const isInWatchlist = computed(() => {
 
 <template>
   <div class="stock-detail" v-loading="loading">
-    <div v-if="stockData" class="stock-content">
+    <div v-if="quote" class="stock-content">
       <!-- 股票基本信息 -->
       <el-card class="stock-info-card">
         <div class="stock-header">
           <div class="stock-basic">
             <h1 class="stock-title">
-              {{ stockData.name }} ({{ stockData.code }})
+              {{ quote.name }} ({{ quote.code }})
             </h1>
-            <div class="stock-market">{{ stockData.market }}</div>
+            <div class="stock-market">{{ quote.market }}</div>
           </div>
           <div class="stock-actions">
             <el-button
@@ -101,22 +108,28 @@ const isInWatchlist = computed(() => {
         </div>
         
         <el-row :gutter="20" class="stock-stats">
-          <el-col :span="8">
+          <el-col :span="6">
             <div class="stat-item">
               <div class="stat-label">开盘</div>
-              <div class="stat-value">{{ stockData.open || '--' }}</div>
+              <div class="stat-value">{{ fmtQuotePrice(quote.open) }}</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
             <div class="stat-item">
               <div class="stat-label">最高</div>
-              <div class="stat-value">{{ stockData.high || '--' }}</div>
+              <div class="stat-value">{{ fmtQuotePrice(quote.high) }}</div>
             </div>
           </el-col>
-          <el-col :span="8">
+          <el-col :span="6">
             <div class="stat-item">
               <div class="stat-label">最低</div>
-              <div class="stat-value">{{ stockData.low || '--' }}</div>
+              <div class="stat-value">{{ fmtQuotePrice(quote.low) }}</div>
+            </div>
+          </el-col>
+          <el-col :span="6">
+            <div class="stat-item">
+              <div class="stat-label">昨收</div>
+              <div class="stat-value">{{ fmtQuotePrice(quote.prevClose) }}</div>
             </div>
           </el-col>
         </el-row>

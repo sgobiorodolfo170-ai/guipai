@@ -13,6 +13,7 @@ const Profile = () => import('@/views/user/Profile.vue')
 const Settings = () => import('@/views/settings/Settings.vue')
 const Review = () => import('@/views/review/Review.vue')
 const KlinePractice = () => import('@/views/kline-practice/RandomStockPractice.vue')
+const Cockpit = () => import('@/views/cockpit/Cockpit.vue')
 
 const routes = [
     {
@@ -35,6 +36,15 @@ const routes = [
         meta: {
             title: '复盘',
             icon: 'Review'
+        }
+    },
+    {
+        path: '/heatmap',
+        name: 'HeatmapTreemap',
+        component: () => import('@/views/market/HeatmapTreemap.vue'),
+        meta: {
+            title: '热力图',
+            icon: 'Grid'
         }
     },
     {
@@ -69,6 +79,14 @@ const routes = [
                 component: () => import('@/views/admin/DataOverview.vue'),
                 meta: {
                     title: '数据总览'
+                }
+            },
+            {
+                path: 'data-flow',
+                name: 'DataFlow',
+                component: () => import('@/views/admin/DataFlow.vue'),
+                meta: {
+                    title: '数据流转'
                 }
             },
             {
@@ -123,6 +141,15 @@ const routes = [
         meta: {
             title: '自选股',
             icon: 'Star'
+        }
+    },
+    {
+        path: '/cockpit',
+        name: 'Cockpit',
+        component: Cockpit,
+        meta: {
+            title: '驾驶舱',
+            icon: 'DataBoard'
         }
     },
     {

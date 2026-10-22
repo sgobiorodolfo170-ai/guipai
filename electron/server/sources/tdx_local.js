@@ -127,12 +127,123 @@ function getIndexDaily({ symbol, period = 'daily', start_date, end_date }) {
   return parseDayFile(fs.readFileSync(file), symbol, start_date, end_date)
 }
 
+/**
+ * 通达信本地股票元数据（读 T0002/hq_cache/base.dbf）�? * base.dbf �?通达信缓存的证券基本信息表（约 8000 �?，含上市日/总股本/流通股本/行业代码�? * 用途：废弃交易所官网/AKShare 后，�?stock_basic 同步 list_date/delist_date/总流通股本�? * 字段口径（DBF �?N 字段为字符串）：�? *   GPDM  证券代码（6 �?�? *   SSDATE 上市日期 YYYYMMDD
+ *   ZGB   总股本（万股）
+ *   LTAG  流通股本（万股�? *   HY    行业代码（TDX 内部，暂不映射）�? * 仅取 A 股：沪 60/68、深 00/30、北 43/83/87/88/92。指数/基金/债券排除�? */
+function readBaseDbf(limit) {
+  const dir = resolveTdxDir()
+  if (!dir) return []
+  const file = path.join(dir, 'T0002', 'hq_cache', 'base.dbf')
+  if (!fs.existsSync(file)) return []
+  const buf = fs.readFileSync(file)
+  if (buf.length < 33) return []
+  const headerLen = buf.readUInt16LE(8)
+  const recordLen = buf.readUInt16LE(10)
+  if (headerLen < 33 || recordLen < 8) return []
+  const fields = []
+  let pos = 32
+  while (pos < headerLen - 1) {
+    if (buf[pos] === 0x0D) break
+    fields.push({ name: buf.toString('latin1', pos, pos + 11).replace(/\0/g, '').trim(), len: buf[pos + 16] })
+    pos += 32
+  }
+  const off = {}
+  const lenOf = {}
+  let o = 1
+  for (const f of fields) { off[f.name] = o; lenOf[f.name] = f.len; o += f.len }
+  const out = []
+  const maxN = limit > 0 ? limit : 100000
+  const aShare = /^(60|68|00|30|43|83|87|88|92)/
+  let p = headerLen
+  while (p + recordLen <= buf.length && out.length < maxN) {
+    if (buf[p] === 0x20) {
+      const read = (name) => {
+        const oo = off[name]
+        if (oo == null) return ''
+        return buf.toString('latin1', p + oo, p + oo + lenOf[name]).trim()
+      }
+      const code = read('GPDM')
+      if (aShare.test(code) && /^\d{6}$/.test(code)) {
+        const sd = read('SSDATE')
+        const zgb = Number(read('ZGB'))
+        const ltag = Number(read('LTAG'))
+        out.push({
+          code,
+          list_date: /^\d{8}$/.test(sd) ? `${sd.slice(0, 4)}-${sd.slice(4, 6)}-${sd.slice(6, 8)}` : null,
+          total_shares: Number.isFinite(zgb) && zgb > 0 ? zgb * 10000 : null,   // 万股 → �?          float_shares: Number.isFinite(ltag) && ltag > 0 ? ltag * 10000 : null
+        })
+      }
+    }
+    p += recordLen
+  }
+  return out
+}
+
+/**
+ * 读 TDX 缓存 cfg 文件（GBK 编码）。返回逐行字符串数组；TextDecoder('gbk') 不可用则退回 UTF-8。
+ */
+function readCfgLines(file) {
+  const dir = resolveTdxDir()
+  if (!dir) return []
+  const p = path.join(dir, 'T0002', 'hq_cache', file)
+  if (!fs.existsSync(p)) return []
+  const buf = fs.readFileSync(p)
+  try {
+    const dec = new TextDecoder('gbk')
+    return dec.decode(buf).split(/\r?\n/).filter(Boolean)
+  } catch (_) {
+    return buf.toString('utf8').split(/\r?\n/).filter(Boolean)
+  }
+}
+
+/**
+ * 通达信子行业板块清单（读 tdxzs.cfg，类型 2|1|1）。
+ * 行格式：名称|代码(880xxx)|2|1|1|T代码。共约 110 个子行业，替代东财行业板块口径。
+ */
+function getIndustrySectors() {
+  const out = []
+  for (const l of readCfgLines('tdxzs.cfg')) {
+    const p = l.split('|')
+    if (p.length >= 6 && p[2] === '2' && p[3] === '1' && p[4] === '1') {
+      const code = String(p[1] || '').trim()
+      const name = String(p[0] || '').trim()
+      if (/^\d{6}$/.test(code) && name) out.push({ code, name })
+    }
+  }
+  return out
+}
+
+/**
+ * 个股→子行业名称映射（tdxhy.cfg 代码→T代码 + tdxzs.cfg T代码→名称）。
+ * 供涨跌停池 / 资金流按行业聚合使用，离线可用。
+ */
+function getStockIndustryMap() {
+  const nameByT = {}
+  for (const l of readCfgLines('tdxzs.cfg')) {
+    const p = l.split('|')
+    if (p.length >= 6 && p[5]) nameByT[String(p[5]).trim()] = String(p[0] || '').trim()
+  }
+  const map = {}
+  for (const l of readCfgLines('tdxhy.cfg')) {
+    const p = l.split('|')
+    if (p.length >= 3 && /^\d{6}$/.test(String(p[1] || '').trim()) && p[2]) {
+      const name = nameByT[String(p[2]).trim()]
+      if (name) map[String(p[1]).trim()] = name
+    }
+  }
+  return map
+}
+
 module.exports = {
   name: 'tdx_local',
   capabilities: ['kline', 'indexDaily'],
   fetchers: { kline: getKLine, indexDaily: getIndexDaily },
   available: () => !!resolveTdxDir(),
   resolveTdxDir,
+  readBaseDbf,
+  getIndustrySectors,
+  getStockIndustryMap,
   // 健康探针：供路由层检查可读性
   health: () => {
     const dir = resolveTdxDir()

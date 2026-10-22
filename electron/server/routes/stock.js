@@ -10,7 +10,7 @@ const minuteRepo = require('../../dolphindb/minute-repository')
 const holdingRepo = require('../../dolphindb/holding-repository')
 const converter = require('../converter')
 const { getDb } = require('../db')
-const akshareSource = require('../sources/akshare')
+const tdxLocal = require('../sources/tdx_local')
 const marketTime = require('../market-time')
 
 const router = express.Router()
@@ -90,11 +90,53 @@ function stockBasicStats() {
   return { total: totalRow?.c || 0, byMarket }
 }
 
+// 股票列表可排序字段：code/name 直接走 SQLite；行情字段需全市场快照在内存排序。
+const SQL_SORT_FIELDS = new Set(['code', 'name'])
+const SPOT_SORT_FIELDS = new Set(['price', 'changePercent', 'turnover', 'totalMarketValue'])
+
+// 全市场排序快照缓存：独立 key，避免与 /realtime 按页 codes 的缓存互相污染。
+// 30s 足以防止用户反复点表头打爆上游，页面展示的实时价仍由 /realtime 单独拉取。
+const SORT_SPOT_CACHE_KEY = 'ddb:spot:sort:all'
+const SORT_SPOT_TTL_SEC = 30
+
+/** 全市场行情快照 Map<code, 标准化行情>（排序用）。
+ *  盘中网络优先（不传 codes = 腾讯全市场批量），盘后/失败回落 DolphinDB stock_spot。
+ *  12s 限时：给 DDB 兜底留出余量，避免超过前端 15s 请求超时。
+ *  取不到时返回空 Map，调用方降级为按代码排序。 */
+async function loadFullSpotMap() {
+  let rows = cache.get(SORT_SPOT_CACHE_KEY)
+  if (!rows) {
+    if (marketTime.isTradingTime()) {
+      try {
+        const raw = await withTimeout(aktools.getStockSpot(), 12000)
+        if (raw && raw.length) rows = raw.map(mapSpotRaw)
+      } catch (e) {
+        if (e.message !== 'timeout') console.warn('[stock] 全市场排序快照获取失败，回落库内:', e.message)
+      }
+    }
+    if (!rows || !rows.length) {
+      try {
+        const spot = await spotRepo.getSpot()
+        if (spot && spot.length) rows = spot.map(mapSpotRow)
+      } catch (e) {
+        console.warn('[stock] 全市场排序快照读取失败:', e.message)
+      }
+    }
+    if (rows && rows.length) cache.set(SORT_SPOT_CACHE_KEY, rows, SORT_SPOT_TTL_SEC)
+  }
+  const map = new Map()
+  for (const r of rows || []) {
+    if (r && r.code) map.set(String(r.code), r)
+  }
+  return map
+}
+
 // 股票列表 —— 只读本地 stock_basic 库，不再每次直连行情源。
 // 支持 market（沪市主板/科创板/深市主板/创业板/北交所）分类过滤、代码/名称搜索、分页。
-router.get('/', (req, res) => {
+// 排序范围覆盖筛选后的全量股票（非当前页）：sortBy + sortOrder=ascending|descending。
+router.get('/', async (req, res) => {
   try {
-    const { search, market, page = 1, pageSize = 50 } = req.query
+    const { search, market, page = 1, pageSize = 50, sortBy, sortOrder } = req.query
     const where = []
     const params = []
     if (search) {
@@ -110,10 +152,47 @@ router.get('/', (req, res) => {
     const totalRow = getDb().prepare(`SELECT COUNT(*) AS c FROM stock_basic ${whereSql}`).get(...params)
     const total = totalRow?.c || 0
     const start = Math.max((Number(page) - 1) * Number(pageSize), 0)
-    const items = getDb().prepare(
+    const size = Number(pageSize)
+    const dir = String(sortOrder || '') === 'descending' || String(sortOrder || '') === 'desc' ? 'DESC' : 'ASC'
+    const field = String(sortBy || '')
+    let items
+
+    if (SQL_SORT_FIELDS.has(field)) {
+      // 白名单字段直接拼列名（无注入风险）；code 兜底保证分页顺序稳定
+      items = getDb().prepare(
+        `SELECT code, name, market FROM stock_basic ${whereSql} ORDER BY ${field} ${dir}, code ASC LIMIT ? OFFSET ?`
+      ).all(...params, size, start)
+      return ok(res, { list: items, total, page: Number(page), pageSize: size })
+    }
+
+    if (SPOT_SORT_FIELDS.has(field)) {
+      // 行情字段不在 sql.js 中：先取筛选后的全量股票，再按全市场快照排序后切页
+      const rows = getDb().prepare(
+        `SELECT code, name, market FROM stock_basic ${whereSql} ORDER BY code`
+      ).all(...params)
+      const spotMap = await loadFullSpotMap()
+      const valOf = (row) => {
+        const v = Number(spotMap.get(String(row.code))?.[field])
+        return Number.isFinite(v) ? v : 0
+      }
+      // 该字段全为 0 时（快照缺失/源不提供该列），排序实际退化为代码升序，显式告知前端
+      const hasSortValue = rows.some(row => valOf(row) !== 0)
+      rows.sort((a, b) => {
+        const diff = valOf(a) - valOf(b)
+        if (diff !== 0) return dir === 'DESC' ? -diff : diff
+        return a.code < b.code ? -1 : a.code > b.code ? 1 : 0
+      })
+      items = rows.slice(start, start + size)
+      return ok(res, {
+        list: items, total, page: Number(page), pageSize: size,
+        ...(hasSortValue ? {} : { sortFallback: true })
+      })
+    }
+
+    items = getDb().prepare(
       `SELECT code, name, market FROM stock_basic ${whereSql} ORDER BY code LIMIT ? OFFSET ?`
-    ).all(...params, Number(pageSize), start)
-    ok(res, { list: items, total, page: Number(page), pageSize: Number(pageSize) })
+    ).all(...params, size, start)
+    ok(res, { list: items, total, page: Number(page), pageSize: size })
   } catch (e) { errMsg(res, e.message) }
 })
 
@@ -149,19 +228,31 @@ router.post('/basic/sync', async (req, res) => {
     if (!list.length) return errMsg(res, '行情源返回空列表，未写入')
     const written = upsertStockBasics(list)
 
-    // 上市/退市日（akshare 批量，best-effort：不可用则跳过，元数据其余列已写入）
+    // 上市/退市日 + 精确股本：优先读通达信本地 base.dbf（废弃交易所官网路径），
+    // base.dbf 不可用时才退回 akshare（best-effort）。
     let listDateUpdated = 0
-    try {
-      if (akshareSource.available()) {
-        const meta = await akshareSource.fetchers.stockMeta()
-        listDateUpdated = upsertListDates(meta)
+    let baseMeta = []
+    try { baseMeta = tdxLocal.readBaseDbf() } catch (_) { baseMeta = [] }
+    const metaByCode = new Map(baseMeta.map(m => [m.code, m]))
+    if (baseMeta.length) {
+      const listDates = []
+      for (const s of list) {
+        const m = metaByCode.get(s.code)
+        if (!m) continue
+        if (m.total_shares != null) s.total_shares = m.total_shares
+        if (m.float_shares != null) s.float_shares = m.float_shares
+        if (m.list_date) listDates.push({ code: s.code, list_date: m.list_date, delist_date: null })
       }
-    } catch (e) {
-      console.warn('[stock] list_date 同步跳过（akshare 不可用）:', e.message)
+      upsertStockBasics(list)   // 用 base.dbf 精确股本二次覆盖
+      listDateUpdated = listDates.length ? upsertListDates(listDates) : 0
+    }
+    if (!baseMeta.length) {
+      // 通达信未安装/无 base.dbf：上市日暂不更新（原交易所官网路径已废弃）
+      console.warn('[stock] 未找到通达信 base.dbf，list_date 暂不更新（请确认通达信安装路径配置）')
     }
 
     ok(res, { ...stockBasicStats(), updatedAt: nowLocal(), listDateUpdated },
-      `同步完成，共 ${written} 只（上市日补 ${listDateUpdated} 条）`)
+      `同步完成，共 ${written} 只（上市日补 ${listDateUpdated} 条${baseMeta.length ? '，来源：通达信 base.dbf' : ''}）`)
   } catch (e) { errMsg(res, e.message) }
 })
 
@@ -197,35 +288,78 @@ router.get('/search', async (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
+/** 行情字段统一转数字：空串/undefined/非数字 → null，避免详情卡片把缺失值显示成 0。 */
+function toNum(v) {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 /**
  * stock_spot 数据库行 → 前端契约。
- * DB 用 snake_case 存列名（symbol/pct_chg/...），前端 StockList.vue / stock.store.js 按
- * code/price/changePercent/turnover/totalMarketValue 取值，故在路由边界做一次显式映射，
+ * DB 用 snake_case 存列名（symbol/pct_chg/...），前端 StockList.vue / StockDetail.vue
+ * 按 code/price/change/changePercent/open/high/low/... 取值，故在路由边界做一次显式映射，
  * 避免把存储层字段名泄漏给前端。
+ *
+ * change 优先取 change_amount；老快照/ raw 派生快照没这列时用 收盘价-昨收 补，
+ * 否则详情页涨跌额与红绿状态会缺失。
  */
 function mapSpotRow(r) {
+  const close = toNum(r.close)
+  const preclose = toNum(r.preclose)
+  const changeAmount = toNum(r.change_amount)
+  const change = changeAmount != null
+    ? changeAmount
+    : (close != null && preclose != null ? Number((close - preclose).toFixed(4)) : null)
   return {
     code: r.symbol,
     name: r.name || r.symbol,
-    price: r.close != null ? Number(r.close) : 0,
-    changePercent: r.pct_chg != null ? Number(r.pct_chg) : 0,
-    turnover: r.amount != null ? Number(r.amount) : 0,
-    volume: r.volume != null ? Number(r.volume) : 0,
-    totalMarketValue: r.total_market_value != null ? Number(r.total_market_value) : 0,
+    price: close,
+    open: toNum(r.open),
+    high: toNum(r.high),
+    low: toNum(r.low),
+    prevClose: preclose,
+    change,
+    changePercent: toNum(r.pct_chg),
+    turnover: toNum(r.amount),
+    turnoverRate: toNum(r.turnover_rate),
+    volume: toNum(r.volume),
+    amplitude: toNum(r.amplitude),
+    totalMarketValue: toNum(r.total_market_value),
+    circulationMarketValue: toNum(r.circulation_market_value),
+    pe: toNum(r.pe_ttm),
+    pb: toNum(r.pb),
+    tradeDate: r.trade_date || null,
     market: 'A股'
   }
 }
 
 /** 行情源中文键行 → 前端契约（与 mapSpotRow 输出同构，网络优先路径使用） */
 function mapSpotRaw(r) {
+  const price = toNum(r['最新价'])
+  const preclose = toNum(r['昨收'])
+  const changeAmount = toNum(r['涨跌额'])
+  const change = changeAmount != null
+    ? changeAmount
+    : (price != null && preclose != null ? Number((price - preclose).toFixed(4)) : null)
   return {
     code: r['代码'],
     name: r['名称'] || r['代码'],
-    price: Number(r['最新价']) || 0,
-    changePercent: Number(r['涨跌幅']) || 0,
-    turnover: Number(r['成交额']) || 0,
-    volume: Number(r['成交量']) || 0,
-    totalMarketValue: Number(r['总市值']) || 0,
+    price,
+    open: toNum(r['今开']),
+    high: toNum(r['最高']),
+    low: toNum(r['最低']),
+    prevClose: preclose,
+    change,
+    changePercent: toNum(r['涨跌幅']),
+    turnover: toNum(r['成交额']),
+    turnoverRate: toNum(r['换手率']),
+    volume: toNum(r['成交量']),
+    amplitude: toNum(r['振幅']),
+    totalMarketValue: toNum(r['总市值']),
+    circulationMarketValue: toNum(r['流通市值']),
+    pe: toNum(r['市盈率-动态']),
+    pb: toNum(r['市净率']),
     market: 'A股'
   }
 }
@@ -312,11 +446,24 @@ router.get('/:code', async (req, res) => {
     } catch (_) { /* DolphinDB 不可用，走基础信息兜底 */ }
     if (row) return ok(res, { ...mapSpotRow(row), name: nameOf() || row.name || code, market: 'A股' })
 
-    // 2. 基础信息兜底：只读本地 stock_basic，price 给 0 由前端展示 '--'
+    // 2. 基础信息兜底：只读本地 stock_basic；行情字段给 null，前端统一展示 '--'
     const info = (() => {
       try { return getDb().prepare('SELECT code, name, market FROM stock_basic WHERE code = ?').get(code) } catch { return null }
     })()
-    if (info) return ok(res, { code, name: info.name || code, price: 0, market: info.market || 'A股' })
+    if (info) {
+      return ok(res, {
+        code,
+        name: info.name || code,
+        price: null,
+        open: null,
+        high: null,
+        low: null,
+        prevClose: null,
+        change: null,
+        changePercent: null,
+        market: info.market || 'A股'
+      })
+    }
     errMsg(res, '未找到股票信息，请先在数据管理同步股票列表')
   } catch (e) { errMsg(res, e.message) }
 })
@@ -385,41 +532,10 @@ router.get('/:code/financial', (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 同步单只股票财报入库（akshare 三大表+指标合并，最近 N 季）
-// 属逐只数据维护动作（详情页/数据拉取页触发）；akshare 不可用时返回提示。
-router.post('/:code/financial/sync', async (req, res) => {
-  try {
-    const { code } = req.params
-    const n = Math.min(Math.max(Number(req.query.n) || 8, 1), 40)
-    if (!akshareSource.available()) return errMsg(res, 'AKShare 服务未就绪，无法拉取财报（请到设置页启用）')
-    const rows = await akshareSource.fetchers.financial({ symbol: code, n })
-    if (!rows || !rows.length) return errMsg(res, 'akshare 财报返回空')
-    const db = getDb()
-    const now = nowLocal()
-    const upsert = db.prepare(`INSERT INTO stock_financial
-      (code, report_date, revenue, net_profit, net_profit_excl_nonrec, total_assets, net_assets,
-       debt_ratio, operating_cashflow, gross_margin, roe, roa, updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-      ON CONFLICT(code, report_date) DO UPDATE SET
-        revenue=excluded.revenue, net_profit=excluded.net_profit,
-        net_profit_excl_nonrec=excluded.net_profit_excl_nonrec,
-        total_assets=excluded.total_assets, net_assets=excluded.net_assets,
-        debt_ratio=excluded.debt_ratio, operating_cashflow=excluded.operating_cashflow,
-        gross_margin=excluded.gross_margin, roe=excluded.roe, roa=excluded.roa, updated_at=excluded.updated_at`)
-    let written = 0
-    db.transaction(() => {
-      for (const r of rows) {
-        if (!r.report_date) continue
-        upsert.run(code, r.report_date, r.revenue ?? null, r.net_profit ?? null,
-          r.net_profit_excl_nonrec ?? null, r.total_assets ?? null, r.net_assets ?? null,
-          r.debt_ratio ?? null, r.operating_cashflow ?? null, r.gross_margin ?? null,
-          r.roe ?? null, r.roa ?? null, now)
-        written++
-      }
-    })
-    ok(res, { written, n: rows.length }, `财报同步完成，写入 ${written} 季`)
-  } catch (e) { errMsg(res, e.message) }
-})
+// 同步单只股票财报入库：已下线 AKShare 在线同步（2026-10-21）。
+// 财报改由通达信数据包离线导入（electron/dolphindb/package-import.js）；
+// 在线补位待 tqs/TdxQuant/腾讯 params 研究打通后启用，届时把 GET /:code/financial
+// 的写路径接回本路由。
 
 // 股票估值指标快照（详情页用）：PE/PB/PS/PCF/股息率，来自本地 stock_indicator
 router.get('/:code/indicator', (req, res) => {
@@ -433,27 +549,7 @@ router.get('/:code/indicator', (req, res) => {
   } catch (e) { errMsg(res, e.message) }
 })
 
-// 同步单只股票估值指标入库（akshare 百度估值 5 指标取最新）
-router.post('/:code/indicator/sync', async (req, res) => {
-  try {
-    const { code } = req.params
-    if (!akshareSource.available()) return errMsg(res, 'AKShare 服务未就绪，无法拉取估值指标（请到设置页启用）')
-    const r = await akshareSource.fetchers.indicator({ symbol: code })
-    if (!r || !r.trade_date) return errMsg(res, 'akshare 估值指标返回空')
-    const db = getDb()
-    const now = nowLocal()
-    db.prepare(`INSERT INTO stock_indicator
-      (code, trade_date, pe_ttm, pb, ps, pcf, dividend_yield, updated_at)
-      VALUES (?,?,?,?,?,?,?,?)
-      ON CONFLICT(code) DO UPDATE SET
-        trade_date=excluded.trade_date, pe_ttm=excluded.pe_ttm, pb=excluded.pb,
-        ps=excluded.ps, pcf=excluded.pcf, dividend_yield=excluded.dividend_yield,
-        updated_at=excluded.updated_at`)
-      .run(code, r.trade_date, r.pe_ttm ?? null, r.pb ?? null, r.ps ?? null,
-        r.pcf ?? null, r.dividend_yield ?? null, now)
-    ok(res, r, '估值指标同步完成')
-  } catch (e) { errMsg(res, e.message) }
-})
+// 估值指标在线同步已下线（原 AKShare 百度估值源废弃）；保留 GET 读接口读取历史行。
 
 // K线数据 — DolphinDB first，DolphinDB 覆盖不足/不可用时回退行情源网络直取。
 // 架构说明：优先读 DB（daily_k 前复权 → daily_k_raw 不复权），两表均 miss 或 DDB

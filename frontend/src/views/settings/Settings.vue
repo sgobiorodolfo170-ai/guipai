@@ -187,8 +187,8 @@ const testAk = async () => {
 const installAk = async () => {
   try {
     await ElMessageBox.confirm(
-      '将通过 pip 安装 akshare + flask（约 1-3 分钟，下载 pandas/numpy 等依赖）。是否继续？',
-      '安装 AKShare 依赖',
+      '将通过 pip 安装 flask + tdxaidata（约 1-3 分钟，下载 pandas/numpy 等依赖）。是否继续？',
+      '安装 tqs 桥依赖',
       { confirmButtonText: '开始安装', cancelButtonText: '取消', type: 'warning' }
     )
   } catch { return }
@@ -218,7 +218,76 @@ onMounted(() => {
   fetchList()
   fetchAk()
   fetchTdx()
+  fetchCockpit()
 })
+
+// ---- 驾驶舱与风控 ----
+const cockpitCfg = ref({ initialCapital: 100000, riskThresholds: {} })
+const cockpitSaving = ref(false)
+const cockpitResetting = ref(false)
+
+const thresholdFields = [
+  { key: 'singlePositionWarn', label: '单票仓位预警 %' },
+  { key: 'singlePositionHigh', label: '单票仓位高危 %' },
+  { key: 'stopLossPct', label: '止损线 %' },
+  { key: 'takeProfitPct', label: '止盈线 %' },
+  { key: 'heavyPositionPct', label: '重仓判定线 %' },
+  { key: 'heavyCountWarn', label: '重仓股数预警' },
+  { key: 'industryConcentrationWarn', label: '行业集中度预警 %' },
+  { key: 'totalPositionHigh', label: '总仓位高危 %' },
+  { key: 'totalPositionLow', label: '总仓位低 %' },
+  { key: 'singleLossAmount', label: '单票浮亏金额预警 元' }
+]
+
+const fetchCockpit = async () => {
+  try {
+    const [cap, thr] = await Promise.all([
+      api.get('/cockpit/capital'),
+      api.get('/cockpit/risk/thresholds')
+    ])
+    cockpitCfg.value.initialCapital = cap.data?.initialCapital ?? 100000
+    cockpitCfg.value.riskThresholds = thr.data || {}
+  } catch (e) {
+    ElMessage.error('获取驾驶舱配置失败: ' + e.message)
+  }
+}
+
+const saveCockpit = async () => {
+  cockpitSaving.value = true
+  try {
+    await Promise.all([
+      api.put('/cockpit/capital', { initialCapital: Number(cockpitCfg.value.initialCapital) }),
+      api.put('/cockpit/risk/thresholds', cockpitCfg.value.riskThresholds)
+    ])
+    ElMessage.success('驾驶舱配置已保存')
+  } catch (e) {
+    ElMessage.error('保存失败: ' + e.message)
+  } finally {
+    cockpitSaving.value = false
+  }
+}
+
+const resetCockpit = async () => {
+  try {
+    await ElMessageBox.confirm('将恢复初始资金与全部风控阈值为默认值，是否继续？', '恢复默认', {
+      confirmButtonText: '恢复', cancelButtonText: '取消', type: 'warning'
+    })
+  } catch { return }
+  cockpitResetting.value = true
+  try {
+    const [cap, thr] = await Promise.all([
+      api.put('/cockpit/capital', { initialCapital: 100000 }),
+      api.post('/cockpit/risk/thresholds/reset')
+    ])
+    cockpitCfg.value.initialCapital = cap.data?.initialCapital ?? 100000
+    cockpitCfg.value.riskThresholds = thr.data || {}
+    ElMessage.success('已恢复默认')
+  } catch (e) {
+    ElMessage.error('恢复失败: ' + e.message)
+  } finally {
+    cockpitResetting.value = false
+  }
+}
 
 // ---- 通达信 Key 多账号 ----
 const tdx = ref({ config: {}, keys: [], activeKey: null })
@@ -396,11 +465,42 @@ const applyTdxKey = async (row) => {
       </div>
     </el-card>
 
-    <!-- AKShare Python 桥接数据源 -->
+    <!-- 驾驶舱与风控 -->
+    <el-card class="setting-card" shadow="hover">
+      <template #header>
+        <div class="card-header">
+          <span>驾驶舱与风控</span>
+          <el-button size="small" :loading="cockpitResetting" @click="resetCockpit">恢复默认</el-button>
+        </div>
+      </template>
+
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        初始资金用于计算现金与总仓位；风控阈值用于驾驶舱风险预警面板的分级判定，修改后即时生效。
+      </el-alert>
+
+      <el-form label-width="140px">
+        <el-form-item label="初始资金（元）">
+          <el-input-number v-model="cockpitCfg.initialCapital" :min="0" :precision="2" :step="10000" controls-position="right" style="width: 220px" />
+        </el-form-item>
+        <el-form-item label="风控阈值">
+          <div class="threshold-grid">
+            <div v-for="f in thresholdFields" :key="f.key" class="threshold-item">
+              <label>{{ f.label }}</label>
+              <el-input-number v-model="cockpitCfg.riskThresholds[f.key]" :precision="2" :step="1" controls-position="right" style="width: 140px" />
+            </div>
+          </div>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="cockpitSaving" @click="saveCockpit">保存配置</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <!-- 通达信 tqs 数据桥（原 AKShare 设置，现为 tqs 桥） -->
     <el-card class="setting-card" shadow="hover" v-loading="akLoading">
       <template #header>
         <div class="card-header">
-          <span>AKShare Python 数据源（末级兜底）</span>
+          <span>通达信 tqs 数据桥（原 AKShare 桥）</span>
           <el-tag :type="ak.running ? 'success' : ak.config.enabled ? 'warning' : 'info'" size="small">
             {{ ak.running ? '服务运行中' : ak.config.enabled ? '已启用(待启动)' : '未启用' }}
           </el-tag>
@@ -408,8 +508,8 @@ const applyTdxKey = async (row) => {
       </template>
 
       <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
-        东财/新浪均失败时，由 AKShare（Python）作为末级兜底取数；尤其补强涨跌停池/昨日涨停（此前仅东财+Tushare）。
-        打包版内置 aktools-server.exe 自包含；开发态需 pip install akshare flask 或构建 exe。
+        AKShare 端点已退役（2026-10-21）。本桥只承载通达信 tqs 的 /tdxs_* 端点（Key 鉴权直连通达信数据后端），
+        供 K 线/实时/涨跌停/板块使用。打包版内置 aktools-server.exe 自包含；开发态需 pip install flask tdxaidata。
       </el-alert>
 
       <el-descriptions :column="2" border size="small" class="mb-12">
@@ -417,8 +517,8 @@ const applyTdxKey = async (row) => {
           <span v-if="ak.python?.pythonExe">{{ ak.python.pythonExe }} · {{ ak.python.pythonVersion }}</span>
           <span v-else class="err-text">未检测到 Python</span>
         </el-descriptions-item>
-        <el-descriptions-item label="akshare">
-          <el-tag v-if="ak.python?.akshareVersion" type="success" size="small">{{ ak.python.akshareVersion }}</el-tag>
+        <el-descriptions-item label="tdxaidata">
+          <el-tag v-if="ak.python?.tdxVer" type="success" size="small">{{ ak.python.tdxVer }}</el-tag>
           <el-tag v-else type="danger" size="small">未安装</el-tag>
         </el-descriptions-item>
         <el-descriptions-item label="服务端口">{{ ak.config.port }}</el-descriptions-item>
@@ -438,14 +538,14 @@ const applyTdxKey = async (row) => {
           <el-button size="small" @click="saveAkPath">保存路径</el-button>
           <el-button size="small" :loading="akTesting" :disabled="!ak.running" @click="testAk">探活</el-button>
           <el-button size="small" type="primary" plain :loading="akInstalling" :disabled="!ak.python?.pythonExe" @click="installAk">
-            pip 安装 akshare
+            pip 安装 tqs 依赖
           </el-button>
         </el-form-item>
       </el-form>
 
-      <div class="tips" v-if="ak.python?.akshareError">
-        <p class="err-text">akshare 未安装：{{ ak.python.akshareError }}</p>
-        <p>点上方「pip 安装 akshare」自动安装，或手动：<code>pip install akshare flask</code></p>
+      <div class="tips" v-if="ak.python?.tdxError">
+        <p class="err-text">tdxaidata 未安装：{{ ak.python.tdxError }}</p>
+        <p>点上方「pip 安装 tqs 依赖」自动安装，或手动：<code>pip install flask tdxaidata</code></p>
       </div>
       <div class="tips" v-else>
         <p>启用后，应用启动时自动拉起 aktools-server（端口 {{ ak.config.port }}），失败静默降级不影响其他源。</p>
@@ -539,4 +639,7 @@ const applyTdxKey = async (row) => {
 .tips { color: var(--el-text-color-secondary); font-size: 13px; line-height: 1.8; }
 .tips ul { padding-left: 20px; margin: 8px 0; }
 .tips a { color: var(--el-color-primary); }
+.threshold-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.threshold-item { display: flex; align-items: center; gap: 8px; }
+.threshold-item label { font-size: 13px; color: var(--el-text-color-regular); white-space: nowrap; }
 </style>

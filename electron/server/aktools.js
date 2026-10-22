@@ -36,6 +36,7 @@ const https = require('https')
 const { URL } = require('url')
 const settings = require('./settings')
 const tushare = require('./tushare')
+const fetchLog = require('./fetch-log')
 
 const UT = '7eea3edcaed734bea9cbfc24409ed989' // 东财 kline/涨停池 公开 token（akshare 同款）
 const UT_SPOT = 'bd1d9ddb04089700cf9c27f6f7426281' // 东财 clist（spot/指数spot）公开 token（akshare 同款）
@@ -51,6 +52,8 @@ async function getBuffer(url, { headers = {}, timeout = 30000, retries = 2, retr
       return await new Promise((resolve, reject) => {
         const u = new URL(url)
         const lib = u.protocol === 'https:' ? https : http
+        // 标记真实上游域名，供 registry 区分 main 复合源里的东财/腾讯/同花顺/Tushare。
+        fetchLog.noteHost(u.hostname)
         const req = lib.request({
           hostname: u.hostname,
           port: u.port || (u.protocol === 'https:' ? 443 : 80),
@@ -333,7 +336,10 @@ async function fetchStockSpot() {
 }
 
 async function getStockSpot() {
-  if (spotMemo.data && Date.now() - spotMemo.at < SPOT_MEMO_MS) return spotMemo.data
+  if (spotMemo.data && Date.now() - spotMemo.at < SPOT_MEMO_MS) {
+    fetchLog.markCacheHit()
+    return spotMemo.data
+  }
   if (!spotInFlight) {
     spotInFlight = fetchStockSpot()
       .then((rows) => {
@@ -341,6 +347,9 @@ async function getStockSpot() {
         return rows
       })
       .finally(() => { spotInFlight = null })
+  } else {
+    // 并发请求复用同一次取数，属于进程内缓存，不重复记录外部流转。
+    fetchLog.markCacheHit()
   }
   return await spotInFlight
 }
@@ -356,14 +365,20 @@ const INDEX_FALLBACK_SECIDS = {
 
 /** 并行竞速取数：多个源同时发起，取最先成功者；全部失败抛出首个错误。
  *  串行降级在弱网下会叠加每级超时（实测单次连接可达 7~8s，超过前端 15s 请求超时），故改为竞速。 */
-async function firstFulfilled(fns) {
+async function firstFulfilled(fns, onWin) {
   return await new Promise((resolve, reject) => {
     let pending = fns.length
     let firstErr = null
-    fns.forEach((fn) => {
+    let settled = false
+    fns.forEach((fn, index) => {
       Promise.resolve()
         .then(fn)
-        .then(resolve, (e) => {
+        .then((value) => {
+          if (settled) return
+          settled = true
+          if (onWin) onWin(value, index)
+          resolve(value)
+        }, (e) => {
           if (!firstErr) firstErr = e
           if (--pending === 0) reject(firstErr || new Error('全部行情源均失败'))
         })
@@ -390,7 +405,10 @@ async function getStockIndexSpot(symbol = '上证系列指数') {
     source('clist', () => getIndexSpotFromClist(symbol)),
     source('ulist', () => getIndexSpotFromUlist(symbol)),
     source('tencent', () => getIndexSpotFromTencent(symbol))
-  ])
+  ], (_value, index) => {
+    // 竞速可能同时触发多个域名 noteHost，最终以胜出源覆盖渠道。
+    fetchLog.noteChannel(index === 2 ? '腾讯' : '东财')
+  })
 }
 
 /** 主路径：东财 clist（沪深重要指数→33.push2 fs=b:MK0010，其余→48.push2 按系列 fs） */
@@ -935,73 +953,46 @@ function parseThsIndustryRows(html) {
 }
 
 // ---- 多源调度注册 ----
-// 把现有"东财→腾讯→Tushare"复合链整体注册为 main 源（capabilities 全集），
-// 再注册新浪/网易为兜底层。公开函数改为委托 registry.dispatch，
-// 由调度器统一做空结果判定（软封空数组 → 试下一源）与健康度记忆。
-// 不改动各复合函数内部逻辑：main 返回空/抛错时，调度器自动切新浪→网易，
-// 等价于把"软封空结果"的兜底从函数内上提到调度层，且新浪无腾讯的冷启动开销。
+// 东财/新浪/AKShare 上游已废弃（2026-10 起），不再注册 main/sina/akshare 源；
+// 行情走腾讯 + 通达信（tdx_local / tdx_quant / tdx_server）。
+// 原 main（东财复合链）、sina、akshare 的函数体保留在本文件内但不再被调度器调用，避免大规模删除引入耦合。
 const registry = require('./sources/registry')
-registry.registerSource({
-  name: 'main',
-  capabilities: ['kline', 'spot', 'indexDaily', 'indexSpot', 'minute', 'limitPool', 'dropPool', 'ztPrev', 'industry', 'info', 'holding'],
-  fetchers: {
-    kline: getStockHistory,
-    spot: getStockSpot,
-    indexDaily: getIndexDailyData,
-    indexSpot: getStockIndexSpot,
-    minute: getStockMinute,
-    limitPool: getStockLimitPool,
-    dropPool: getStockDropPool,
-    ztPrev: getZtPoolPrevious,
-    industry: getStockIndustry,
-    info: getStockInfo,
-    holding: getStockHolding
-  },
-  available: () => true
-})
 // 腾讯独立源（qt.gtimg.cn 批量行情 + fqkline/mkline/分时兜底）。
 // 全市场 spot 首选：800 只/请求、6 并发，~1s 取回 5580 只且含完整 OHLC；
 // 指数 spot 首选：单请求 88 字段（含高/低/开/昨收）；分钟/日K 仅作 tqs 之后的应急兜底。
 registry.registerSource(require('./sources/tencent'))
-registry.registerSource(require('./sources/sina'))
 // 通达信本地数据源（Path A：纯 Node 读 .day 文件，离线兜底）。
-// 直接读通达信安装目录 vipdoc\<sh|sz|bj>\lday\*.day，标准 32 字节格式，
-// 零网络零 Python，9527 只历史日K。提为 kline 首选源（registry PRIORITY 已调）。
-// 协议路径（tdx_proto，连公网 7709 取实时/分钟）因 pytdx/tdxpy 数据命令返回 None 暂缓，待协议兼容解决。
+// 直接读通达信安装目录 vipdoc\<sh|sz|bj>\lday\*.day，标准 32 字节格式，零网络零 Python。
 registry.registerSource(require('./sources/tdx_local'))
 // 通达信量化 HTTP 源（Path B：tqcenter 模式，17709）。
-// 经运行中已登录 TdxW 取数，实时+全市场+K线/财报/涨跌停。提为 kline/spot/info/limitPool 首选。
-// main.js 启动时探测 17709 可达 → setAvailable(true)；TdxW 未运行时 available=false 自动降级。
+// 经运行中已登录 TdxW 取数，实时+全市场+K线/财报/涨跌停/板块。
 const tdxQuantSource = require('./sources/tdx_quant')
 registry.registerSource(tdxQuantSource)
 // 通达信 tqs 源（tqserver/tdxaidata，免客户端，Key 鉴权直连后端）。
-// 经 Python 桥 /tdxs_* 端点调用 tdxaidata.tqs。无需 TdxW 运行。提为 kline 最首位。
+// 经 Python 桥 /tdxs_* 端点调用 tdxaidata.tqs。无需 TdxW 运行。
 const tdxServerSource = require('./sources/tdx_server')
 registry.registerSource(tdxServerSource)
-// 网易财经历史K线端点(chddata.html)已废弃（502/DNS失效），暂不注册；
-// 文件保留待 Phase 3 经 AKShare Python 桥接网易数据时复活。
-// registry.registerSource(require('./sources/netease'))
-// AKShare Python 桥接（Phase 3）：main.js spawn aktools_server.exe 后调 setAvailable(true) 激活；
-// 未激活时 available()=false，调度器跳过，零开销。
-const akshareSource = require('./sources/akshare')
-registry.registerSource(akshareSource)
 
-/** 单股/少量代码 spot 的源顺序：本地 tdx_quant 最快（~20ms），其次腾讯批量，
- *  tqs 补北交所/新代码，最后才是东财/新浪。全市场（无 codes）走 registry 默认优先级（腾讯首选）。 */
-const SPOT_BY_CODE_SOURCES = ['tdx_quant', 'tencent', 'tdx_server', 'main', 'sina', 'akshare']
+/** 单股/少量代码 spot 的源顺序：本地 tdx_quant 最快（~20ms），其次腾讯批量，tqs 补北交所/新代码。 */
+const SPOT_BY_CODE_SOURCES = ['tdx_quant', 'tencent', 'tdx_server']
+
+// 涨跌停池 / 行业板块改用通达信 + 腾讯（不再走东财/AKShare）
+const tdxPool = require('./sources/tdx_pool')
+const tdxSector = require('./sources/tdx_sector')
 
 module.exports = {
-  getStockSpot: (codes) => {
+  getStockSpot: (codes, opts = {}) => {
     const hasCodes = codes != null && codes !== '' && (!Array.isArray(codes) || codes.length > 0)
-    return registry.dispatch('spot', codes, hasCodes ? { sources: SPOT_BY_CODE_SOURCES } : {})
+    return registry.dispatch('spot', codes, { ...(hasCodes ? { sources: SPOT_BY_CODE_SOURCES } : {}), ...opts })
   },
   getStockHistory: (p) => registry.dispatch('kline', p),
   getStockMinute: (p) => registry.dispatch('minute', p),
   getStockInfo: (s) => registry.dispatch('info', s),
-  getStockHolding: (p) => registry.dispatch('holding', p),
-  getStockLimitPool: (d) => registry.dispatch('limitPool', d),
-  getStockDropPool: (d) => registry.dispatch('dropPool', d),
-  getStockIndustry: () => registry.dispatch('industry'),
+  // 十大股东（原东财 datacenter-web）已下线：返回空，路由端只读本地 DDB
+  getStockHolding: () => Promise.resolve([]),
+  getStockLimitPool: (d) => tdxPool.fetch(d, 'LIMIT_UP'),
+  getStockDropPool: (d) => tdxPool.fetch(d, 'LIMIT_DOWN'),
+  getStockIndustry: () => tdxSector.fetchPlate(),
   getZtPoolPrevious: (d) => registry.dispatch('ztPrev', d),
   getStockIndexSpot: (s) => registry.dispatch('indexSpot', s),
   getIndexDailyData: (p) => registry.dispatch('indexDaily', p),

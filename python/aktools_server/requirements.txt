@@ -1,4 +1,3 @@
-# AKShare 行情桥接服务依赖
-# PyInstaller 冻结时需 collect-all akshare（动态子模块多）
-akshare>=1.14.0
+# 通达信 tqs 数据桥接服务依赖（server.py，仅 /tdxs_* 端点）
 flask>=3.0.0
+tdxaidata

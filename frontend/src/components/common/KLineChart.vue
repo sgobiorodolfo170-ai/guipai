@@ -107,7 +107,7 @@ const props = defineProps({
   isIndex: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['update:period', 'update:adjust', 'ready'])
+const emit = defineEmits(['update:period', 'update:adjust', 'ready', 'loaded'])
 
 // ---- 响应式状态 ----
 const chartRef = ref(null)
@@ -263,6 +263,7 @@ function buildDataLoader() {
             endDate: end
           })
           const bars = toKLineDataList(resp?.data || [])
+          emit('loaded', resp?.meta || null)
           callback(bars, { forward: true, backward: false })
         } else if (type === 'forward') {
           // 向左分页：以当前最早 bar 的时间戳为锚，向前取 2500 天窗口。

@@ -83,16 +83,18 @@ export const useStockStore = defineStore('stock', () => {
     try {
       const response = await stockService.getStockRealtime(codes)
       
-      // 更新实时数据
+      // 更新实时数据（响应统一为信封 {code,data,msg}，行情数组在 data）
+      const payload = response?.data ?? response
+      const list = Array.isArray(payload) ? payload : (payload?.list || [])
       if (Array.isArray(codes)) {
         codes.forEach(code => {
-          const data = response.find(item => item.code === code)
+          const data = list.find(item => String(item.code) === String(code))
           if (data) {
             realtimeData.value[code] = data
           }
         })
       } else {
-        realtimeData.value[codes] = response
+        realtimeData.value[codes] = list.find(item => String(item.code) === String(codes)) || list[0] || null
       }
       
       return response

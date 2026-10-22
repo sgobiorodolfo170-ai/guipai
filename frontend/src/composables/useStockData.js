@@ -11,26 +11,35 @@ export function useStockData(code = null) {
   const stockData = ref(null)
   const klineData = ref([])
   const realtimeData = ref(null)
-  
+
+  // 详情快照 + 实时行情合并：实时接口只返回行情字段，以它覆盖快照中的同名字段，
+  // 这样详情页卡片能随盘中轮询更新，而名称/市场等基础信息仍来自详情接口。
+  const quote = computed(() => {
+    if (!stockData.value) return null
+    return realtimeData.value
+      ? { ...stockData.value, ...realtimeData.value }
+      : stockData.value
+  })
+
   // 计算属性
   const formattedPrice = computed(() => {
-    if (!stockData.value) return '--'
-    return formatPrice(stockData.value.price)
+    if (!quote.value) return '--'
+    return formatPrice(quote.value.price)
   })
   
   const formattedChange = computed(() => {
-    if (!stockData.value) return '--'
-    return formatChange(stockData.value.change)
+    if (!quote.value) return '--'
+    return formatChange(quote.value.change)
   })
   
   const formattedChangePercent = computed(() => {
-    if (!stockData.value) return '--'
-    return formatPercent(stockData.value.changePercent)
+    if (!quote.value) return '--'
+    return formatPercent(quote.value.changePercent)
   })
   
   const changeStatus = computed(() => {
-    if (!stockData.value) return 'flat'
-    return getChangeStatus(stockData.value.change)
+    if (!quote.value) return 'flat'
+    return getChangeStatus(quote.value.change)
   })
   
   const isUp = computed(() => changeStatus.value === 'up')
@@ -72,7 +81,10 @@ export function useStockData(code = null) {
   const fetchRealtimeData = async (stockCode) => {
     try {
       const response = await stockStore.fetchRealtimeData(stockCode)
-      realtimeData.value = response
+      // 拦截器返回信封 {code,data,msg}，/realtime 的 data 是数组；按代码取第一条
+      const payload = response?.data ?? response
+      const list = Array.isArray(payload) ? payload : (payload?.list || [])
+      realtimeData.value = list.find(item => String(item.code) === String(stockCode)) || list[0] || null
       return response
     } catch (err) {
       error.value = err.message || '获取实时数据失败'
@@ -136,6 +148,7 @@ export function useStockData(code = null) {
     stockData,
     klineData,
     realtimeData,
+    quote,
     
     // 计算属性
     formattedPrice,

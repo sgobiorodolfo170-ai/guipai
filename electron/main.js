@@ -8,7 +8,6 @@ const net = require('net')
 const { startServer, stopServer } = require('./server')
 const ddb = require('./dolphindb/client')
 const settings = require('./server/settings')
-const akshareSource = require('./server/sources/akshare')
 const tdxQuantSource = require('./server/sources/tdx_quant')
 const tdxServerSource = require('./server/sources/tdx_server')
 const { resolveDevServerUrl } = require('./dev-port')
@@ -118,10 +117,10 @@ function stopDolphinDB() {
 }
 
 // ============================================================
-// AKShare Python 桥接服务进程管理（镜像 DolphinDB 模式）
+// Python 数据桥服务进程管理（tqs 桥：server.py 仅保留 /tdxs_* 端点，AKShare 端点已退役）
 // ============================================================
 
-/** 定位 AKShare 服务：优先打包 exe，次选开发态已构建 exe，最后开发态直跑 server.py */
+/** 定位 tqs 桥服务：优先打包 exe，次选开发态已构建 exe，最后开发态直跑 server.py */
 function resolveAkshareServer() {
   // 1) 打包态 exe
   if (app.isPackaged) {
@@ -131,7 +130,7 @@ function resolveAkshareServer() {
   // 2) 开发态已构建 exe（npm run build:akshare-server 产物）
   const devExe = path.join(__dirname, '..', 'python', 'aktools_server', 'dist', 'aktools-server', 'aktools-server.exe')
   if (fs.existsSync(devExe)) return { type: 'exe', exe: devExe }
-  // 3) 开发态直跑 server.py（需 dev 机 pip install akshare flask）
+  // 3) 开发态直跑 server.py（需 dev 机 pip install flask tdxaidata）
   const py = path.join(__dirname, '..', 'python', 'aktools_server', 'server.py')
   if (fs.existsSync(py)) return { type: 'py', script: py }
   return null
@@ -154,30 +153,31 @@ function resolvePythonExe() {
 
 let akshareProcess = null
 
-/** 启动 AKShare 服务（设置启用时）。失败静默置 unavailable，不阻断启动。 */
+/** 启动数据桥服务（设置启用时）。失败静默置 unavailable，不阻断启动。 */
 async function startAkshareServer() {
   if (!settings.isAkshareEnabled()) {
-    console.log('[akshare] 未启用，跳过')
+    console.log('[bridge] 未启用，跳过')
     return
   }
   const cfg = settings.getAkshareConfig()
   const port = cfg.port || 8889
 
   if (await isPortListening(port)) {
-    console.log(`[akshare] 端口 ${port} 已在监听，复用现有实例`)
-    akshareSource.setAvailable(true, port)
+    console.log(`[bridge] 端口 ${port} 已在监听，复用现有实例`)
+    // 复用实例时同步补一次 tqs 探活（冷启动可能未及时置可用）
+    probeTdxServer().catch(e => console.warn('[bridge] tqs 探活失败:', e.message))
     return
   }
 
   const target = resolveAkshareServer()
   if (!target) {
-    console.warn('[akshare] 未找到 server.py 或已构建 exe，跳过（开发态需 pip install akshare flask）')
+    console.warn('[bridge] 未找到 server.py 或已构建 exe，跳过（开发态需 pip install flask tdxaidata）')
     return
   }
 
   try {
     if (target.type === 'exe') {
-      console.log('[akshare] 启动 exe:', target.exe)
+      console.log('[bridge] 启动 exe:', target.exe)
       akshareProcess = spawn(target.exe, ['--port', String(port)], {
         cwd: path.dirname(target.exe),
         stdio: 'ignore',
@@ -185,7 +185,7 @@ async function startAkshareServer() {
       })
     } else {
       const pyExe = resolvePythonExe()
-      console.log(`[akshare] 启动 ${pyExe} ${target.script} --port ${port}`)
+      console.log(`[bridge] 启动 ${pyExe} ${target.script} --port ${port}`)
       akshareProcess = spawn(pyExe, [target.script, '--port', String(port)], {
         cwd: path.dirname(target.script),
         stdio: 'ignore',
@@ -194,33 +194,32 @@ async function startAkshareServer() {
     }
 
     akshareProcess.on('exit', (code) => {
-      console.log('[akshare] 服务进程退出 code=', code)
+      console.log('[bridge] 服务进程退出 code=', code)
       akshareProcess = null
-      akshareSource.setAvailable(false)
+      tdxServerSource.setAvailable(false)
     })
 
     const ready = await waitForPort(port, 15000)
     if (ready) {
-      console.log(`[akshare] 服务就绪 (port ${port})`)
-      akshareSource.setAvailable(true, port)
+      console.log(`[bridge] 服务就绪 (port ${port})`)
+      probeTdxServer().catch(e => console.warn('[bridge] tqs 探活失败:', e.message))
     } else {
-      console.warn('[akshare] 服务启动超时，标记不可用')
-      akshareSource.setAvailable(false)
+      console.warn('[bridge] 服务启动超时，标记不可用')
+      tdxServerSource.setAvailable(false)
     }
   } catch (e) {
-    console.warn('[akshare] 启动失败:', e.message)
-    akshareSource.setAvailable(false)
+    console.warn('[bridge] 启动失败:', e.message)
+    tdxServerSource.setAvailable(false)
   }
 }
 
-/** 停止 AKShare 服务 */
+/** 停止数据桥服务 */
 function stopAkshareServer() {
   if (akshareProcess) {
     try { akshareProcess.kill() } catch (_) {}
     akshareProcess = null
-    console.log('[akshare] 服务进程已停止')
+    console.log('[bridge] 服务进程已停止')
   }
-  akshareSource.setAvailable(false)
   tdxServerSource.setAvailable(false)
 }
 
@@ -254,6 +253,19 @@ async function probeTdxQuant() {
 }
 
 /** 探测 tqs（tdxaidata，免客户端）可用性：Python 桥启动后调 /tdxs_health */
+let tdxProbeTimer = null
+let tdxProbeTries = 0
+
+function scheduleTdxProbe(port) {
+  // 冷启动时 tqs 首调可能很慢（DLL 加载 + 后端连接），失败后自动重试，成功后停止
+  if (tdxProbeTimer || tdxProbeTries >= 5) return
+  tdxProbeTimer = setTimeout(async () => {
+    tdxProbeTimer = null
+    tdxProbeTries++
+    try { await probeTdxServer() } catch (e) { console.error('[tdx_server] PROBE RETRY FAIL:', e.message) }
+  }, 20000)
+}
+
 async function probeTdxServer() {
   const cfg = settings.getAkshareConfig()
   const port = cfg.port || 8889
@@ -263,8 +275,9 @@ async function probeTdxServer() {
     await new Promise(r => setTimeout(r, 1000))
   }
   if (!(await isPortListening(port))) {
-    console.log('[tdx_server] Python 桥未运行，跳过 tqs 探测')
+    console.log('[tdx_server] Python 桥未运行，跳过 tqs 探测（稍后重试）')
     tdxServerSource.setAvailable(false)
+    scheduleTdxProbe(port)
     return
   }
   try {
@@ -272,13 +285,17 @@ async function probeTdxServer() {
     if (h && h.ok) {
       console.log('[tdx_server] tqs 就绪 (tdxaidata+Key, 免客户端, port', port + ')')
       tdxServerSource.setAvailable(true, port)
+      tdxProbeTries = 0
+      if (tdxProbeTimer) { clearTimeout(tdxProbeTimer); tdxProbeTimer = null }
     } else {
-      console.warn('[tdx_server] tqs 不可用:', h && h.error)
+      console.warn('[tdx_server] tqs 不可用:', h && h.error, '（稍后重试）')
       tdxServerSource.setAvailable(false)
+      scheduleTdxProbe(port)
     }
   } catch (e) {
-    console.warn('[tdx_server] 探测异常:', e.message)
+    console.warn('[tdx_server] 探测异常:', e.message, '（稍后重试）')
     tdxServerSource.setAvailable(false)
+    scheduleTdxProbe(port)
   }
 }
 

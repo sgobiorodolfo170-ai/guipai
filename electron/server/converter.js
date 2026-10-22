@@ -1,11 +1,11 @@
 'use strict'
 
 function toNum(v) { return v == null ? null : Number(v) }
-function toStr(v) { return v == null ? null : String(v) }
+function toStr(v) { return v == null ? '' : String(v) }
 function toInt(v) { return v == null ? 0 : parseInt(v) || 0 }
 
 function fmtTime(t) {
-  if (!t || String(t).length !== 6) return null
+  if (!t || String(t).length !== 6) return ''
   const s = String(t)
   return `${s[0]}${s[1]}:${s[2]}${s[3]}:${s[4]}${s[5]}`
 }
@@ -28,12 +28,11 @@ function convertStockLimitPool(rawList, tradeDate, dataType) {
       last_limit_time: fmtTime(m['最后封板时间']),
       limit_funds: toNum(dataType === 'LIMIT_UP' ? m['封板资金'] : m['封单资金']),
       continuous_limit: toInt(dataType === 'LIMIT_UP' ? m['连板数'] : m['连续跌停']),
-      blast_times: toInt(dataType === 'LIMIT_UP' ? m['炸板次数'] : m['开板次数'])
+      blast_times: toInt(dataType === 'LIMIT_UP' ? m['炸板次数'] : m['开板次数']),
+      first_limit_time: dataType === 'LIMIT_UP' ? fmtTime(m['首次封板时间']) : '',
+      limit_stats: dataType === 'LIMIT_UP' ? toStr(m['涨停统计']) : ''
     }
-    if (dataType === 'LIMIT_UP') {
-      row.first_limit_time = fmtTime(m['首次封板时间'])
-      row.limit_stats = toStr(m['涨停统计'])
-    } else {
+    if (dataType === 'LIMIT_DOWN') {
       row.dynamic_pe = toNum(m['动态市盈率'])
       row.limit_turnover = toNum(m['板上成交额'])
     }

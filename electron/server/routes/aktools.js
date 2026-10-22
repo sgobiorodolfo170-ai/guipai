@@ -430,7 +430,7 @@ router.get('/stock/ztPoolPrevious', async (req, res) => {
 // 预热打通 rank 代码池 + qt 连接，让首个 /stocks/realtime 或 /market/hot 免冷启动。
 // best-effort：失败静默，首个请求仍会自行拉取。
 async function primeCache() {
-  try { await aktools.getStockSpot() } catch (_) { /* 预热失败无副作用 */ }
+  try { await aktools.getStockSpot(undefined, { log: false }) } catch (_) { /* 预热失败无副作用 */ }
 }
 
 module.exports = router

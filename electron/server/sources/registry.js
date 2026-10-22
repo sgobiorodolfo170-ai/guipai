@@ -1,5 +1,7 @@
 'use strict'
 
+const fetchLog = require('../fetch-log')
+
 /**
  * 多数据源健康度感知调度器。
  *
@@ -101,32 +103,32 @@ function registerSource(src) {
 
 /** 各数据类型的源优先级（首源为主，后续为兜底）。
  *
- *  2026-10-20 解除 TDX-only 冻结：main/sina/akshare 全部恢复参与，并新增独立 tencent 源。
+ *  2026-10-21 东财/新浪/AKShare 上游废弃后收敛为：腾讯 + 通达信（local/quant/tqs）。
  *  统一链路（实测依据见 sources/tencent.js 头注释）：
- *   - 全市场 spot：腾讯批量(800/请求,~1s) → tqs(tdx_server,补北交所/新代码) → 东财/新浪
- *   - 单股 spot  ：tdx_quant(本地 17709,~20ms) → 腾讯 → tqs → 东财/新浪（在 aktools.getStockSpot 内按 codes 覆盖）
- *   - 分钟K      ：tqs(0.06s) → 腾讯 mkline/dayquery(320根上限) → 东财/新浪
- *   - 日K        ：数据包/raw 为主（路由层），在线兜底 tqs → tdx_quant → 本地.day → 腾讯 → 东财
- *   - 指数 spot  ：腾讯(单请求含OHLC) → tqs → 东财 → 新浪
- *  榜单/涨停池等仍保留原有主源顺序，避免改变既有字段口径。
+ *   - 全市场 spot：腾讯批量(800/请求,~1s) → tqs(补北交所/新代码) → tdx_quant
+ *   - 单股 spot  ：tdx_quant(本地 17709,~20ms) → 腾讯 → tqs（在 aktools.getStockSpot 内按 codes 覆盖）
+ *   - 分钟K      ：tqs(0.06s) → 腾讯 mkline/dayquery(320根上限)
+ *   - 日K        ：数据包/raw 为主（路由层），在线兜底 tqs → tdx_quant → 本地.day → 腾讯
+ *   - 指数 spot  ：腾讯(单请求含OHLC) → tqs
+ *  涨跌停池/行业板块不再走 registry（见 aktools.getStockLimitPool/DropPool/Industry 的 TDX 直连实现）。
  */
 const PRIORITY = {
-  kline: ['tdx_server', 'tdx_quant', 'tdx_local', 'tencent', 'main', 'sina', 'akshare'],
-  spot: ['tencent', 'tdx_server', 'tdx_quant', 'main', 'sina', 'akshare'],
-  indexDaily: ['tdx_server', 'tdx_local', 'tencent', 'main', 'sina', 'akshare'],
-  indexSpot: ['tencent', 'tdx_server', 'main', 'sina'],
-  minute: ['tdx_server', 'tencent', 'main', 'sina', 'akshare'],
-  limitPool: ['tdx_server', 'tdx_quant', 'main', 'akshare'],
-  dropPool: ['main', 'tdx_server', 'tdx_quant', 'akshare'],
-  ztPrev: ['main', 'tdx_server', 'akshare'],
-  industry: ['main', 'tdx_server', 'akshare'],
-  info: ['tdx_server', 'tdx_quant', 'main', 'akshare'],
-  financial: ['tdx_server', 'tdx_quant', 'akshare'],
-  holding: ['main', 'tdx_server']
+  kline: ['tdx_server', 'tdx_quant', 'tdx_local', 'tencent'],
+  spot: ['tencent', 'tdx_server', 'tdx_quant'],
+  indexDaily: ['tdx_server', 'tdx_local', 'tencent'],
+  indexSpot: ['tencent', 'tdx_server'],
+  minute: ['tdx_server', 'tencent'],
+  limitPool: ['tdx_server', 'tdx_quant'],
+  dropPool: ['tdx_server', 'tdx_quant'],
+  ztPrev: ['tdx_server'],
+  industry: ['tdx_server'],
+  info: ['tdx_server', 'tdx_quant'],
+  financial: ['tdx_server', 'tdx_quant'],
+  holding: []
 }
 
 /** 串行 failover：按优先级逐源尝试，空数组/抛错都继续下一源，全部失败抛聚合错误。 */
-async function failover(dataType, params, order) {
+async function failover(dataType, params, order, logCtx) {
   const reasons = []
   let lastErr = null
   for (const name of order) {
@@ -138,11 +140,13 @@ async function failover(dataType, params, order) {
     const fn = src.fetchers[dataType]
     if (typeof fn !== 'function') { reasons.push(`${name}:无${dataType}fetcher`); continue }
     const t0 = Date.now()
+    const child = fetchLog.createChild(name)
     try {
-      const data = await withTimeout(Promise.resolve().then(() => fn(params)), timeoutOf(name, dataType), name, dataType)
+      const data = await fetchLog.runWith(child, () => withTimeout(Promise.resolve().then(() => fn(params)), timeoutOf(name, dataType), name, dataType))
       const arr = Array.isArray(data) ? data : (data == null ? [] : [data])
       if (arr.length > 0) {
         markOk(name)
+        fetchLog.attempt(logCtx, { sourceKey: name, status: 'success', rowCount: arr.length, durationMs: Date.now() - t0, channel: child.channel, cacheHit: child.cacheHit })
         if (name !== order[0]) {
           console.warn(`[sources] ${dataType} 主源未命中，由 ${name} 提供(${arr.length} 行,${Date.now() - t0}ms)`)
         }
@@ -150,10 +154,12 @@ async function failover(dataType, params, order) {
       }
       // 空结果：不记 fail（可能是真无数据），但记原因继续下一源
       reasons.push(`${name}:空`)
+      fetchLog.attempt(logCtx, { sourceKey: name, status: 'empty', rowCount: 0, durationMs: Date.now() - t0, channel: child.channel, cacheHit: child.cacheHit })
     } catch (e) {
       reasons.push(`${name}:${String((e && e.message) || e).slice(0, 60)}`)
       lastErr = e
       markFail(name, e)
+      fetchLog.attempt(logCtx, { sourceKey: name, status: 'fail', durationMs: Date.now() - t0, error: e.message, channel: child.channel, cacheHit: child.cacheHit })
     }
   }
   // 全链失败：优先抛最后一个真实异常（保留原始类型/堆栈，如 retryAfterSec 等附加属性），
@@ -173,7 +179,7 @@ async function failover(dataType, params, order) {
 }
 
 /** 并发竞速：多源同时发起，取首个非空成功；全部失败抛聚合错误。 */
-async function race(dataType, params, order) {
+async function race(dataType, params, order, logCtx) {
   const fns = order
     .map(name => {
       const src = sources.find(s => s.name === name)
@@ -191,13 +197,28 @@ async function race(dataType, params, order) {
     let firstErr = null
     const reasons = []
     fns.forEach(({ name, fn }) => {
-      Promise.resolve().then(() => withTimeout(fn(params), timeoutOf(name, dataType), name, dataType)).then(
+      const child = fetchLog.createChild(name)
+      const t0 = Date.now()
+      fetchLog.runWith(child, () => Promise.resolve().then(() => withTimeout(fn(params), timeoutOf(name, dataType), name, dataType))).then(
         (data) => {
           const arr = Array.isArray(data) ? data : (data == null ? [] : [data])
-          if (arr.length > 0) { markOk(name); resolve(data) }
-          else { reasons.push(`${name}:空`); if (--pending === 0) finish() }
+          if (arr.length > 0) {
+            markOk(name)
+            fetchLog.attempt(logCtx, { sourceKey: name, status: 'success', rowCount: arr.length, durationMs: Date.now() - t0, channel: child.channel, cacheHit: child.cacheHit })
+            resolve(data)
+          } else {
+            reasons.push(`${name}:空`)
+            fetchLog.attempt(logCtx, { sourceKey: name, status: 'empty', rowCount: 0, durationMs: Date.now() - t0, channel: child.channel, cacheHit: child.cacheHit })
+            if (--pending === 0) finish()
+          }
         },
-        (e) => { reasons.push(`${name}:${e.message.slice(0, 60)}`); markFail(name, e); firstErr = firstErr || e; if (--pending === 0) finish() }
+        (e) => {
+          reasons.push(`${name}:${e.message.slice(0, 60)}`)
+          markFail(name, e)
+          fetchLog.attempt(logCtx, { sourceKey: name, status: 'fail', durationMs: Date.now() - t0, error: e.message, channel: child.channel, cacheHit: child.cacheHit })
+          firstErr = firstErr || e
+          if (--pending === 0) finish()
+        }
       )
     })
     function finish() {
@@ -213,8 +234,25 @@ async function race(dataType, params, order) {
  *  @param opts {strategy:'failover'|'race', sources?:[name...]覆盖优先级} */
 async function dispatch(dataType, params, opts = {}) {
   const order = opts.sources || PRIORITY[dataType] || ['main']
-  if (opts.strategy === 'race') return race(dataType, params, order)
-  return failover(dataType, params, order)
+  const strategy = opts.strategy === 'race' ? race : failover
+  // 启动预热/探针等非用户取数可显式关闭日志。
+  if (opts.log === false) return strategy(dataType, params, order)
+  const meta = {
+    dataType,
+    action: opts.action || fetchLog.typeLabel(dataType),
+    params: opts.paramsSummary !== undefined ? opts.paramsSummary : fetchLog.summarizeParams(params)
+  }
+  return fetchLog.run(meta, async (ctx) => {
+    try {
+      const data = await strategy(dataType, params, order, ctx)
+      const rowCount = fetchLog.countRows(data)
+      fetchLog.finish(ctx, { status: rowCount > 0 ? 'success' : 'empty', rowCount })
+      return data
+    } catch (e) {
+      fetchLog.finish(ctx, { status: 'fail', error: e.message, detail: { reasons: e.reasons } })
+      throw e
+    }
+  })
 }
 
 /** 各源健康状态（供数据总览页展示）。 */

@@ -22,6 +22,7 @@ const path = require('path')
 const os = require('os')
 
 const tdx = require('./tdx-package')
+const fetchLog = require('../server/fetch-log')
 
 const RAW_DB = 'dfs://tradeinsight_raw'
 const MAIN_DB = 'dfs://tradeinsight'
@@ -395,10 +396,48 @@ module.exports = {
   getCacheDir,
   recentWeekdays,
   isoToday,
-  syncDaily,
-  importFull,
-  importIndex,
-  importFinancial,
+  syncDaily: (dateISO, opts = {}) => fetchLog.wrap({
+    dataType: 'packageDaily',
+    action: '每日数据包导入',
+    sourceKey: 'tdx_package',
+    params: { date: dateISO, force: !!opts.force }
+  }, () => syncDaily(dateISO, opts), (r) => {
+    const rowCount = (r.raw || 0) + (r.index || 0)
+    return {
+      status: r.empty ? 'empty' : (rowCount > 0 ? 'success' : 'empty'),
+      rowCount,
+      detail: { raw: r.raw || 0, index: r.index || 0 }
+    }
+  }),
+  importFull: (opts = {}) => fetchLog.wrap({
+    dataType: 'packageFull',
+    action: '全量数据包导入',
+    sourceKey: 'tdx_package',
+    params: { startDate: opts.startDate, endDate: opts.endDate, mode: opts.mode }
+  }, () => importFull(opts), (r) => ({
+    status: Number(r.rows) > 0 ? 'success' : 'empty',
+    rowCount: Number(r.rows) || 0,
+    detail: { mode: r.mode, files: r.files, elapsedSec: r.elapsedSec }
+  })),
+  importIndex: (opts = {}) => fetchLog.wrap({
+    dataType: 'packageIndex',
+    action: '指数数据包导入',
+    sourceKey: 'tdx_package',
+    params: { fromDate: opts.fromDate }
+  }, () => importIndex(opts), (r) => ({
+    status: Number(r.index) > 0 ? 'success' : 'empty',
+    rowCount: Number(r.index) || 0
+  })),
+  importFinancial: (opts = {}) => fetchLog.wrap({
+    dataType: 'packageFinancial',
+    action: '财报数据包导入',
+    sourceKey: 'tdx_package',
+    params: { fromDate: opts.fromDate }
+  }, () => importFinancial(opts), (r) => ({
+    status: Number(r.rows) > 0 ? 'success' : 'empty',
+    rowCount: Number(r.rows) || 0,
+    detail: { files: r.files, errors: Array.isArray(r.errors) ? r.errors.length : 0 }
+  })),
   countRawDate,
   pruneDailyCache,
   rowsOf

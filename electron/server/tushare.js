@@ -10,6 +10,7 @@
 
 const http = require('http')
 const settings = require('./settings')
+const fetchLog = require('./fetch-log')
 
 const TUSHARE_URL = 'http://api.tushare.pro'
 
@@ -136,6 +137,7 @@ function getPoolRetryAfterSec() {
 /** POST JSON 到 Tushare，返回 data={fields, items}。 */
 function callTushare(apiName, params, fields, token) {
   return new Promise((resolve, reject) => {
+    fetchLog.noteChannel('Tushare')
     const body = JSON.stringify({ api_name: apiName, token, params, fields })
     const req = http.request(
       { hostname: 'api.tushare.pro', port: 80, path: '/', method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 30000 },
@@ -328,4 +330,38 @@ function fmtDate(s) {
   return s.length === 8 ? `${s.slice(0,4)}-${s.slice(4,6)}-${s.slice(6,8)}` : s
 }
 
-module.exports = { callTushare, callWithPool, toRecords, getLimitListD, getDailyBar, stripSuffix, getTokenPoolStatus, testToken, getPoolRetryAfterSec }
+/**
+ * 个股资金流（Tushare moneyflow，按交易日全市场）。
+ * 需要 Tushare 积分 ≥ moneyflow 权限（实测无权限时抛 40203）。
+ * 单位：moneyflow 原始为万元，统一在此转元（×10000）。
+ * 净流入 = net_mf_amount；主力（大单+特大单）可用 buy_lg+buy_elg - sell_lg-sell_elg 派生。
+ */
+async function getMoneyFlow(tradeDate) {
+  const compact = String(tradeDate || '').replace(/\D/g, '')
+  const fields = ['ts_code', 'trade_date',
+    'buy_sm_amount', 'sell_sm_amount',
+    'buy_md_amount', 'sell_md_amount',
+    'buy_lg_amount', 'sell_lg_amount',
+    'buy_elg_amount', 'sell_elg_amount',
+    'net_mf_amount']
+  const records = await callWithPool('moneyflow', { trade_date: compact }, fields)
+  return records.map(r => {
+    const n = (v) => (v == null || v === '' ? null : Number(v) * 10000)
+    return {
+      code: String(r.ts_code || '').split('.')[0],
+      ts_code: r.ts_code,
+      trade_date: r.trade_date,
+      net_inflow: n(r.net_mf_amount),                  // 净流入额（元）
+      buy_sm_amount: n(r.buy_sm_amount),
+      sell_sm_amount: n(r.sell_sm_amount),
+      buy_md_amount: n(r.buy_md_amount),
+      sell_md_amount: n(r.sell_md_amount),
+      buy_lg_amount: n(r.buy_lg_amount),
+      sell_lg_amount: n(r.sell_lg_amount),
+      buy_elg_amount: n(r.buy_elg_amount),
+      sell_elg_amount: n(r.sell_elg_amount)
+    }
+  })
+}
+
+module.exports = { callTushare, callWithPool, toRecords, getLimitListD, getDailyBar, stripSuffix, getTokenPoolStatus, testToken, getPoolRetryAfterSec, getMoneyFlow }

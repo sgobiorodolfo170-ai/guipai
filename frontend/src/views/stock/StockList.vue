@@ -22,6 +22,8 @@ const total = ref(0)
 const page = ref(1)
 const pageSize = ref(50)
 const activeMarket = ref('') // '' = 全部
+const sortBy = ref('')
+const sortOrder = ref('')
 
 // 市场分类 tabs（来自本地库 stock_basic 统计）
 const marketTabs = computed(() => {
@@ -59,10 +61,17 @@ const fetchStockList = async () => {
     }
     if (activeMarket.value) params.market = activeMarket.value
     if (searchKeyword.value.trim()) params.search = searchKeyword.value.trim()
+    if (sortBy.value && sortOrder.value) {
+      params.sortBy = sortBy.value
+      params.sortOrder = sortOrder.value
+    }
 
     const response = await stockStore.fetchStockList(params)
     stockList.value = stockStore.stockList
     total.value = response?.data?.total ?? stockList.value.length
+    if (response?.data?.sortFallback) {
+      ElMessage.warning('行情快照暂不可用，已按代码顺序展示')
+    }
 
     // 拉取当前页股票的实时行情数据（价格/涨跌幅/成交额/市值）
     await fetchRealtimeForPage()
@@ -116,6 +125,14 @@ const handleSearch = () => {
 }
 
 const handleMarketChange = () => {
+  page.value = 1
+  fetchStockList()
+}
+
+// 表头排序交给后端对全量股票排序（sortable="custom"），不再只排当前页
+const handleSortChange = ({ prop, order }) => {
+  sortBy.value = order ? prop : ''
+  sortOrder.value = order || ''
   page.value = 1
   fetchStockList()
 }
@@ -256,28 +273,29 @@ onMounted(async () => {
         border
         allow-drag-last-column
         @row-click="(row) => viewStockDetail(row.code)"
+        @sort-change="handleSortChange"
         style="cursor: pointer;"
       >
-        <el-table-column prop="code" label="代码" width="110" sortable />
-        <el-table-column prop="name" label="名称" width="140" sortable />
-        <el-table-column label="最新价" width="90" align="right" sortable :sort-method="(a, b) => (rt(a.code).price || 0) - (rt(b.code).price || 0)">
+        <el-table-column prop="code" label="代码" width="110" sortable="custom" />
+        <el-table-column prop="name" label="名称" width="140" sortable="custom" />
+        <el-table-column prop="price" label="最新价" width="90" align="right" sortable="custom">
           <template #default="{ row }">
             <span>{{ formatPrice(rt(row.code).price) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="涨跌幅" width="100" align="right" sortable :sort-method="(a, b) => (rt(a.code).changePercent || 0) - (rt(b.code).changePercent || 0)">
+        <el-table-column prop="changePercent" label="涨跌幅" width="100" align="right" sortable="custom">
           <template #default="{ row }">
             <span :class="(rt(row.code).changePercent || 0) > 0 ? 'stock-up' : (rt(row.code).changePercent || 0) < 0 ? 'stock-down' : ''">
               {{ rt(row.code).changePercent != null ? formatPercent(rt(row.code).changePercent) : '--' }}
             </span>
           </template>
         </el-table-column>
-        <el-table-column label="成交额" width="100" align="right" sortable :sort-method="(a, b) => (rt(a.code).turnover || 0) - (rt(b.code).turnover || 0)">
+        <el-table-column prop="turnover" label="成交额" width="100" align="right" sortable="custom">
           <template #default="{ row }">
             <span>{{ fmtTurnover(rt(row.code).turnover) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="市值" width="110" align="right" sortable :sort-method="(a, b) => (rt(a.code).totalMarketValue || 0) - (rt(b.code).totalMarketValue || 0)">
+        <el-table-column prop="totalMarketValue" label="市值" width="110" align="right" sortable="custom">
           <template #default="{ row }">
             <span>{{ fmtMarketCap(rt(row.code).totalMarketValue) }}</span>
           </template>

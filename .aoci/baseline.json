@@ -1,7 +1,7 @@
 {
   "version": 1,
   "created_at": "2026-10-15T12:17:57Z",
-  "updated_at": "2026-10-21T18:03:33Z",
+  "updated_at": "2026-10-22T07:57:57Z",
   "files": {
     ".gitattributes": {
       "sha256": "71efed43d59f1a020e887b7acce55e0298e13287a4211778733875b6bd49c382",
@@ -19,14 +19,14 @@
       "normalized_sha256": "5c816f01f3211095dce870ec60fa4c53badef3912bff0fe2899e8827fb5c6ee2"
     },
     "CHANGELOG.md": {
-      "sha256": "9cd86a3c247f5ea779b4b85d21cfc5ce5cff098296e4d5e56cb5eddedb89c627",
-      "size": 30291,
-      "normalized_sha256": "9cd86a3c247f5ea779b4b85d21cfc5ce5cff098296e4d5e56cb5eddedb89c627"
+      "sha256": "fd36e6bf052c2b1589ce2b20c8de643603b2ce5162bcbd37f02379979c0ef41c",
+      "size": 35189,
+      "normalized_sha256": "fd36e6bf052c2b1589ce2b20c8de643603b2ce5162bcbd37f02379979c0ef41c"
     },
     "aoci.code.txt": {
-      "sha256": "4384867556a030f2364f0624b73b19c841b54bcf26822a9654fd7be6c344245a",
-      "size": 56390,
-      "normalized_sha256": "4384867556a030f2364f0624b73b19c841b54bcf26822a9654fd7be6c344245a"
+      "sha256": "ed23772d62bf5b199313f05e49f1656797b8912145e8db4d1319d9f839df2440",
+      "size": 59412,
+      "normalized_sha256": "ed23772d62bf5b199313f05e49f1656797b8912145e8db4d1319d9f839df2440"
     },
     "aoci.meta.txt": {
       "role": "index",
@@ -171,9 +171,9 @@
       "normalized_sha256": "38f1dc9f39f6f1ea4238319f0d3dac9ffb883366915e0a70c3ca534a2d67e012"
     },
     "electron/server/db.js": {
-      "sha256": "b16b80bcfbc85be7be061e9ba1c239e05e8284a47f77ff9761205206906fb943",
-      "size": 13579,
-      "normalized_sha256": "b16b80bcfbc85be7be061e9ba1c239e05e8284a47f77ff9761205206906fb943"
+      "sha256": "830050ff501bf72797017c4066866822fd8da1c3b5130114629a7c9c8ec98c8e",
+      "size": 15541,
+      "normalized_sha256": "830050ff501bf72797017c4066866822fd8da1c3b5130114629a7c9c8ec98c8e"
     },
     "electron/server/fetch-log.js": {
       "sha256": "8450254ecf116de7a34f314d93218a8d418ab27eda5c25c4dfca24ff9a976471",
@@ -181,9 +181,9 @@
       "normalized_sha256": "8450254ecf116de7a34f314d93218a8d418ab27eda5c25c4dfca24ff9a976471"
     },
     "electron/server/index.js": {
-      "sha256": "f8430417ea37492168dcd436e786a72907c93def7f2adc5f3d27da29fa7476af",
-      "size": 10661,
-      "normalized_sha256": "f8430417ea37492168dcd436e786a72907c93def7f2adc5f3d27da29fa7476af"
+      "sha256": "49fe18f212448904a09bab588b143951800873c4324c42d913e2edcfc5c350d0",
+      "size": 10752,
+      "normalized_sha256": "49fe18f212448904a09bab588b143951800873c4324c42d913e2edcfc5c350d0"
     },
     "electron/server/market-sync.js": {
       "sha256": "d09bd14bee1c3360457f4d025a7248d36682dc1eeaa55900b3565edee7dec82f",
@@ -215,15 +215,20 @@
       "size": 4040,
       "normalized_sha256": "bc9d77d64804fdcd26472769d40c724a3962d634edb7d2273e1d114279b392bc"
     },
+    "electron/server/routes/cockpit.js": {
+      "sha256": "0b2099041bf22a39defcc17bc1cd67917ef5a229d8b29c0d42c11f90078847e2",
+      "size": 24963,
+      "normalized_sha256": "0b2099041bf22a39defcc17bc1cd67917ef5a229d8b29c0d42c11f90078847e2"
+    },
     "electron/server/routes/data-flow.js": {
       "sha256": "b3ecbf6c818402486f832a2598e1c70b5c524f81829752b2872076f352fa3595",
       "size": 5088,
       "normalized_sha256": "b3ecbf6c818402486f832a2598e1c70b5c524f81829752b2872076f352fa3595"
     },
     "electron/server/routes/data-mgmt.js": {
-      "sha256": "e6294d73adcd4ebb6ca888e9c3f575a551dfd67411d11b63237de7eeb3e23648",
-      "size": 15931,
-      "normalized_sha256": "e6294d73adcd4ebb6ca888e9c3f575a551dfd67411d11b63237de7eeb3e23648"
+      "sha256": "57b925ce2d1a691d166658d1f3c1708861cf4544294d8974ab9e13567306bc1d",
+      "size": 18302,
+      "normalized_sha256": "57b925ce2d1a691d166658d1f3c1708861cf4544294d8974ab9e13567306bc1d"
     },
     "electron/server/routes/data-pull.js": {
       "sha256": "941cb43ec7f21525e8b3c65b6b8c8678c96e707743a1cab2297b7a1b6e04646f",
@@ -256,9 +261,9 @@
       "normalized_sha256": "d0ccc4580b501b0431fd3bf20c9a4b68d7f7900b6acde4aa0765e02e0df7a9f9"
     },
     "electron/server/routes/stock.js": {
-      "sha256": "60e5c2a3dcbce776ce2cedd92e79d593d048dde9dc5da0310094134524b58d10",
-      "size": 29690,
-      "normalized_sha256": "60e5c2a3dcbce776ce2cedd92e79d593d048dde9dc5da0310094134524b58d10"
+      "sha256": "29f6a79f000eded8d4376d4e2f7aee062514818689765e560050e4b59e1653a5",
+      "size": 34889,
+      "normalized_sha256": "29f6a79f000eded8d4376d4e2f7aee062514818689765e560050e4b59e1653a5"
     },
     "electron/server/routes/template.js": {
       "sha256": "a43133790120fee84f71af5f2f4a20ff3049fcecd01429300ef2e76a9bf25713",
@@ -276,9 +281,9 @@
       "normalized_sha256": "9c1a06b9986a1cdcf3cf204de561d972b33f57ba26bc472f915fe238efc0b883"
     },
     "electron/server/settings.js": {
-      "sha256": "aa09083273c8c8542b9a968a91a6262bc6b445ba7a0e003675d0357a51f16302",
-      "size": 7425,
-      "normalized_sha256": "aa09083273c8c8542b9a968a91a6262bc6b445ba7a0e003675d0357a51f16302"
+      "sha256": "d1b0424589da92f3570c660220ae80d12db61ecc1a4ea9e294b8dc5fe009f6c5",
+      "size": 9755,
+      "normalized_sha256": "d1b0424589da92f3570c660220ae80d12db61ecc1a4ea9e294b8dc5fe009f6c5"
     },
     "electron/server/sources/_smoke.js": {
       "sha256": "a469fa6a73911668476ad3a727e54cedc7065b84458526e373a63675e5e3a9f4",
@@ -470,6 +475,11 @@
       "size": 9107,
       "normalized_sha256": "039d11dac7fb9a25cfb0145b04810d93db6b804ba80895d2e9a354b259f7117a"
     },
+    "frontend/src/components/cockpit/TradeFormDialog.vue": {
+      "sha256": "25ff3053511d2ec698d9e951f22104df2a470164560c4caad0f6158761afe11d",
+      "size": 6361,
+      "normalized_sha256": "25ff3053511d2ec698d9e951f22104df2a470164560c4caad0f6158761afe11d"
+    },
     "frontend/src/components/common/ErrorBoundary.vue": {
       "sha256": "6ad6642a60471566b3ff537774f64e18103571cff50b5024ebe35ea53ff6fa08",
       "size": 3519,
@@ -586,9 +596,9 @@
       "normalized_sha256": "bb60738d1ef07570f87a038ae881b886ff34b4a7a99ffae6f0241b0a343b6567"
     },
     "frontend/src/composables/useStockData.js": {
-      "sha256": "6866514980d1127517f5f87b2ca61a0e91e794ccae02d3457c3b8d6f20f6d6d8",
-      "size": 3830,
-      "normalized_sha256": "1e3c082fc340cc0ed4decebda60772979b49715e594f8b3ab8168fbf160c9b3a"
+      "sha256": "e03c6b11bfecc2c04dcae782032ae88cdcba70a66cae9928e4961948d7be38a2",
+      "size": 4527,
+      "normalized_sha256": "108bb87a6163cde2bb2b307041a5bf738e8d55190d6287eb2988980618471095"
     },
     "frontend/src/composables/useTemplates.js": {
       "sha256": "3f7f8172eec9a28d7eeb69288f5337a04e89e7f38465a6a14e76301bab874100",
@@ -615,6 +625,11 @@
       "size": 1657,
       "normalized_sha256": "98bec1eb995e6af8f777948b77d073730baa376eebcf6b28f25eb0c50d6a01bb"
     },
+    "frontend/src/services/cockpit.service.js": {
+      "sha256": "2cb92adb9087aef1cc0cdae23e40885e8e0297f378b02125d54074a9aaadb3a3",
+      "size": 1390,
+      "normalized_sha256": "2cb92adb9087aef1cc0cdae23e40885e8e0297f378b02125d54074a9aaadb3a3"
+    },
     "frontend/src/services/kline.service.js": {
       "sha256": "b55c1276c1bbc40449d0208ee5c2b74bdc598e848466f6b1cee41b93a8efbb24",
       "size": 1055,
@@ -636,9 +651,9 @@
       "normalized_sha256": "94829124375f529fa4f6088e9412538d0ae01aa4cd48290fce4216b0f6304540"
     },
     "frontend/src/services/stock.service.js": {
-      "sha256": "54fcab0a3b7e4ed0fe76725630cd9719bd4e41cc9e91f3eb9a8539134a6f0d42",
-      "size": 4354,
-      "normalized_sha256": "9811b778a54d3ac928d814a7d139e37adec8e6b574ac23c5a692ddf71a8d207b"
+      "sha256": "5f924797a6ff0d19b50d28bf1833d035f3714b9dcbf1a9d98a1a82f40b96b966",
+      "size": 4532,
+      "normalized_sha256": "834a671e183d69ff05b0197d509728b384c6538cff4994e6a3e9435ff00824ad"
     },
     "frontend/src/services/template.service.js": {
       "sha256": "16d87d1da4bfe91e656bc94e1fd4d8959b25c254fadc2215af0c02a482625d97",
@@ -656,9 +671,9 @@
       "normalized_sha256": "61b2065aa5f316c108617da734c58ef29b5f14e66ed516b0db4eace7d81898b4"
     },
     "frontend/src/store/stock.store.js": {
-      "sha256": "cc49398ba232d4dcc71decc9493b57596f38dd0b195d7ae0239afe978e70cbd5",
-      "size": 5652,
-      "normalized_sha256": "f48b7c6c1905c08aded4d5ce139b86213058a801195cc5876a229b2cd905e12e"
+      "sha256": "9f97eb79753aa2f53e6a4e71dc2bd45cc1805a60782a420ed102a073af3b6af4",
+      "size": 5922,
+      "normalized_sha256": "49d21c27e4e1d8734280096856fb213ce8ed0a5e4c2583c58d84af4e5b96d2df"
     },
     "frontend/src/store/template.store.js": {
       "sha256": "9e877147fbb3403feb6c701f86d16b93c310329983470f3237ba1960b8da5882",
@@ -721,9 +736,9 @@
       "normalized_sha256": "9b86b764e2a805b78866181dc72b8abb01539212453fab5c0f5366fbe407b11d"
     },
     "frontend/src/views/cockpit/Cockpit.vue": {
-      "sha256": "a9dc02fc26510232261b3716b34d4c2522d6481e55e51583ab0b221b89c5753a",
-      "size": 600,
-      "normalized_sha256": "a9dc02fc26510232261b3716b34d4c2522d6481e55e51583ab0b221b89c5753a"
+      "sha256": "07a8d682fea065dbc89cb852d2930d32a68bd6a5b513b965f3680d916c9bf843",
+      "size": 23878,
+      "normalized_sha256": "07a8d682fea065dbc89cb852d2930d32a68bd6a5b513b965f3680d916c9bf843"
     },
     "frontend/src/views/dashboard/Dashboard.vue": {
       "sha256": "2494422e2d6aa2a279cdd76843e3d1535bc1e246af81a36759d344f4828f99b3",
@@ -766,9 +781,9 @@
       "normalized_sha256": "16327eb2ae374abb897c6bff9c44e434c6b26bbdf1895f5cccf92f13496a7abd"
     },
     "frontend/src/views/settings/Settings.vue": {
-      "sha256": "a67196782684ea26941c15bc2766b7e1d5b5f457e86b3b5bdea0bf23f7795424",
-      "size": 21147,
-      "normalized_sha256": "a67196782684ea26941c15bc2766b7e1d5b5f457e86b3b5bdea0bf23f7795424"
+      "sha256": "e3289c37a7282eec3911675c1328f8411f986df32c151a842cbfe01d489dc33e",
+      "size": 25275,
+      "normalized_sha256": "e3289c37a7282eec3911675c1328f8411f986df32c151a842cbfe01d489dc33e"
     },
     "frontend/src/views/stock/StockBoards.vue": {
       "sha256": "fb07bda8bd3ff27a4ba8884d9bb43b65e2e69faf8ddceaf4588382b96eaf4efd",
@@ -776,14 +791,14 @@
       "normalized_sha256": "fb07bda8bd3ff27a4ba8884d9bb43b65e2e69faf8ddceaf4588382b96eaf4efd"
     },
     "frontend/src/views/stock/StockDetail.vue": {
-      "sha256": "50b658cd653ef5c9ee7d66ae07fd51dcccf9e2914106677183489fc6834ebdd6",
-      "size": 6286,
-      "normalized_sha256": "209775fc6e0bd1f0368499564375f502166b39d6cf032086303c03a82b401c33"
+      "sha256": "50f3036325d0df4fc93ec5e1f2f7c3b7ed3c2d0a5f48cd7e965bf30bf47224b3",
+      "size": 6788,
+      "normalized_sha256": "e51fc208d016dd83c60a6680e2f4ba69169c58132ccb218feca5a9de73509a60"
     },
     "frontend/src/views/stock/StockList.vue": {
-      "sha256": "fcb9554358e078ed493fa773a92ad0b604334c68f79da6ce914d7cb72650453d",
-      "size": 11402,
-      "normalized_sha256": "fcb9554358e078ed493fa773a92ad0b604334c68f79da6ce914d7cb72650453d"
+      "sha256": "3d4c4edc7c0c0d2c1781d8be8e8f0330179ed65d612e88d7ef00ee69943fd3de",
+      "size": 11775,
+      "normalized_sha256": "3d4c4edc7c0c0d2c1781d8be8e8f0330179ed65d612e88d7ef00ee69943fd3de"
     },
     "frontend/src/views/template/TemplateEdit.vue": {
       "sha256": "dce1a400c67126ea2871ec0d05a05e1ed30b8a38bfda4750b482165fd221075e",

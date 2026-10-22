@@ -44,7 +44,10 @@ const SQLITE_TABLE_LABELS = {
   stock_financial: '定期财报(三大表+指标)',
   stock_indicator: '估值指标快照',
   board_constituents: '板块成分股',
-  data_fetch_log: '数据流转日志'
+  data_fetch_log: '数据流转日志',
+  trade: '交易流水',
+  position: '持仓快照',
+  risk_snapshot: '风控快照'
 }
 
 /** DolphinDB 各表及日期列（stock_basic 无日期列） */
@@ -157,6 +160,46 @@ const SQLJS_FIELD_DEFS = {
     { column: 'attempts', label: '多源尝试', desc: 'JSON 数组：各源状态/耗时/渠道' },
     { column: 'error', label: '错误信息' },
     { column: 'detail', label: '明细', desc: 'JSON：导入文件数/子表行数等' }
+  ],
+  trade: [
+    { column: 'id', label: 'ID' },
+    { column: 'user_id', label: '用户ID' },
+    { column: 'stock_code', label: '股票代码', source: '用户输入/搜索选择' },
+    { column: 'stock_name', label: '股票名称' },
+    { column: 'direction', label: '交易方向', desc: 'buy买入/sell卖出' },
+    { column: 'trade_price', label: '成交价格' },
+    { column: 'quantity', label: '数量' },
+    { column: 'fee', label: '手续费' },
+    { column: 'trade_date', label: '成交日期' },
+    { column: 'note', label: '备注' },
+    { column: 'is_demo', label: '示例标记', desc: '0/1，1=示例数据可一键清除' },
+    { column: 'created_at', label: '创建时间' },
+    { column: 'updated_at', label: '更新时间' }
+  ],
+  position: [
+    { column: 'id', label: 'ID' },
+    { column: 'user_id', label: '用户ID' },
+    { column: 'stock_code', label: '股票代码' },
+    { column: 'stock_name', label: '股票名称' },
+    { column: 'quantity', label: '持仓数量' },
+    { column: 'avg_cost', label: '加权平均成本', desc: '含买入费摊薄' },
+    { column: 'total_invested', label: '累计买入金额', desc: '含费' },
+    { column: 'total_proceeds', label: '累计卖出金额', desc: '扣费' },
+    { column: 'realized_pnl', label: '已实现盈亏', desc: '卖出结转成本计算' },
+    { column: 'updated_at', label: '更新时间' }
+  ],
+  risk_snapshot: [
+    { column: 'id', label: 'ID' },
+    { column: 'user_id', label: '用户ID' },
+    { column: 'snapshot_date', label: '快照日期', desc: 'YYYY-MM-DD，每日最多一行' },
+    { column: 'total_market_value', label: '总市值' },
+    { column: 'total_pnl', label: '浮动盈亏' },
+    { column: 'total_position_pct', label: '总仓位%' },
+    { column: 'max_single_position_pct', label: '最大单票仓位%' },
+    { column: 'heavy_count', label: '重仓股数' },
+    { column: 'drawdown_from_peak', label: '回撤%', desc: '相对历史峰值' },
+    { column: 'detail', label: '明细', desc: 'JSON：各股票市值/浮盈/仓位' },
+    { column: 'created_at', label: '创建时间' }
   ]
 }
 // DolphinDB 表字段定义（与 sql.js 同名表 schema 不同，单独维护）
@@ -212,7 +255,10 @@ const SQLITE_COVERAGE = {
   stock_indicator: ['pe_ttm', 'pb', 'pcf'],
   note: ['stock_code', 'direction', 'cost', 'holding_status'],
   note_alert: ['alert_type', 'status'],
-  data_fetch_log: ['source_label', 'status', 'data_type']
+  data_fetch_log: ['source_label', 'status', 'data_type'],
+  trade: ['stock_code', 'direction', 'quantity'],
+  position: ['stock_code', 'quantity', 'avg_cost'],
+  risk_snapshot: ['snapshot_date', 'total_market_value']
 }
 
 /**

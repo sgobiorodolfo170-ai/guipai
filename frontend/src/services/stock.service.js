@@ -2,7 +2,9 @@ import api from '@/utils/api'
 
 /**
  * 获取股票列表（只读本地库，支持 market 市场分类过滤）
- * @param {Object} params 查询参数 { search, market, page, pageSize }
+ * @param {Object} params 查询参数 { search, market, page, pageSize, sortBy, sortOrder }
+ *   sortBy: code|name|price|changePercent|turnover|totalMarketValue
+ *   sortOrder: ascending|descending（对筛选后的全量股票排序后再分页）
  * @returns {Promise}
  */
 export const getStockList = (params = {}) => {

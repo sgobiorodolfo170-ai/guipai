@@ -18,6 +18,24 @@ let akshareConfig = { enabled: false, pythonPath: '', port: 8889 } // AKShare Py
 let tdxConfig = { installPath: '', protoPort: 7709, quantPort: 17709 } // 通达信：installPath(空则自动探测)、protoPort(公网LHR)、quantPort(tqcenter HTTP API)
 let tdxKeys = [] // [{ id, name, key, enabled, createdAt }] — 通达信数据服务 Key 多账号
 
+// 驾驶舱默认配置：初始资金 + 风控阈值（全部可调）
+const DEFAULT_COCKPIT = {
+  initialCapital: 100000,
+  riskThresholds: {
+    singlePositionWarn: 20,      // 单票仓位预警 %
+    singlePositionHigh: 30,      // 单票仓位高危 %
+    stopLossPct: 10,             // 止损线 %（成本价 -X%）
+    takeProfitPct: 25,           // 止盈线 %（成本价 +Y%）
+    heavyPositionPct: 15,        // 重仓判定线 %
+    heavyCountWarn: 3,           // 重仓股数预警
+    industryConcentrationWarn: 40, // 行业集中度预警 %
+    totalPositionHigh: 90,       // 总仓位高危（满仓）
+    totalPositionLow: 10,        // 总仓位低（空仓提示）
+    singleLossAmount: 5000       // 单票浮亏金额预警（元）
+  }
+}
+let cockpitConfig = JSON.parse(JSON.stringify(DEFAULT_COCKPIT))
+
 /** 由 Express startServer 调用：指定数据目录并加载持久化设置。 */
 function init(dataDir) {
   settingsPath = path.join(dataDir, 'settings.json')
@@ -46,6 +64,13 @@ function init(dataDir) {
     if (Array.isArray(s.tdxKeys)) {
       tdxKeys = s.tdxKeys.filter(k => k && k.key)
     }
+    // 驾驶舱配置（浅合并默认值，避免旧 settings.json 无此字段时缺键）
+    if (s.cockpit && typeof s.cockpit === 'object') {
+      if (typeof s.cockpit.initialCapital === 'number') cockpitConfig.initialCapital = s.cockpit.initialCapital
+      if (s.cockpit.riskThresholds && typeof s.cockpit.riskThresholds === 'object') {
+        Object.assign(cockpitConfig.riskThresholds, s.cockpit.riskThresholds)
+      }
+    }
     // 旧版单 token 字段迁移：tushareToken 字符串 → 并入数组
     if (typeof s.tushareToken === 'string' && s.tushareToken) {
       if (!tushareTokens.some(t => t.token === s.tushareToken)) {
@@ -61,7 +86,7 @@ function init(dataDir) {
 function save() {
   if (!settingsPath) return
   try {
-    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens, akshareConfig, tdxConfig, tdxKeys }, null, 2))
+    fs.writeFileSync(settingsPath, JSON.stringify({ tushareTokens, akshareConfig, tdxConfig, tdxKeys, cockpit: cockpitConfig }, null, 2))
   } catch (e) {
     console.error('[settings] persist failed:', e.message)
   }
@@ -186,6 +211,37 @@ function removeTdxKey(id) {
   save()
 }
 
+// ---- 驾驶舱配置 ----
+
+function getCockpitConfig() {
+  return JSON.parse(JSON.stringify(cockpitConfig))
+}
+
+function updateCockpitConfig(patch) {
+  if (!patch || typeof patch !== 'object') return getCockpitConfig()
+  if (patch.initialCapital !== undefined) {
+    const v = Number(patch.initialCapital)
+    if (!Number.isFinite(v) || v < 0) throw new Error('初始资金必须为非负数字')
+    cockpitConfig.initialCapital = v
+  }
+  if (patch.riskThresholds && typeof patch.riskThresholds === 'object') {
+    for (const [k, v] of Object.entries(patch.riskThresholds)) {
+      if (!(k in cockpitConfig.riskThresholds)) continue
+      const n = Number(v)
+      if (!Number.isFinite(n)) throw new Error(`阈值 ${k} 必须为数字`)
+      cockpitConfig.riskThresholds[k] = n
+    }
+  }
+  save()
+  return getCockpitConfig()
+}
+
+function resetCockpitConfig() {
+  cockpitConfig = JSON.parse(JSON.stringify(DEFAULT_COCKPIT))
+  save()
+  return getCockpitConfig()
+}
+
 module.exports = {
   init,
   getTushareTokens,
@@ -204,5 +260,8 @@ module.exports = {
   getEnabledTdxKey,
   addTdxKey,
   updateTdxKey,
-  removeTdxKey
+  removeTdxKey,
+  getCockpitConfig,
+  updateCockpitConfig,
+  resetCockpitConfig
 }

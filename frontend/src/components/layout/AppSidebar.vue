@@ -15,6 +15,11 @@ const menuItems = [
     icon: 'Odometer'
   },
   {
+    index: '/heatmap',
+    title: '热力图',
+    icon: 'Grid'
+  },
+  {
     index: '/Review',
     title: '复盘',
     icon: 'Search'
@@ -38,6 +43,11 @@ const menuItems = [
         title: '行业板块'
       }
     ]
+  },
+  {
+    index: '/cockpit',
+    title: '驾驶舱',
+    icon: 'DataBoard'
   },
   {
     index: '/notes',
@@ -89,6 +99,10 @@ const menuItems = [
       {
         index: '/admin/data-overview',
         title: '数据总览'
+      },
+      {
+        index: '/admin/data-flow',
+        title: '数据流转'
       },
       {
         index: '/admin/close-data-sync',

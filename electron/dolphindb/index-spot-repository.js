@@ -56,7 +56,28 @@ async function getIndexSpot() {
   return Array.isArray(r) ? r : []
 }
 
+/**
+ * 每个指数各取最新一条快照。
+ *
+ * 不能复用 getIndexSpot()：它按全表 max(trade_date) 过滤，某个指数更新滞后时会整行缺失。
+ * 双源比对需要“每个指数自己的最新快照”，故选最近 sinceDate 起的行后在内存按 symbol 取首条。
+ * sinceDate 必须是 YYYY.MM.DD（由调用方经 safeDate 净化），空值则只做防御性拒绝。
+ */
+async function getLatestIndexSpot(sinceDate) {
+  if (!ddb.isConnected()) return []
+  if (!/^\d{4}\.\d{2}\.\d{2}$/.test(String(sinceDate || ''))) return []
+  const r = await ddb.execute(
+    `select * from ${TBL} where trade_date >= ${sinceDate} order by trade_date desc, timestamp desc`
+  )
+  const latest = new Map()
+  for (const row of (Array.isArray(r) ? r : [])) {
+    if (!row.symbol || latest.has(row.symbol)) continue
+    latest.set(row.symbol, row)
+  }
+  return [...latest.values()]
+}
+
 function toDouble(v) { return v == null ? null : Number(v) }
 function toLong(v) { return v == null ? null : Math.abs(Math.round(Number(v))) }
 
-module.exports = { insertIndexSpot, getIndexSpot, COLS }
+module.exports = { insertIndexSpot, getIndexSpot, getLatestIndexSpot, COLS }

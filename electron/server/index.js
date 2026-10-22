@@ -5,6 +5,7 @@ const cors = require('cors')
 const path = require('path')
 const fs = require('fs')
 const { initDb, closeDb } = require('./db')
+const fetchLog = require('./fetch-log')
 const settings = require('./settings')
 const aktoolsRoutes = require('./routes/aktools')
 const statisticsRoutes = require('./routes/statistics')
@@ -15,6 +16,7 @@ const marketRoutes = require('./routes/market')
 const watchlistRoutes = require('./routes/watchlist')
 const noteRoutes = require('./routes/note')
 const templateRoutes = require('./routes/template')
+const cockpitRoutes = require('./routes/cockpit')
 const marketSyncRoutes = require('./market-sync')
 const packageSync = require('./package-sync')
 
@@ -23,6 +25,7 @@ let server = null
 function startServer(port = 8080, dataDir) {
   return initDb(dataDir).then(() => {
   settings.init(dataDir)
+  fetchLog.init()
   const logDir = path.join(path.dirname(dataDir), 'logs')
 
   const app = express()
@@ -93,6 +96,7 @@ function startServer(port = 8080, dataDir) {
 
   app.use('/api/aktools', aktoolsRoutes)
   app.use('/api/data-mgmt', require('./routes/data-mgmt'))
+  app.use('/api/data-flow', require('./routes/data-flow'))
   app.use('/api/limit-board-statistics', statisticsRoutes)
   app.use('/api/sim-training', trainingRoutes)
   app.use('/api/kline', klineRoutes)
@@ -102,9 +106,11 @@ function startServer(port = 8080, dataDir) {
   app.use('/api/watchlist', watchlistRoutes)
   app.use('/api/notes', noteRoutes)
   app.use('/api/templates', templateRoutes)
+  app.use('/api/cockpit', cockpitRoutes)
   app.use('/api/market-sync', marketSyncRoutes.router)
   app.use('/api/package-sync', packageSync.router)
   app.use('/api/settings/akshare', require('./routes/akshare'))
+app.use('/api/money-flow', require('./routes/money-flow'))
 
   // ---- 通达信 Key 多账号管理（与 Tushare 同模式）----
   const { execSync } = require('child_process')
@@ -232,6 +238,7 @@ function startServer(port = 8080, dataDir) {
 
 function stopServer() {
   try { packageSync.stopScheduler() } catch (_) {}
+  try { fetchLog.flushSync() } catch (_) {}
   if (server) { server.close(); server = null }
   closeDb()
 }
