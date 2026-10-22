@@ -215,7 +215,7 @@ async function ensureSchema(dbPath) {
   try {
     const hasTable = await execute(`existsTable("${dbPath}", "daily_k")`)
     if (hasTable) {
-      // 增量建表：历史库已存在时，仅补齐新增的 review_statistics / stock_dividend（幂等，一次 existsTable 往返）
+      // 增量建表：历史库已存在时，仅补齐新增的 review_statistics / stock_dividend / stock_adj_factor（幂等，一次 existsTable 往返）
       await execute(
         `if (!existsTable("${dbPath}", "review_statistics")) {\n` +
         `  t = table(1:0, \`trade_date\`max_continuous_level\`limit_up_count\`limit_down_count\`one_word_count\`continuous_limit_rate\`blast_reseal_count\`yesterday_limitup_avg_change\`create_time, ` +
@@ -223,9 +223,14 @@ async function ensureSchema(dbPath) {
         `  db = database("${dbPath}"); db.createPartitionedTable(t, \`review_statistics, \`trade_date)\n` +
         `}\n` +
         `if (!existsTable("dfs://tradeinsight_raw", "stock_dividend")) {\n` +
-        `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_per_10\`transfer_per_10\`rights_per_10\`create_time, ` +
+        `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_transfer_per_10\`allotment_per_10\`allot_price\`create_time, ` +
         `[SYMBOL, DATE, INT, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
         `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_dividend, \`ex_date)\n` +
+        `}\n` +
+        `if (!existsTable("dfs://tradeinsight_raw", "stock_adj_factor")) {\n` +
+        `  t = table(1:0, \`symbol\`trade_date\`factor\`create_time, ` +
+        `[SYMBOL, DATE, DOUBLE, TIMESTAMP]);\n` +
+        `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_adj_factor, \`trade_date)\n` +
         `}`
       )
       return
@@ -299,9 +304,14 @@ async function ensureSchema(dbPath) {
     `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`daily_k_raw, \`trade_date)\n` +
     `}\n` +
     `if (!existsTable("dfs://tradeinsight_raw", "stock_dividend")) {\n` +
-    `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_per_10\`transfer_per_10\`rights_per_10\`create_time, ` +
+    `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_transfer_per_10\`allotment_per_10\`allot_price\`create_time, ` +
     `[SYMBOL, DATE, INT, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
     `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_dividend, \`ex_date)\n` +
+    `}\n` +
+    `if (!existsTable("dfs://tradeinsight_raw", "stock_adj_factor")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`factor\`create_time, ` +
+    `[SYMBOL, DATE, DOUBLE, TIMESTAMP]);\n` +
+    `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_adj_factor, \`trade_date)\n` +
     `}`
   )
   // 股票基础信息（维度表，不分区）

@@ -18,11 +18,14 @@ const RAW_DB = 'dfs://tradeinsight_raw'
 const TBL = `loadTable("${RAW_DB}", "stock_dividend")`
 
 // 列定义（须与 ensureSchema 建表列序一致）
+// 语义（经 tqs Bonus/AllotPrice/ShareBonus/Allotment 交叉验证）：
+//   cash_per_10=每10股派息(税前元)、share_transfer_per_10=每10股送转(送+转合并,源不拆分)、
+//   allotment_per_10=每10股配股比、allot_price=配股价(元)
 const DIVIDEND_COLS = [
   { name: 'symbol', type: 'symbol' }, { name: 'ex_date', type: 'date' },
   { name: 'event_type', type: 'int' },
-  { name: 'cash_per_10', type: 'double' }, { name: 'share_per_10', type: 'double' },
-  { name: 'transfer_per_10', type: 'double' }, { name: 'rights_per_10', type: 'double' },
+  { name: 'cash_per_10', type: 'double' }, { name: 'share_transfer_per_10', type: 'double' },
+  { name: 'allotment_per_10', type: 'double' }, { name: 'allot_price', type: 'double' },
   { name: 'create_time', type: 'timestamp' }
 ]
 
@@ -45,7 +48,7 @@ async function ensureTable() {
   if (!ddb.isConnected()) await ddb.connect()
   await ddb.execute(
     `if (!existsTable("${RAW_DB}", "stock_dividend")) {\n` +
-    `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_per_10\`transfer_per_10\`rights_per_10\`create_time, ` +
+    `  t = table(1:0, \`symbol\`ex_date\`event_type\`cash_per_10\`share_transfer_per_10\`allotment_per_10\`allot_price\`create_time, ` +
     `[SYMBOL, DATE, INT, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
     `  db = database("${RAW_DB}"); db.createPartitionedTable(t, \`stock_dividend, \`ex_date)\n` +
     `}`
@@ -60,9 +63,9 @@ function cleanRows(rows) {
     ex_date: r['除权除息日'],
     event_type: num(r['事件类型']),
     cash_per_10: num(r['每10股派息']),
-    share_per_10: num(r['每10股送股']),
-    transfer_per_10: num(r['每10股转增']),
-    rights_per_10: num(r['每10股配股']),
+    share_transfer_per_10: num(r['每10股送转']),
+    allotment_per_10: num(r['每10股配股']),
+    allot_price: num(r['配股价']),
     create_time: new Date()
   })).filter(r => safeSymbol(r.symbol) && safeDate(r.ex_date))
 }
@@ -90,9 +93,9 @@ function normRows(rows) {
     ex_date: r.ex_date != null ? String(r.ex_date).replace(/\./g, '-') : null,
     event_type: r.event_type != null ? Number(r.event_type) : null,
     cash_per_10: r.cash_per_10 != null ? Number(r.cash_per_10) : null,
-    share_per_10: r.share_per_10 != null ? Number(r.share_per_10) : null,
-    transfer_per_10: r.transfer_per_10 != null ? Number(r.transfer_per_10) : null,
-    rights_per_10: r.rights_per_10 != null ? Number(r.rights_per_10) : null,
+    share_transfer_per_10: r.share_transfer_per_10 != null ? Number(r.share_transfer_per_10) : null,
+    allotment_per_10: r.allotment_per_10 != null ? Number(r.allotment_per_10) : null,
+    allot_price: r.allot_price != null ? Number(r.allot_price) : null,
     create_time: r.create_time != null ? r.create_time : null
   }))
 }
@@ -176,7 +179,7 @@ async function getDividends(symbol, { startDate, endDate } = {}) {
   if (sd) cond += ` and ex_date >= ${ddbDate(sd)}`
   if (ed) cond += ` and ex_date <= ${ddbDate(ed)}`
   const r = await ddb.execute(
-    `select symbol, ex_date, event_type, cash_per_10, share_per_10, transfer_per_10, rights_per_10, create_time` +
+    `select symbol, ex_date, event_type, cash_per_10, share_transfer_per_10, allotment_per_10, allot_price, create_time` +
     ` from ${TBL} where ${cond} order by ex_date`
   )
   return normRows(r)

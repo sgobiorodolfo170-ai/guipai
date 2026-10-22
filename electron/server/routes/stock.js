@@ -8,6 +8,7 @@ const ddb = require('../../dolphindb/client')
 const spotRepo = require('../../dolphindb/spot-repository')
 const minuteRepo = require('../../dolphindb/minute-repository')
 const holdingRepo = require('../../dolphindb/holding-repository')
+const adjFactorRepo = require('../../dolphindb/adj-factor-repository')
 const converter = require('../converter')
 const { getDb } = require('../db')
 const tdxLocal = require('../sources/tdx_local')
@@ -503,6 +504,47 @@ const KLINE_ROW_MAP = (m) => ({
   turnover: Number(m['换手率']) || 0, pctChg: Number(m['涨跌幅']) || 0
 })
 
+/**
+ * 用复权因子表把不复权 raw 行转为前/后复权。
+ * factor = 后复权累计因子（仅在事件日落库，事件间为常数）；前复权乘 f/anchor、后复权乘 f。
+ * 涨跌幅/振幅由复权价重算（事件日复权价连续，回报口径正确）；换手率仍缺失。
+ * @returns 复权后中文键行数组；因子缺失/不适用时返回 null（调用方保持不复权原样）
+ */
+function applyFactorToRaw(rawRows, factors, adjust) {
+  if (!rawRows || !rawRows.length || !factors || !factors.length) return null
+  if (adjust !== 'qfq' && adjust !== 'hfq') return null
+  const anchor = factors[factors.length - 1].factor
+  if (!(anchor > 0)) return null
+  const isQfq = adjust === 'qfq'
+  const factorAt = (d) => {
+    let f = 1
+    for (let i = factors.length - 1; i >= 0; i--) {
+      if (factors[i].trade_date <= d) { f = factors[i].factor; break }
+    }
+    return f
+  }
+  const round2 = (x) => (Number.isFinite(x) ? Math.round(x * 100) / 100 : null)
+  const out = []
+  let prevClose = null
+  for (const r of rawRows) {
+    const m = factorAt(r['日期']) / (isQfq ? anchor : 1)
+    const open = Number(r['开盘']) * m
+    const close = Number(r['收盘']) * m
+    const high = Number(r['最高']) * m
+    const low = Number(r['最低']) * m
+    const chg = prevClose == null ? null : round2(close - prevClose)
+    out.push({
+      ...r,
+      '开盘': round2(open), '收盘': round2(close), '最高': round2(high), '最低': round2(low),
+      '振幅': prevClose == null || prevClose === 0 ? null : round2((high - low) / prevClose * 100),
+      '涨跌幅': chg == null || prevClose === 0 ? null : round2(chg / prevClose * 100),
+      '涨跌额': chg
+    })
+    if (close != null) prevClose = close
+  }
+  return out
+}
+
 // 股票元数据（详情页用）：上市日/退市日/ST/停牌/总流通股本，来自本地 stock_basic
 router.get('/:code/meta', (req, res) => {
   try {
@@ -649,13 +691,26 @@ router.get('/:code/kline', async (req, res) => {
     // 2. daily_k 覆盖不足 → daily_k_raw 兜底（不复权，仅 8 列，限时 5s）
     //    raw 是 TDX 不复权价，与 daily_k 前复权口径不同，不与 daily_k 混算。
     //    缺 turnover_rate/pct_chg/amplitude 时前端按缺失渲染。
+    //    adjust=qfq/hfq 且 stock_adj_factor 有覆盖时，用因子离线复权（raw×factor/anchor）。
     if (ddb.isConnected()) {
       try {
         const raw = await withTimeout(klineRepo.getDailyKRaw(code, effStart, effEnd), 5000)
         if (raw && raw.length) {
-          const kline = raw.map(KLINE_ROW_MAP)
+          let rows = raw
+          let msg = '成功(daily_k_raw 不复权兜底)'
+          try {
+            if (adjust === 'qfq' || adjust === 'hfq') {
+              const factors = await adjFactorRepo.getFactors(code)
+              const adjusted = applyFactorToRaw(raw, factors, adjust)
+              if (adjusted && adjusted.length) {
+                rows = adjusted
+                msg = `成功(daily_k_raw ${adjust === 'qfq' ? '前' : '后'}复权兜底·离线因子)`
+              }
+            }
+          } catch (e) { console.warn('[stock] kline raw 因子复权失败，保持不复权:', e.message) }
+          const kline = rows.map(KLINE_ROW_MAP)
           cache.set(cacheKey, kline, 300)
-          return ok(res, kline, '成功(daily_k_raw 不复权兜底)')
+          return ok(res, kline, msg)
         }
       } catch (e2) { if (e2.message !== 'timeout') console.error('[stock] daily_k_raw fallback failed:', e2.message) }
     }

@@ -64,6 +64,7 @@ const DDB_TABLES = [
   { name: 'minute_k', label: '分钟K线', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_holding', label: '十大股东', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_dividend', label: '权息事件(分红送转配)', dateCol: 'ex_date', db: 'dfs://tradeinsight_raw' },
+  { name: 'stock_adj_factor', label: '复权因子(后复权累计)', dateCol: 'trade_date', db: 'dfs://tradeinsight_raw' },
   { name: 'stock_basic', label: '股票基础信息', dateCol: null, db: 'dfs://tradeinsight' },
   { name: 'tick', label: 'Tick(预留,暂无数据)', dateCol: 'trade_date', db: 'dfs://tradeinsight' }
 ]
@@ -220,11 +221,17 @@ const DDB_FIELD_DEFS = {
   stock_dividend: [
     { column: 'symbol', label: '股票代码' },
     { column: 'ex_date', label: '除权除息日', desc: '分红送转配生效日', source: 'tqcenter get_divid_factors' },
-    { column: 'event_type', label: '事件类型', desc: '实测恒为1，语义待确认' },
+    { column: 'event_type', label: '事件类型', desc: '除权事件标志，实测恒为1' },
     { column: 'cash_per_10', label: '每10股派息(税前,元)' },
-    { column: 'share_per_10', label: '每10股送股(股)' },
-    { column: 'transfer_per_10', label: '每10股转增(股)' },
-    { column: 'rights_per_10', label: '每10股配股(股)' },
+    { column: 'share_transfer_per_10', label: '每10股送转', desc: '送股+转增合并(通达信源不拆分)' },
+    { column: 'allotment_per_10', label: '每10股配股(股)' },
+    { column: 'allot_price', label: '配股价(元)' },
+    { column: 'create_time', label: '写入时间' }
+  ],
+  stock_adj_factor: [
+    { column: 'symbol', label: '股票代码' },
+    { column: 'trade_date', label: '交易日' },
+    { column: 'factor', label: '后复权累计因子', desc: '自首个可算交易日累乘除权系数；前复权=raw×factor(t)/factor(最新)', source: 'daily_k_raw + stock_dividend 离线推导' },
     { column: 'create_time', label: '写入时间' }
   ],
   stock_basic: [

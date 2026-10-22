@@ -223,10 +223,10 @@ async function getSnapshot(codes) {
 
 /**
  * 权息事件（get_divid_factors，逐股全历史）。
- * 返回结构（2026-10-22 实测）：{ Date:[除权除息生效日], Type:[事件类型,实测恒为1], Value:[[每10股派息, 送股, 转增, 配股],...] }。
- * 语义：Value[i][0]=每10股派息税前(元)、[1]=每10股送股、[2]=每10股转增、[3]=每10股配股；
- * 样本交叉验证（茅台/招行/五粮液/平安银行）与公开分红记录一致。
- * 用作权息事件表采集；也可据此离线推导复权因子（后续迭代）。
+ * 返回结构（2026-10-22 实测）：{ Date:[除权除息生效日], Type:[事件类型,实测恒为1], Value:[[每10股派息, 配股价, 每10股送转, 每10股配股],...] }。
+ * 语义：Value[i][0]=每10股派息税前(元)、[1]=配股价(元)、[2]=每10股送转(送股+转增合并,通达信源不拆分)、[3]=每10股配股比；
+ * 经 tqs get_divid_factors 列式字段(Bonus/AllotPrice/ShareBonus/Allotment)交叉验证一致（茅台/招行/五粮液/平安/上港）。
+ * 用作权息事件表采集；配股价与送转可用于离线复权因子推导（后续）。
  */
 async function getDividFactors(symbol) {
   const code = `${String(symbol).replace(/\.\w+$/, '')}.${suffix(symbol)}`
@@ -245,8 +245,8 @@ async function getDividFactors(symbol) {
       '除权除息日': /^\d{4}-\d{2}-\d{2}$/.test(ex) ? ex : null,
       '事件类型': num(types && types[i]),
       '每10股派息': num(v[0]),
-      '每10股送股': num(v[1]),
-      '每10股转增': num(v[2]),
+      '配股价': num(v[1]),
+      '每10股送转': num(v[2]),
       '每10股配股': num(v[3])
     })
   }
