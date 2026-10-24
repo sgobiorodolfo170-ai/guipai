@@ -626,7 +626,11 @@ const LIMIT_POOL_COLS = [
 
 // ---- 涨停池 / 跌停池 / 昨日涨停（DB-first，供 Review 页迁移用） ----
 
-/** GET /limit-pool/:date — 某日涨停池全量数据（DB-first from stock_limit_pool LIMIT_UP） */
+/** GET /limit-pool/:date — 当日涨停池列表（Option A：由 daily_k_qfq 前复权自研推导，与卡片计数同源）。
+ *  返回行 {stock_code, stock_name, industry, increase_rate, latest_price, turnover, turnover_rate(null),
+ *          continuous_limit(前复权推导连板数), limit_stats(null)}，按连板数降序。
+ *  富字段（换手率/封板时间/封单/炸板）待 tick 数据落地后统一接入，当前为 null。
+ *  stock_limit_pool 表仅供收盘同步/历史统计使用，读路径不再依赖。 */
 router.get('/limit-pool/:date', async (req, res) => {
   const { date } = req.params
   const d = safeDate(date)
@@ -635,31 +639,9 @@ router.get('/limit-pool/:date', async (req, res) => {
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached)
   try {
-    if (ddb.isConnected()) {
-      const r = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_UP' order by continuous_limit desc`)
-      const rows = normRows(toRows(r))
-      if (rows.length) {
-        // 响应层连板数推导补丁：当前通达信源连板数恒 0，用自研「前复权连续涨停」推导值兜底
-        const patched = await patchConsecutiveLimit(rows, d)
-        cache.set(cacheKey, patched, 300)
-        return ok(res, patched)
-      }
-    }
-    // aktools write-on-miss
-    const raw = await aktools.getStockLimitPool(date)
-    if (raw && raw.length && ddb.isConnected()) {
-      const rows = converter.convertStockLimitPool(raw, date, 'LIMIT_UP')
-      await ddb.execute(`t = ${TBL}; delete from t where trade_date=${d} and data_type='LIMIT_UP'`)
-      await ddb.insertRows('stock_limit_pool', LIMIT_POOL_COLS, rows)
-      const r2 = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_UP' order by continuous_limit desc`)
-      const rows2 = normRows(toRows(r2))
-      if (rows2.length) {
-        const patched2 = await patchConsecutiveLimit(rows2, d)
-        cache.set(cacheKey, patched2, 300)
-        return ok(res, patched2)
-      }
-    }
-    ok(res, raw || [])
+    const rows = await derive.deriveLimitUpPool(String(date))
+    cache.set(cacheKey, rows, 300)
+    ok(res, rows)
   } catch (e) { err(res, e.message) }
 })
 
@@ -716,21 +698,6 @@ router.get('/zt-previous/:date', async (req, res) => {
 //   涨停/跌停/连板数/一字板/昨日涨停涨幅 均按前复权收盘判定（除权跳空已修正，不误判）；
 //   炸板回封数留 null —— 待 tick 数据联动（当前无 tick 数据，前端显示 '--'）。
 // 盘中口径：/review/:date 自动回退到最近一个有前复权数据的交易日，返回生效 tradeDate。
-
-/** 响应层连板数推导补丁：用自研「前复权连续涨停」推导值覆写 LIMIT_UP 行的 continuous_limit（源缺失/恒 0 兜底）。 */
-async function patchConsecutiveLimit(rows, ddbDate) {
-  if (!rows || !rows.length) return rows
-  const iso = String(ddbDate).replace(/\./g, '-')
-  try {
-    const day = await derive.deriveDay(iso)
-    if (!day || !day.levels) return rows
-    for (const r of rows) {
-      const code = String(r.stock_code)
-      if (day.levels[code] != null) r.continuous_limit = day.levels[code]
-    }
-  } catch (e) { console.warn('[statistics] 连板数推导补丁失败：', e.message) }
-  return rows
-}
 
 /** GET /review/range?startDate=&endDate= — 复盘日汇总（范围，供历史弹窗；前复权自研推导）。
  *  字段契约同 /review/:date，返回数组（按 tradeDate 升序，仅含库内有数据的交易日）。

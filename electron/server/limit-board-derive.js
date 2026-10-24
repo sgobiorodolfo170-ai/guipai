@@ -227,10 +227,22 @@ async function deriveRange(startISO, endISO) {
   return out
 }
 
+/** 名称（sql.js stock_basic）与行业（tdxLocal 本地映射）——均库内/本地，非网络源。 */
+function stockMetaMaps() {
+  const nameMap = new Map()
+  try {
+    const { getDb } = require('./db')
+    const rows = getDb().prepare('SELECT code, name FROM stock_basic').all()
+    for (const x of rows) nameMap.set(String(x.code), x.name)
+  } catch (e) { console.warn('[derive] sql.js stock_basic 名称读取失败:', e.message) }
+  let indMap = {}
+  try { indMap = require('./sources/tdx_local').getStockIndustryMap() } catch (e) { indMap = {} }
+  return { nameMap, indMap }
+}
+
 /**
  * 昨日涨停池自研推导（/zt-previous 改用，替代已无源的 zt_pool_previous）：
  * 最近完整交易日(D)的前一交易日(Dprev)收盘涨停股，附 D 日前复权涨跌幅/不复权展示价/成交额。
- * 名称取 sql.js stock_basic（库内），行业取 tdxLocal 本地板块映射（离线），均非网络源。
  * 返回行 {symbol, name, latest_price, pct_chg, amount, turnover_rate, industry, consecutive_limit, limit_stats}。
  */
 async function deriveZtPrevious(dateISO) {
@@ -245,16 +257,7 @@ async function deriveZtPrevious(dateISO) {
   const syms = [...prevUp.keys()]
   if (!syms.length) return []
 
-  // 名称：sql.js stock_basic；行业：tdxLocal 本地板块映射（离线）
-  const nameMap = new Map()
-  try {
-    const { getDb } = require('./db')
-    const rows = getDb().prepare('SELECT code, name FROM stock_basic').all()
-    for (const x of rows) nameMap.set(String(x.code), x.name)
-  } catch (e) { console.warn('[derive] sql.js stock_basic 名称读取失败:', e.message) }
-  let indMap = {}
-  try { indMap = require('./sources/tdx_local').getStockIndustryMap() } catch (e) { indMap = {} }
-
+  const { nameMap, indMap } = stockMetaMaps()
   const { levels: prevLevels } = levelMetrics(window, prevUp)
   const out = []
   for (const [sym, _r] of prevUp) {
@@ -274,4 +277,40 @@ async function deriveZtPrevious(dateISO) {
   return out
 }
 
-module.exports = { deriveDay, deriveEffectiveDay, deriveRange, deriveZtPrevious, loadWindow, computeDayFromWindow, boardThreshold }
+/**
+ * 当日涨停池列表自研推导（/limit-pool 改用，Option A：列表与卡片同源 daily_k_qfq）。
+ * 返回按连板数降序的行 {stock_code, stock_name, industry, increase_rate(前复权),
+ * latest_price(不复权展示价), turnover(成交额), turnover_rate(null), continuous_limit, limit_stats(null)}。
+ * 富字段（换手率/封板时间/封单/炸板）待 tick 数据落地后统一接入，当前为 null。
+ */
+async function deriveLimitUpPool(dateISO) {
+  const d = iso(dateISO)
+  if (!d) throw new Error('日期参数不合法')
+  const window = await loadWindow(shiftISO(d, -95), d)
+  const effDate = [...window.dates].filter(x => x <= d).pop() || null
+  if (!effDate) return []
+  const upSet = limitUpSetFor(window, effDate)
+  if (!upSet.size) return []
+  const { levels } = levelMetrics(window, upSet)
+  const syms = [...upSet.keys()].sort((a, b) => (levels[b] || 1) - (levels[a] || 1))
+
+  const { nameMap, indMap } = stockMetaMaps()
+  const out = []
+  for (const sym of syms) {
+    const row = upSet.get(sym)
+    out.push({
+      stock_code: sym,
+      stock_name: nameMap.get(sym) || sym,
+      industry: indMap[sym] || null,
+      increase_rate: round2(row.pctChg),
+      latest_price: round2(row.raw_close),
+      turnover: row.amount,
+      turnover_rate: null,
+      continuous_limit: levels[sym] != null ? levels[sym] : 1,
+      limit_stats: null
+    })
+  }
+  return out
+}
+
+module.exports = { deriveDay, deriveEffectiveDay, deriveRange, deriveZtPrevious, deriveLimitUpPool, loadWindow, computeDayFromWindow, boardThreshold }
