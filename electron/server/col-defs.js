@@ -64,6 +64,19 @@ const COLS = {
     { name: 'blast_reseal_count', type: 'int' },
     { name: 'yesterday_limitup_avg_change', type: 'double' },
     { name: 'create_time', type: 'timestamp' }
+  ],
+  // 前复权日K表（daily_k_qfq）：daily_k_raw × stock_adj_factor 推导物化，复盘指标唯一前复权口径。
+  // 写库方 electron/dolphindb/qfq-materialize.js；列序须与 ensureSchema 中 daily_k_qfq 一致。
+  daily_k_qfq: [
+    { name: 'symbol', type: 'symbol' },
+    { name: 'trade_date', type: 'date' },
+    { name: 'open', type: 'double' },
+    { name: 'high', type: 'double' },
+    { name: 'low', type: 'double' },
+    { name: 'close', type: 'double' },
+    { name: 'raw_close', type: 'double' },
+    { name: 'amount', type: 'double' },
+    { name: 'create_time', type: 'timestamp' }
   ]
 }
 

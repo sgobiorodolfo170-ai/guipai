@@ -7,9 +7,7 @@
         <!-- 标题栏 -->
         <div class="dashboard-header">
           <h2 class="header-title">
-            {{
-              'A股复盘 -- ' + (recentTradingDay + '').slice(0, 4) + '年' + parseInt((recentTradingDay + '').slice(4, 6)) + '月' + parseInt((recentTradingDay + '').slice(6, 8)) + '日'
-            }}
+            {{ headerTitle }}
           </h2>
           <div class="header-actions">
 <!--            <button class="test-btn" @click="testHistoryModal" style="margin-right: 10px; padding: 5px 10px; background: #52c41a; color: white; border: none; border-radius: 4px; cursor: pointer;">-->
@@ -315,8 +313,19 @@ const chooseStockCategories = ref()
 //昨日涨停数据
 const yesterdayLimitUpData = ref()
 
-//最新交易日
+//最新交易日（数据源/缓存口径）
 const recentTradingDay = ref('')
+// 标题显示交易日（取 /review 返回的生效交易日，盘中自动回退最近完整交易日）
+const displayTradingDay = ref('')
+const toISO = (s) => (s && !String(s).includes('-') && /^\d{8}$/.test(String(s))) ? `${String(s).slice(0, 4)}-${String(s).slice(4, 6)}-${String(s).slice(6, 8)}` : String(s || '')
+const headerTitle = computed(() => {
+  const s = toISO(displayTradingDay.value || recentTradingDay.value)
+  if (!s) return 'A股复盘'
+  const y = s.slice(0, 4)
+  const m = Number(s.slice(5, 7))
+  const d = Number(s.slice(8, 10))
+  return `A股复盘 -- ${y}年${m}月${d}日`
+})
 
 // 历史数据弹窗相关
 const historyModalVisible = ref(false)
@@ -386,6 +395,7 @@ const applyIndexCards = () => {
 const applyReviewSummaryToCards = (summary) => {
   const s = summary || reviewSummary.value
   if (!s) return
+  if (s.tradeDate) displayTradingDay.value = s.tradeDate
   maxContinuousLevel.value = s.maxContinuousLevel != null ? s.maxContinuousLevel : '--'
   limitUpCount.value = s.limitUpCount != null ? s.limitUpCount : '--'
   limitDownCount.value = s.limitDownCount != null ? s.limitDownCount : '--'

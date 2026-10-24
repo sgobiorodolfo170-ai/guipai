@@ -60,6 +60,7 @@ const DDB_TABLES = [
   { name: 'zt_pool_previous', label: '昨日涨停池', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'plate_market_quotation', label: '板块行情', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_zh_index_daily', label: '指数日K', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
+  { name: 'daily_k_qfq', label: '前复权日K(推导物化)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'review_statistics', label: '复盘日统计(最高板/涨停/跌停/一字板等)', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'minute_k', label: '分钟K线', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
   { name: 'stock_holding', label: '十大股东', dateCol: 'trade_date', db: 'dfs://tradeinsight' },
@@ -244,13 +245,24 @@ const DDB_FIELD_DEFS = {
   ],
   review_statistics: [
     { column: 'trade_date', label: '交易日', source: '复盘日' },
-    { column: 'max_continuous_level', label: '最高板', desc: '当日最高连板数（连板数=连续出现在涨停池的交易日数，自研推导）' },
-    { column: 'limit_up_count', label: '涨停股', source: 'stock_limit_pool LIMIT_UP 计数' },
-    { column: 'limit_down_count', label: '跌停股', source: 'stock_limit_pool LIMIT_DOWN 计数' },
-    { column: 'one_word_count', label: '一字板', desc: '首次封板<=09:25:04 且炸板次数=0 的涨停股数' },
+    { column: 'max_continuous_level', label: '最高板', desc: '当日最高连板数（连板数=连续收盘涨停的交易日数，前复权口径自研推导）' },
+    { column: 'limit_up_count', label: '涨停股', source: 'daily_k_qfq 前复权阈值判定计数' },
+    { column: 'limit_down_count', label: '跌停股', source: 'daily_k_qfq 前复权阈值判定计数' },
+    { column: 'one_word_count', label: '一字板', desc: '涨停股中 high==low（全天单一价位）' },
     { column: 'continuous_limit_rate', label: '连板率(%)', desc: '连板>=2 的涨停股 / 涨停股总数 × 100，两位小数' },
-    { column: 'blast_reseal_count', label: '炸板回封数', desc: '炸板次数>=1 的涨停股数（涨停池行天然已回封）' },
-    { column: 'yesterday_limitup_avg_change', label: '昨日涨停涨幅(%)', desc: '昨日涨停池 pct_chg 均值，两位小数；无数据为 NULL' },
+    { column: 'blast_reseal_count', label: '炸板回封数', desc: '待 tick 数据联动，当前为 NULL/--' },
+    { column: 'yesterday_limitup_avg_change', label: '昨日涨停涨幅(%)', desc: '上一交易日涨停股今日前复权涨跌幅均值；无数据为 NULL' },
+    { column: 'create_time', label: '写入时间' }
+  ],
+  daily_k_qfq: [
+    { column: 'symbol', label: '股票代码', source: 'daily_k_raw' },
+    { column: 'trade_date', label: '交易日', source: 'daily_k_raw' },
+    { column: 'open', label: '开盘(前复权)', desc: 'raw × 复权因子/anchor' },
+    { column: 'high', label: '最高(前复权)' },
+    { column: 'low', label: '最低(前复权)' },
+    { column: 'close', label: '收盘(前复权)', desc: '复盘涨跌停指标的前复权口径基准' },
+    { column: 'raw_close', label: '收盘(不复权)', desc: '实际成交价，展示用' },
+    { column: 'amount', label: '成交额(元)', source: 'daily_k_raw' },
     { column: 'create_time', label: '写入时间' }
   ]
 }

@@ -27,6 +27,7 @@ adapted: 2026-09-23
 >      - `electron/server/routes/data-mgmt.js` 的 `FIELD_DEFS`（字段定义：表 → [{column,label,desc,source}]）与 `SQLITE_COVERAGE`（关键字段非空统计清单）；新增表还需在 `SQLITE_TABLE_LABELS` 或 `DDB_TABLES` 登记中文用途。
 >      - `frontend/src/views/admin/DataOverview.vue` 的字段展开行渲染（字段已由后端 `fields` 字段驱动，无需逐表改模板；但新增表若需特殊展示要调整）。
 >      - 验证：`npm run build` 通过 + 打开「数据管理 → 数据总览」展开该表行，确认字段定义与库实际列一致。
+>   7. **数据源红线与回退披露**（2026-10-21 用户确立）：本项目已永久弃用东方财富(EastMoney)、新浪(Sina)（含 AKShare 依赖），不再恢复。数据缺口/指标计算一律优先用**库内已有数据（daily_k_raw / stock_limit_pool / 指数日K等）+ 自研公式推导**；任何"当前路径走不通就回退（直连老源 / 引入已弃用源 / 恢复已下线链路 / 借道上游兜底）"的思路，无论大小，**都必须在方案中显式披露并征得用户同意后方可实施**。代码审查发现新增东财/新浪引用或隐式回退路径即视为违反红线。
 > - **是否含架构性变更**：否（所有调整均在架构骨架内进行填充与裁剪）
 
 # AI Agent 开发规范与方法论

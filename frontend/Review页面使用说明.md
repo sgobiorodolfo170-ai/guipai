@@ -45,9 +45,11 @@ Review页面（复盘页）是龟派桌面应用中的股票复盘分析页面�
 - 均支持点击弹出历史趋势弹窗
 
 > 7 项复盘指标（最高板/涨停股/跌停股/一字板/连板率/炸板回封数/昨日涨停涨幅）由后端
-> `GET /api/limit-board-statistics/review/:date` 一处计算（连板数按"连续在涨停池交易日数"自研推导），
+> `GET /api/limit-board-statistics/review/:date` 一处计算，全部基于**前复权日K（daily_k_qfq）自研推导**
+> （涨停/跌停按板块阈值判定前复权涨跌幅，连板数=连续收盘涨停交易日数；炸板回封数待 tick 数据联动，当前显示 `--`）。
 > 命名全链路统一为 `maxContinuousLevel/limitUpCount/limitDownCount/oneWordCount/continuousLimitRate/
 > blastResealCount/yesterdayLimitupAvgChange`，连板率与昨日涨停涨幅统一为 % 值。
+> 数据源全线使用库内数据（daily_k_qfq/stock_limit_pool 等），不依赖、不回退任何已弃用源（东财/新浪等）。
 
 ## 缓存机制（重要）
 

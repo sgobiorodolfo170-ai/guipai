@@ -30,20 +30,21 @@
 
 **响应数据**: `ReviewStatisticsResponse`
 
-**字段说明与计算公式**:
+**字段说明与计算公式**（数据源：`daily_k_qfq` 前复权日K，由 `daily_k_raw × stock_adj_factor` 物化；零上游依赖）:
 | 字段名 | 类型 | 描述 | 计算公式 | 边界 |
 |--------|------|------|----------|------|
-| tradeDate | LocalDate | 交易日期 | — | — |
-| maxContinuousLevel | Integer | 最高板 | MAX(连板数) over 当日 LIMIT_UP | 无涨停 → 0 |
-| limitUpCount | Integer | 涨停股 | COUNT(LIMIT_UP) | — |
-| limitDownCount | Integer | 跌停股 | COUNT(LIMIT_DOWN) | — |
-| oneWordCount | Integer | 一字板 | COUNT(LIMIT_UP 且 first_limit_time<='09:25:04' 且 blast_times=0) | 集合竞价封板且未开板 |
+| tradeDate | LocalDate | 生效交易日 | 盘中自动回退最近一个有前复权数据的交易日 | — |
+| maxContinuousLevel | Integer | 最高板 | MAX(连板数) over 当日涨停股 | 无涨停 → 0 |
+| limitUpCount | Integer | 涨停股 | 前复权涨跌幅 ≥ 板块阈值−0.05 的股票数 | 无前收 → 不计 |
+| limitDownCount | Integer | 跌停股 | 前复权涨跌幅 ≤ −(板块阈值−0.05) 的股票数 | — |
+| oneWordCount | Integer | 一字板 | 当日涨停股中 前复权 high==low（全天单一价位） | 一字封死判定 |
 | continuousLimitRate | BigDecimal | 连板率(%) | COUNT(连板数≥2) / 涨停股数 × 100 | 涨停股=0 → 0 |
-| blastResealCount | Integer | 炸板回封数 | COUNT(LIMIT_UP 且 blast_times>=1) | 涨停池行天然已回封 |
-| yesterdayLimitupAvgChange | BigDecimal | 昨日涨停涨幅(%) | AVG(zt_pool_previous.pct_chg) | 无数据 → null |
+| blastResealCount | Integer | 炸板回封数 | **待 tick 数据联动**；当前无 tick 数据 → null（前端 `--`） | 数据未就绪 |
+| yesterdayLimitupAvgChange | BigDecimal | 昨日涨停涨幅(%) | 上一交易日涨停股在今日的前复权涨跌幅均值 | 无数据 → null |
 
-> **连板数定义（自研推导）**：连板数(X,D) = X 连续出现在涨停池(LIMIT_UP)的交易日数（截至 D，含 D）。
-> 不依赖源字段（当前通达信源连板数恒 0），以 `stock_limit_pool` 实际日期序列回退计数，窗口上限 90 自然日。
+> **板块阈值**（与 tdx_pool 同口径）：60\|00 → 9.8；30\|68 → 19.8；43\|83\|87\|88\|92 → 29.8。
+> **连板数（自研推导）**：连板数(X,D) = X 在前复权序列上连续收盘涨停的交易日数（截至 D，含 D），窗口上限 90 自然日。
+> 前复权消除了除权/送转的机械跳空，除权日不再误判为跌停/打断涨停链。
 > **单位约定**：`continuousLimitRate`、`yesterdayLimitupAvgChange` 统一为百分比值（0.00–100.00，两位小数）。
 
 **响应示例**:

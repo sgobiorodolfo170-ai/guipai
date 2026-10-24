@@ -17,6 +17,7 @@ const ddb = require('../../dolphindb/client')
 const cache = require('../cache')
 const aktools = require('../aktools')
 const converter = require('../converter')
+const derive = require('../limit-board-derive')
 const { safeDate } = require('../../dolphindb/params')
 
 const router = express.Router()
@@ -24,7 +25,7 @@ const router = express.Router()
 const TBL = "loadTable('dfs://tradeinsight','stock_limit_pool')"
 const TBL_PLATE = "loadTable('dfs://tradeinsight','plate_market_quotation')"
 const TBL_INDEX = "loadTable('dfs://tradeinsight','stock_zh_index_daily')"
-const TBL_ZT_PREV = "loadTable('dfs://tradeinsight','zt_pool_previous')"
+// zt_pool_previous 已停用（东财源弃用后无可写源）：昨日涨停改由 limit-board-derive 纯库内推导，不再读该表。
 const TBL_REVIEW = "loadTable('dfs://tradeinsight','review_statistics')"
 
 function ok(res, data) { res.json({ code: 200, msg: '成功', data }) }
@@ -638,7 +639,7 @@ router.get('/limit-pool/:date', async (req, res) => {
       const r = await ddb.execute(`select * from ${TBL} where trade_date=${d} and data_type='LIMIT_UP' order by continuous_limit desc`)
       const rows = normRows(toRows(r))
       if (rows.length) {
-        // 响应层连板数推导补丁：当前通达信源连板数恒 0，用自研"连续在池"推导值兜底
+        // 响应层连板数推导补丁：当前通达信源连板数恒 0，用自研「前复权连续涨停」推导值兜底
         const patched = await patchConsecutiveLimit(rows, d)
         cache.set(cacheKey, patched, 300)
         return ok(res, patched)
@@ -689,7 +690,8 @@ router.get('/drop-pool/:date', async (req, res) => {
   } catch (e) { err(res, e.message) }
 })
 
-/** GET /zt-previous/:date — 昨日涨停数据（DB-first from zt_pool_previous） */
+/** GET /zt-previous/:date — 昨日涨停数据（自研推导：上一交易日收盘涨停股 + 今日前复权表现）。
+ *  zt_pool_previous / registry('ztPrev') 已停用（东财源弃用后无可用源），改由 daily_k_qfq 纯库内推导。 */
 router.get('/zt-previous/:date', async (req, res) => {
   const { date } = req.params
   const d = safeDate(date)
@@ -698,112 +700,40 @@ router.get('/zt-previous/:date', async (req, res) => {
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached)
   try {
-    if (ddb.isConnected()) {
-      const r = await ddb.execute(`select * from ${TBL_ZT_PREV} where trade_date=${d}`)
-      const rows = normRows(toRows(r))
-      if (rows.length) { cache.set(cacheKey, rows, 300); return ok(res, rows) }
+    const rows = await derive.deriveZtPrevious(String(date))
+    if (rows.length) {
+      cache.set(cacheKey, rows, 300)
+      return ok(res, rows)
     }
-    const raw = await aktools.getZtPoolPrevious(date)
-    if (raw && raw.length && ddb.isConnected()) {
-      const rows = converter.convertZtPrevious(raw, date)
-      const ZT_COLS = [
-        { name: 'symbol', type: 'symbol' }, { name: 'trade_date', type: 'date' },
-        { name: 'name', type: 'symbol' }, { name: 'latest_price', type: 'double' },
-        { name: 'limit_price', type: 'double' }, { name: 'pct_chg', type: 'double' },
-        { name: 'amount', type: 'double' }, { name: 'circulation_mv', type: 'double' },
-        { name: 'total_mv', type: 'double' }, { name: 'turnover_rate', type: 'double' },
-        { name: 'amplitude', type: 'double' }, { name: 'speed', type: 'double' },
-        { name: 'last_limit_time', type: 'string' }, { name: 'consecutive_limit', type: 'int' },
-        { name: 'industry', type: 'string' }, { name: 'limit_stats', type: 'string' }
-      ]
-      await ddb.execute(`t = ${TBL_ZT_PREV}; delete from t where trade_date=${d}`)
-      await ddb.insertRows('zt_pool_previous', ZT_COLS, rows)
-      const r2 = await ddb.execute(`select * from ${TBL_ZT_PREV} where trade_date=${d}`)
-      const rows2 = normRows(toRows(r2))
-      if (rows2.length) { cache.set(cacheKey, rows2, 300); return ok(res, rows2) }
-    }
-    ok(res, raw || [])
+    ok(res, [])
   } catch (e) { err(res, e.message) }
 })
 
 // ---- 复盘日汇总（review_statistics：最高板/涨停/跌停/一字板/连板率/炸板回封/昨日涨停涨幅） ----
 // 口径与命名全链路统一见 AGENTS.md「数据库字段变更对齐」+ Review 页设计：
 //   DB snake_case ↔ API camelCase ↔ 前端 ref 同名映射，避免"一字板/最高连板"多命名分叉。
-// 连板数自研推导：不依赖源字段（当前通达信源 连板数 恒 0，东财源才有），以 stock_limit_pool
-// 实际存在的 LIMIT_UP 日期序列回退计数——连板数(X,D) = 连续出现在涨停池的交易日数（含 D）。
-// 窗口上限 90 自然日（≈60 交易日）；历史池缺失的交易日会中断连续，属数据覆盖问题非算法错误。
+// 全部指标由自研推导模块（limit-board-derive.js）基于**前复权日K（daily_k_qfq）**计算：
+//   涨停/跌停/连板数/一字板/昨日涨停涨幅 均按前复权收盘判定（除权跳空已修正，不误判）；
+//   炸板回封数留 null —— 待 tick 数据联动（当前无 tick 数据，前端显示 '--'）。
+// 盘中口径：/review/:date 自动回退到最近一个有前复权数据的交易日，返回生效 tradeDate。
 
-/** ISO 日期归一（DolphinDB DATE '2026.10.21' → '2026-10-21'；已归一则原样返回） */
-function isoD(v) {
-  const s = String(v == null ? '' : v).replace(/[^\d]/g, '')
-  return s.length === 8 ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : (v == null ? null : String(v))
-}
-
-/**
- * 批量推导连板数（一次窗口查询供多个目标日复用，避免逐日查询放大 DolphinDB 往返）。
- * @param {string[]} dates 目标 ISO 日期（升序）
- * @returns {Promise<Map<string, Map<string, number>>>} date → Map<stock_code, level>
- */
-async function deriveLevelsForDates(dates) {
-  const out = new Map()
-  if (!dates || !dates.length) return out
-  const start = addDays(dates[0], -90)
-  const end = dates[dates.length - 1]
-  const hist = await list(`select stock_code, trade_date from ${TBL}
-    where data_type='LIMIT_UP' and trade_date between ${dd(start)} and ${dd(end)} order by trade_date asc`)
-  const byDate = new Map()
-  for (const r of hist) {
-    const d = isoD(r.trade_date)
-    if (!d) continue
-    if (!byDate.has(d)) byDate.set(d, new Set())
-    byDate.get(d).add(String(r.stock_code))
-  }
-  const allDates = [...byDate.keys()].sort((a, b) => (a < b ? 1 : a > b ? -1 : 0)) // 最新在前
-  for (const target of dates) {
-    const daySet = byDate.get(target)
-    const idx = allDates.indexOf(target)
-    if (!daySet || idx < 0) continue
-    const perDay = new Map()
-    for (const code of daySet) {
-      let level = 1
-      for (let i = idx + 1; i < allDates.length; i++) {
-        if (byDate.get(allDates[i]).has(code)) level++
-        else break
-      }
-      perDay.set(code, level)
-    }
-    out.set(target, perDay)
-  }
-  return out
-}
-
-/** 响应层连板数推导补丁：用自研推导值覆写 LIMIT_UP 行的 continuous_limit（源缺失/恒 0 兜底）。 */
+/** 响应层连板数推导补丁：用自研「前复权连续涨停」推导值覆写 LIMIT_UP 行的 continuous_limit（源缺失/恒 0 兜底）。 */
 async function patchConsecutiveLimit(rows, ddbDate) {
   if (!rows || !rows.length) return rows
-  const iso = isoD(ddbDate)
-  if (!iso) return rows
-  const levels = (await deriveLevelsForDates([iso])).get(iso)
-  if (!levels) return rows
-  for (const r of rows) {
-    const code = String(r.stock_code)
-    if (levels.has(code)) r.continuous_limit = levels.get(code)
-  }
+  const iso = String(ddbDate).replace(/\./g, '-')
+  try {
+    const day = await derive.deriveDay(iso)
+    if (!day || !day.levels) return rows
+    for (const r of rows) {
+      const code = String(r.stock_code)
+      if (day.levels[code] != null) r.continuous_limit = day.levels[code]
+    }
+  } catch (e) { console.warn('[statistics] 连板数推导补丁失败：', e.message) }
   return rows
 }
 
-/** 计算单日连板分布（最高板 / 连板 ≥2 计数），用于汇总聚合。 */
-function summarizeLevels(levels) {
-  let maxLevel = 0
-  let cont2 = 0
-  for (const l of levels.values()) {
-    if (l > maxLevel) maxLevel = l
-    if (l >= 2) cont2++
-  }
-  return { maxLevel, cont2 }
-}
-
-/** GET /review/range?startDate=&endDate= — 复盘日汇总（范围，供历史弹窗）。
- *  字段契约同 /review/:date，返回数组（按 tradeDate 升序）。
+/** GET /review/range?startDate=&endDate= — 复盘日汇总（范围，供历史弹窗；前复权自研推导）。
+ *  字段契约同 /review/:date，返回数组（按 tradeDate 升序，仅含库内有数据的交易日）。
  *  ⚠ 必须注册在 /review/:date 之前：Express 按注册顺序匹配，/review/:date 会吞掉 '/range'。 */
 router.get('/review/range', async (req, res) => {
   const { startDate, endDate } = req.query
@@ -813,46 +743,15 @@ router.get('/review/range', async (req, res) => {
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached)
   try {
-    // 始终聚合计算（不做 DB-first）：range 内若仅部分日期已落 review_statistics，
-    // 直接读汇总会静默丢失未落库日期；聚合仅 3 次查询（池+昨日池+推导窗口），代价可接受。
-    // ⚠ DolphinDB 方言：group by 列别名须写在 GROUP BY 子句，不能 `select x as y ... group by x`，
-    //   故 select 用原始列名 trade_date，别名留到 JS 侧处理（与历史 /basic/range 的写法不同，避免同样报错）。
-    const rows = await list(`select trade_date, count(*) as cnt,
-      sum(iif(data_type=='LIMIT_UP',1,0)) as limitUpCount,
-      sum(iif(data_type=='LIMIT_DOWN',1,0)) as limitDownCount,
-      sum(iif(data_type=='LIMIT_UP' and not isNull(first_limit_time) and first_limit_time<='09:25:04' and blast_times==0,1,0)) as oneWordCount,
-      sum(iif(data_type=='LIMIT_UP' and blast_times>=1,1,0)) as blastResealCount
-      from ${TBL} where trade_date between ${sd} and ${ed} group by trade_date order by trade_date`)
-    const yRows = await list(`select trade_date, avg(pct_chg) as a from ${TBL_ZT_PREV}
-      where trade_date between ${sd} and ${ed} group by trade_date`)
-    const yMap = new Map(yRows.map(r => [isoD(r.trade_date), r.a]))
-    const dates = rows.map(r => isoD(r.trade_date)).filter(Boolean)
-    const levelsMap = await deriveLevelsForDates(dates)
-    const out = []
-    for (const r of rows) {
-      const iso = isoD(r.trade_date)
-      const { maxLevel, cont2 } = summarizeLevels(levelsMap.get(iso) || new Map())
-      const upCount = N(r.limitUpCount)
-      const a = yMap.get(iso)
-      out.push({
-        tradeDate: iso,
-        maxContinuousLevel: maxLevel,
-        limitUpCount: upCount,
-        limitDownCount: N(r.limitDownCount),
-        oneWordCount: N(r.oneWordCount),
-        continuousLimitRate: upCount > 0 ? Math.round(cont2 * 100 / upCount * 100) / 100 : 0,
-        blastResealCount: N(r.blastResealCount),
-        yesterdayLimitupAvgChange: a != null ? Math.round(N(a) * 100) / 100 : null
-      })
-    }
+    const out = await derive.deriveRange(String(startDate), String(endDate))
     cache.set(cacheKey, out, 300)
     ok(res, out)
   } catch (e) { err(res, e.message) }
 })
 
-/** GET /review/:date — 复盘日汇总（DB-first from review_statistics；未落库时按公式聚合写回）。
+/** GET /review/:date — 复盘日汇总（前复权自研推导；盘中自动回退最近完整交易日并写回 review_statistics）。
  *  字段契约：tradeDate/maxContinuousLevel/limitUpCount/limitDownCount/oneWordCount/
- *            continuousLimitRate(%,两位小数)/blastResealCount/yesterdayLimitupAvgChange(%,可 null) */
+ *            continuousLimitRate(%,两位小数)/blastResealCount(待tick,当前null)/yesterdayLimitupAvgChange(%,可 null) */
 router.get('/review/:date', async (req, res) => {
   const { date } = req.params
   const d = safeDate(date)
@@ -861,48 +760,15 @@ router.get('/review/:date', async (req, res) => {
   const cached = cache.get(cacheKey)
   if (cached) return ok(res, cached)
   try {
-    if (ddb.isConnected()) {
-      const r = await one(`select * from ${TBL_REVIEW} where trade_date=${d}`)
-      if (r) {
-        r.tradeDate = isoD(r.trade_date)
-        delete r.trade_date
-        delete r.create_time
-        cache.set(cacheKey, r, 300)
-        return ok(res, r)
-      }
-    }
-    // ---- 聚合计算 ----
-    const upRows = await list(`select stock_code from ${TBL} where trade_date=${d} and data_type='LIMIT_UP'`)
-    const upCount = upRows.length
-    let downCount = 0
-    try {
-      const t = await one(`select count(*) as c from ${TBL} where trade_date=${d} and data_type='LIMIT_DOWN'`)
-      downCount = N(t && t.c)
-    } catch (_) { /* 跌停计数失败不阻断整行 */ }
-    const levels = (await deriveLevelsForDates([isoD(d)])).get(isoD(d)) || new Map()
-    const { maxLevel, cont2 } = summarizeLevels(levels)
-    const o = await one(`select
-      sum(iif(data_type=='LIMIT_UP' and not isNull(first_limit_time) and first_limit_time<='09:25:04' and blast_times==0,1,0)) as oneWord,
-      sum(iif(data_type=='LIMIT_UP' and blast_times>=1,1,0)) as blast
-      from ${TBL} where trade_date=${d}`)
-    const y = await one(`select avg(pct_chg) as a from ${TBL_ZT_PREV} where trade_date=${d}`)
-    const row = {
-      tradeDate: date,
-      maxContinuousLevel: maxLevel,
-      limitUpCount: upCount,
-      limitDownCount: downCount,
-      oneWordCount: N(o && o.oneWord),
-      continuousLimitRate: upCount > 0 ? Math.round(cont2 * 100 / upCount * 100) / 100 : 0,
-      blastResealCount: N(o && o.blast),
-      yesterdayLimitupAvgChange: y && y.a != null ? Math.round(N(y.a) * 100) / 100 : null
-    }
+    const row = await derive.deriveEffectiveDay(String(date))
     // ---- 写回汇总表（best-effort，失败不影响本次返回） ----
     if (ddb.isConnected()) {
       try {
         const cols = require('../col-defs').COLS.review_statistics
-        await ddb.execute(`t = ${TBL_REVIEW}; delete from t where trade_date=${d}`)
+        const effD = safeDate(row.tradeDate) || d
+        await ddb.execute(`t = ${TBL_REVIEW}; delete from t where trade_date=${effD}`)
         await ddb.insertRows('review_statistics', cols, [{
-          trade_date: date, max_continuous_level: row.maxContinuousLevel,
+          trade_date: row.tradeDate, max_continuous_level: row.maxContinuousLevel,
           limit_up_count: row.limitUpCount, limit_down_count: row.limitDownCount,
           one_word_count: row.oneWordCount, continuous_limit_rate: row.continuousLimitRate,
           blast_reseal_count: row.blastResealCount,

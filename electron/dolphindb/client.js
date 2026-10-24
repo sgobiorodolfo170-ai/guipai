@@ -231,6 +231,11 @@ async function ensureSchema(dbPath) {
         `  t = table(1:0, \`symbol\`trade_date\`factor\`create_time, ` +
         `[SYMBOL, DATE, DOUBLE, TIMESTAMP]);\n` +
         `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_adj_factor, \`trade_date)\n` +
+        `}\n` +
+        `if (!existsTable("${dbPath}", "daily_k_qfq")) {\n` +
+        `  t = table(1:0, \`symbol\`trade_date\`open\`high\`low\`close\`raw_close\`amount\`create_time, ` +
+        `[SYMBOL, DATE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
+        `  db = database("${dbPath}"); db.createPartitionedTable(t, \`daily_k_qfq, \`trade_date)\n` +
         `}`
       )
       return
@@ -312,6 +317,16 @@ async function ensureSchema(dbPath) {
     `  t = table(1:0, \`symbol\`trade_date\`factor\`create_time, ` +
     `[SYMBOL, DATE, DOUBLE, TIMESTAMP]);\n` +
     `  db = database("dfs://tradeinsight_raw"); db.createPartitionedTable(t, \`stock_adj_factor, \`trade_date)\n` +
+    `}`
+  )
+  // 前复权日K表（daily_k_qfq）—— 由 daily_k_raw（不复权）× stock_adj_factor 推导物化，
+  // 供复盘/涨跌停等指标使用唯一前复权口径（除权跳空被因子修正，避免把高送转误判为跌停）。
+  // 列序须与 col-defs.js daily_k_qfq 一致；写库方见 electron/dolphindb/qfq-materialize.js。
+  await execute(
+    `if (!existsTable("${dbPath}", "daily_k_qfq")) {\n` +
+    `  t = table(1:0, \`symbol\`trade_date\`open\`high\`low\`close\`raw_close\`amount\`create_time, ` +
+    `[SYMBOL, DATE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, DOUBLE, TIMESTAMP]);\n` +
+    `  db = database("${dbPath}"); db.createPartitionedTable(t, \`daily_k_qfq, \`trade_date)\n` +
     `}`
   )
   // 股票基础信息（维度表，不分区）
