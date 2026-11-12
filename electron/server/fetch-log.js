@@ -48,13 +48,10 @@ const DATA_TYPE_LABELS = {
 }
 
 const SOURCE_LABELS = {
-  main: '东财复合源',
   tencent: '腾讯',
-  sina: '新浪',
   tdx_local: '通达信本地',
   tdx_quant: '通达信量化',
   tdx_server: '通达信 tqs',
-  akshare: 'AKShare',
   tdx_package: '通达信官网数据包'
 }
 
@@ -113,14 +110,11 @@ function runWith(ctx, fn) {
   return als.run(ctx, fn)
 }
 
-/** 按域名识别 main 复合源的真实上游渠道。 */
+/** 按域名识别真实上游渠道（用于记录实际打到哪个厂商，而非调度器里的源名）。 */
 function channelFromHost(hostname) {
   const h = String(hostname || '').toLowerCase()
   if (!h) return null
-  if (h === 'eastmoney.com' || h.endsWith('.eastmoney.com')) return '东财'
   if (h === 'gtimg.cn' || h.endsWith('.gtimg.cn') || h === 'qq.com' || h.endsWith('.qq.com')) return '腾讯'
-  if (h === '10jqka.com.cn' || h.endsWith('.10jqka.com.cn')) return '同花顺'
-  if (h === 'tushare.pro' || h.endsWith('.tushare.pro')) return 'Tushare'
   return null
 }
 

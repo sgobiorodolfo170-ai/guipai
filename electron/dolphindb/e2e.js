@@ -1,8 +1,9 @@
 'use strict'
 
 /**
- * E2E：sync(涨停池, 直连东财 push2ex) → DolphinDB → statistics → 清理 → 校验。
- * 不依赖 AKTools/Python/mock；涨停池走 push2ex（不受 push2 集群限流影响）。
+ * E2E：sync(涨停池, 通达信源) → DolphinDB → statistics → 清理 → 校验。
+ * 不依赖 AKTools/Python/mock；涨停池经 market-sync.syncPoolByType →
+ * aktools.getStockLimitPool → sources/tdx_pool（tdx_server/tdx_quant）。
  * 断言基于 sync 返回的写入行数（真实数据，非硬编码）。
  *
  * 说明：原 /sync-status/manual/* 端点已随「收盘数据同步」改版移除，涨停池同步改走
@@ -38,13 +39,13 @@ async function main() {
   await ddb.execute(`t = ${TBL}; delete from t where trade_date=${dd(DATE)}`)
   ddb.disconnect()
 
-  console.log('\n--- 1. sync LIMIT_UP（market-sync.syncPoolByType，直连东财涨停池 push2ex）---')
+  console.log('\n--- 1. sync LIMIT_UP（market-sync.syncPoolByType → aktools.getStockLimitPool → tdx_pool）---')
   const syncRes = await syncPoolByType(DATE, 'LIMIT_UP')
   console.log('sync result:', JSON.stringify(syncRes))
   const N = syncRes.status === 'ok' ? syncRes.rows : 0
   chk('sync.ok', syncRes.status === 'ok' ? 1 : 0, 1)
   if (!N || N < 1) {
-    console.log('sync 未获取到涨停池数据（东财可能当日无数据或限流），终止')
+    console.log('sync 未获取到涨停池数据（通达信源可能当日无数据或未就绪），终止')
     process.exit(1)
   }
   console.log(`sync 写入 ${N} 只涨停股`)

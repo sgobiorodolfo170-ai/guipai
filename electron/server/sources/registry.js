@@ -26,15 +26,14 @@ const COOLDOWN_MS = 30000     // 冷却时长（秒级，够上游恢复）
 const DEFAULT_SOURCE_TIMEOUT_MS = 8000
 
 /** 各源超时（ms）。单列 default 与按 dataType 覆盖：慢接口（全市场 spot、桥冷启动）
- *  给更长预算，快接口（本地 tdx_quant）快速失败，避免弱网下每层叠加拖死路由。 */
+ *  给更长预算，快接口（本地 tdx_quant）快速失败，避免弱网下每层叠加拖死路由。
+ *  只列当前在用的源——已弃用源（东财 main / 新浪 / AKShare）连同其超时配置一并移除，
+ *  否则残留配置会让人误以为这些源仍可调度。 */
 const SOURCE_TIMEOUTS = {
-  main: { default: 15000, spot: 45000, kline: 15000, minute: 12000, indexDaily: 15000, industry: 15000 },
-  tencent: { default: 8000, spot: 20000, minute: 10000, kline: 6000, indexDaily: 6000 },
+  tencent: { default: 8000, spot: 20000, minute: 10000, kline: 12000, indexDaily: 12000 },
   tdx_server: { default: 10000, spot: 60000, indexSpot: 20000, kline: 12000, minute: 12000, financial: 20000 },
   tdx_quant: { default: 5000, spot: 5000, kline: 5000 },
-  tdx_local: { default: 5000 },
-  sina: { default: 10000 },
-  akshare: { default: 30000 }
+  tdx_local: { default: 5000 }
 }
 
 function timeoutOf(name, dataType) {

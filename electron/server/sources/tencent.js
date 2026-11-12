@@ -546,7 +546,12 @@ module.exports = {
     indexDaily: getIndexDaily
   },
   // 各数据类型超时（registry 读取；spot 全市场需容纳冷启动与多批并发）
-  timeoutMs: { default: 8000, spot: 20000, minute: 6000, kline: 6000, indexDaily: 6000 },
+  // kline 取 12000：实测腾讯 fqkline 冷启动 7.7s（第二次 83ms），6s 会让"预热失败 +
+  // 三路通达信都不可用"时的首次兜底请求直接超时报错。慢一点也好过必然失败。
+  timeoutMs: { default: 8000, spot: 20000, minute: 10000, kline: 12000, indexDaily: 12000 },
   available: () => true,
-  health
+  health,
+  // 预热专用：复用本源同一套带重试/GBK 解码的 HTTP 工具，保证预热与生产请求
+  // 走完全相同的连接与缓存键（另起一套会因 UA/Referer/超时不同而白预热）。
+  __internals: { getJson, getText }
 }

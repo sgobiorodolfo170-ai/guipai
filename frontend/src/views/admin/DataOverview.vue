@@ -21,6 +21,22 @@ const ddbTables = computed(() => data.value?.dolphindb?.tables || [])
 const ddbConnected = computed(() => !!data.value?.dolphindb?.connected)
 const sources = computed(() => data.value?.sources || [])
 
+// 数据源展示名与配色：源集合收敛为 腾讯 + 通达信三路（2026-10 数据源红线），
+// 已弃用的东财/新浪/网易/AKShare 不再出现在这里，故不再按名字硬编码分支。
+// 新增源时在此登记即可，避免标签退化成显示英文 key。
+const SOURCE_LABELS = {
+  tencent: '腾讯行情',
+  tdx_local: '通达信本地',
+  tdx_quant: '通达信量化',
+  tdx_server: '通达信 tqs'
+}
+const SOURCE_TAG_TYPE = {
+  tencent: 'primary',
+  tdx_local: 'success',
+  tdx_quant: 'success',
+  tdx_server: 'success'
+}
+
 const sqliteTotalRows = computed(() => sqliteTables.value.reduce((s, t) => s + (t.rows || 0), 0))
 const ddbTotalRows = computed(() => ddbTables.value.reduce((s, t) => s + (t.rows || 0), 0))
 
@@ -212,10 +228,10 @@ onMounted(fetchOverview)
         </div>
       </template>
       <el-table :data="sources" size="small" border>
-        <el-table-column prop="name" label="源" width="120">
+        <el-table-column prop="name" label="源" width="150">
           <template #default="{ row }">
-            <el-tag size="small" :type="row.name === 'main' ? 'primary' : row.name === 'sina' ? 'success' : 'warning'">
-              {{ row.name === 'main' ? '东财·腾讯·Tushare' : row.name === 'sina' ? '新浪' : row.name === 'netease' ? '网易' : row.name }}
+            <el-tag size="small" :type="SOURCE_TAG_TYPE[row.name] || 'warning'">
+              {{ SOURCE_LABELS[row.name] || row.name }}
             </el-tag>
           </template>
         </el-table-column>

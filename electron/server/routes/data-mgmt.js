@@ -153,8 +153,8 @@ const SQLJS_FIELD_DEFS = {
     { column: 'created_at', label: '记录时间' },
     { column: 'data_type', label: '数据类型', desc: 'kline/spot/financial/packageDaily 等' },
     { column: 'action', label: '操作', desc: '外部取数或导入动作' },
-    { column: 'source_key', label: '数据源代码', desc: 'main/tencent/tdx_quant/akshare/tdx_package 等' },
-    { column: 'source_label', label: '数据源', desc: '最终成功的渠道（东财/腾讯/同花顺/Tushare/AKShare 等）', source: '取数链路自动标记' },
+    { column: 'source_key', label: '数据源代码', desc: 'tencent/tdx_local/tdx_quant/tdx_server/tdx_package 等' },
+    { column: 'source_label', label: '数据源', desc: '最终成功的渠道（腾讯/通达信本地/量化/tqs/数据包 等）', source: '取数链路自动标记' },
     { column: 'status', label: '状态', desc: 'success成功/empty空结果/fail失败' },
     { column: 'row_count', label: '结果行数' },
     { column: 'duration_ms', label: '耗时(ms)' },
@@ -209,7 +209,7 @@ const DDB_FIELD_DEFS = {
   daily_k: [
     { column: 'symbol', label: '股票代码' },
     { column: 'trade_date', label: '交易日' },
-    { column: 'open', label: '开盘', source: '东财/腾讯/新浪' },
+    { column: 'open', label: '开盘', source: '腾讯/通达信' },
     { column: 'high', label: '最高' },
     { column: 'low', label: '最低' },
     { column: 'close', label: '收盘' },
@@ -236,7 +236,7 @@ const DDB_FIELD_DEFS = {
     { column: 'create_time', label: '写入时间' }
   ],
   stock_basic: [
-    { column: 'code', label: '股票代码', source: '东财' },
+    { column: 'code', label: '股票代码', source: '通达信 base.dbf' },
     { column: 'name', label: '名称' },
     { column: 'industry', label: '行业' },
     { column: 'list_date', label: '上市日期' },
