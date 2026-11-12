@@ -1,0 +1,88 @@
+name: CI
+
+# 质量门禁：测试 + Lint + 构建。
+#
+# 设计取舍：
+#   - 只跑 Linux（ubuntu-latest）。项目本体是 Windows 桌面应用，但这一步验证的是
+#     「代码对不对」——纯函数测试、lint、前端构建都不依赖 Windows。
+#     真要做 Windows 打包验证，应放在发布流程（electron-builder），不是每次 push 都跑。
+#   - 两个 job 并行：test 与 lint 互不依赖，实测各自 10~40s，串行没有意义。
+#   - 构建用 verify:build（输出到 .build-check/<时间戳>），不碰 frontend/dist，
+#     避免在 CI 上也出现"清空目录"带来的不确定性。
+#   - 不缓存 node_modules 而是用 npm ci：lockfile 已在仓库里，npm ci 可复现且更快。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:   # 支持手动触发，便于排障
+
+concurrency:
+  # 同一分支连续推送时取消上一次未完成的运行，避免排队堆积
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      # 根依赖含 sql.js（WASM），db 测试需要它
+      - name: 安装根依赖
+        run: npm ci
+
+      - name: 运行单元测试
+        run: npm test
+
+  lint:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: 安装根依赖
+        run: npm ci
+
+      # 只开 no-undef / no-unused-vars 两条规则，0 error 是硬门槛；
+      # 存量 warning 不阻断（57 条为历史遗留，逐步清理，不阻塞功能提交）
+      - name: ESLint
+        run: npm run lint
+
+  build:
+    name: 前端构建
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+
+      - name: 安装根依赖
+        run: npm ci
+
+      - name: 安装前端依赖
+        run: npm --prefix frontend ci
+
+      - name: 构建（输出到独立目录，不碰 dist）
+        run: npm run verify:build

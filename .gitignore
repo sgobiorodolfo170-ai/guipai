@@ -43,3 +43,6 @@ AGENTS.md.backup.*
 .box-agent/
 .box-agent-scratch/
 .playwright-mcp/
+
+# 构建验收产物（npm run verify:build，按时间戳分目录，不入库）
+.build-check/

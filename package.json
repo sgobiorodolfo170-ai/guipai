@@ -11,6 +11,7 @@
     "build:frontend": "npm --prefix frontend run build",
     "build:akshare-server": "cd python/aktools_server && call build.bat",
     "build": "npm run build:frontend && electron-builder --win",
+    "verify:build": "node scripts/verify-build.js",
     "start": "cross-env NODE_ENV=production electron .",
     "lint": "eslint electron frontend/src",
     "lint:strict": "eslint electron frontend/src --max-warnings 0",
