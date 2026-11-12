@@ -14,6 +14,7 @@
 const express = require('express')
 const { getDb } = require('../db')
 const settings = require('../settings')
+const { replayPosition, validateTimelineEvents } = require('../domain/position')
 
 const router = express.Router()
 const ok = (res, data, msg = '成功') => res.json({ code: 200, msg, data })
@@ -38,29 +39,11 @@ function todayStr() {
 function rebuildPosition(db, stockCode) {
   const rows = db.prepare(`SELECT * FROM trade WHERE user_id=? AND stock_code=? ORDER BY trade_date ASC, id ASC`)
     .all(USER_ID, stockCode)
-  let qty = 0, invested = 0, proceeds = 0, realized = 0, avgCost = 0
-  for (const r of rows) {
-    const price = Number(r.trade_price) || 0
-    const q = Number(r.quantity) || 0
-    const fee = Number(r.fee) || 0
-    if (r.direction === 'buy') {
-      const cost = price * q + fee
-      invested += cost
-      const newQty = qty + q
-      avgCost = newQty > 0 ? ((qty * avgCost) + cost) / newQty : 0
-      qty = newQty
-    } else {
-      // sell：按实际卖出数量结转成本（已实现 = 卖出净额 - 均价 × 卖出股数）
-      proceeds += price * q - fee
-      if (qty > 0) {
-        const soldQty = Math.min(q, qty)
-        realized += (price * soldQty - fee) - (avgCost * soldQty)
-        qty -= soldQty
-        // 全部卖出后成本归零，避免负数量残留
-        if (qty === 0) avgCost = 0
-      }
-    }
-  }
+  // 纯计算下沉到 domain/position.js：公式可被 node:test 直接断言，
+  // 不必起服务/造库（历史上 v1.26.1 已实现盈亏虚增就是纯公式 bug）。
+  const st = replayPosition(rows)
+  const qty = st.quantity, invested = st.totalInvested, proceeds = st.totalProceeds
+  const realized = st.realizedPnl, avgCost = st.avgCost
   const now = nowLocal()
   const existing = db.prepare(`SELECT id FROM position WHERE user_id=? AND stock_code=?`).get(USER_ID, stockCode)
   const name = rows.length ? (rows[rows.length - 1].stock_name || '') : ''
@@ -88,25 +71,11 @@ function rebuildAllPositions(db) {
 function validateTimeline(db, stockCode, candidate, excludeTradeId = null) {
   const rows = db.prepare(`SELECT id, direction, quantity, trade_date FROM trade WHERE user_id=? AND stock_code=? ${excludeTradeId != null ? 'AND id != ?' : ''}`)
     .all(...[USER_ID, stockCode, ...(excludeTradeId != null ? [excludeTradeId] : [])])
-  const maxId = rows.reduce((m, r) => Math.max(m, Number(r.id) || 0), 0)
   const events = rows.map(r => ({
     id: Number(r.id), direction: r.direction, quantity: Number(r.quantity) || 0, tradeDate: r.trade_date
   }))
-  if (candidate) {
-    events.push({
-      id: excludeTradeId != null ? Number(excludeTradeId) : maxId + 1,
-      direction: candidate.direction,
-      quantity: Number(candidate.quantity) || 0,
-      tradeDate: String(candidate.tradeDate)
-    })
-  }
-  events.sort((a, b) => a.tradeDate === b.tradeDate ? a.id - b.id : (a.tradeDate < b.tradeDate ? -1 : 1))
-  let qty = 0
-  for (const e of events) {
-    qty += e.direction === 'buy' ? e.quantity : -e.quantity
-    if (qty < -1e-6) return false
-  }
-  return true
+  // 排序与回放在 domain/position.js：与 rebuildPosition 同一口径，避免两处公式漂移
+  return validateTimelineEvents(events, candidate, excludeTradeId).ok
 }
 
 // ============================ 示例数据 ============================
@@ -264,10 +233,12 @@ router.get('/summary', (req, res) => {
     const sellStockCount = db.prepare(`SELECT COUNT(*) AS c FROM position WHERE user_id=? AND total_proceeds > 0`).get(USER_ID)
     ok(res, {
       holdingCount: holdings.c || 0,
-      totalCost: holdings.totalCost || 0,
-      totalRealized: pos.totalRealized || 0,
-      totalInvested: pos.totalInvested || 0,
-      totalProceeds: pos.totalProceeds || 0,
+      // SQL 的 SUM(quantity * avg_cost) 会产生浮点尾数（72023.01000000001），
+      // 这里统一按分收敛——金额对外必须是干净的两位小数，否则前端展示与导出会出现"对不上"。
+      totalCost: round2(holdings.totalCost || 0),
+      totalRealized: round2(pos.totalRealized || 0),
+      totalInvested: round2(pos.totalInvested || 0),
+      totalProceeds: round2(pos.totalProceeds || 0),
       totalTrades: tradeStats.totalTrades || 0,
       buyCount: tradeStats.buyCount || 0,
       sellCount: tradeStats.sellCount || 0,

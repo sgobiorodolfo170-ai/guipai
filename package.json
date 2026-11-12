@@ -1,6 +1,6 @@
 {
   "name": "guipai",
-  "version": "1.0.0",
+  "version": "1.31.0",
   "description": "龟派 — A股交易洞察桌面应用（Electron + Node.js）",
   "main": "electron/main.js",
   "author": "TradeInsight",
@@ -11,12 +11,19 @@
     "build:frontend": "npm --prefix frontend run build",
     "build:akshare-server": "cd python/aktools_server && call build.bat",
     "build": "npm run build:frontend && electron-builder --win",
-    "start": "cross-env NODE_ENV=production electron ."
+    "start": "cross-env NODE_ENV=production electron .",
+    "lint": "eslint electron frontend/src",
+    "lint:strict": "eslint electron frontend/src --max-warnings 0",
+    "test": "node --test \"electron/test/*.test.js\"",
+    "smoke": "node electron/server/sources/_smoke.js"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
-    "electron-builder": "^25.1.8"
+    "electron-builder": "^25.1.8",
+    "eslint": "^9.39.4",
+    "eslint-plugin-vue": "^10.12.1",
+    "vue-eslint-parser": "^10.4.2"
   },
   "allowScripts": {
     "electron@33.4.11": true
