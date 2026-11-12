@@ -1,6 +1,9 @@
 'use strict'
 
 const fetchLog = require('../fetch-log')
+// 取数细节走 debug：failover 命中在盘中是高频事件（每分钟可达数十条），
+// 全部打 console 会淹没真正的故障信号。打包态默认 info，这类噪音自动静音。
+const log = require('../logger')('sources')
 
 /**
  * 多数据源健康度感知调度器。
@@ -74,7 +77,7 @@ function markFail(name, err) {
   st.fail++; st.consecutiveFail++; st.lastError = err && err.message; st.lastUsedAt = Date.now()
   if (st.consecutiveFail >= FAIL_THRESHOLD) {
     st.cooldownUntil = Date.now() + COOLDOWN_MS
-    console.warn(`[sources] ${name} 连续失败 ${st.consecutiveFail} 次，进入 ${COOLDOWN_MS / 1000}s 冷却`)
+    log.warn(`${name} 连续失败 ${st.consecutiveFail} 次，进入 ${COOLDOWN_MS / 1000}s 冷却`)
   }
 }
 
@@ -87,7 +90,7 @@ function isHealthy(name) {
  *  @param {Object} src { name, capabilities:[dataType...], fetchers:{dataType->fn}, available?:()=>bool } */
 function registerSource(src) {
   if (sources.some(s => s.name === src.name)) {
-    console.warn(`[sources] 源 ${src.name} 已注册，覆盖`)
+    log.warn(`源 ${src.name} 已注册，覆盖`)
     const i = sources.findIndex(s => s.name === src.name)
     sources.splice(i, 1)
   }
@@ -147,7 +150,7 @@ async function failover(dataType, params, order, logCtx) {
         markOk(name)
         fetchLog.attempt(logCtx, { sourceKey: name, status: 'success', rowCount: arr.length, durationMs: Date.now() - t0, channel: child.channel, cacheHit: child.cacheHit })
         if (name !== order[0]) {
-          console.warn(`[sources] ${dataType} 主源未命中，由 ${name} 提供(${arr.length} 行,${Date.now() - t0}ms)`)
+          log.debug(`${dataType} 主源未命中，由 ${name} 提供(${arr.length} 行,${Date.now() - t0}ms)`)
         }
         return data
       }
