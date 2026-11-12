@@ -9,6 +9,8 @@ A 股交易洞察桌面应用。面向个人投资者的本地工具：行情看
 ## 快速开始
 
 ```bash
+# 0. 准备 DolphinDB 引擎（见下一节，新环境必做；已有可跳过）
+
 # 1. 安装依赖（根目录 + 前端两处）
 npm install
 npm --prefix frontend install
@@ -21,6 +23,28 @@ npm run build
 ```
 
 首次启动会较慢（约 1 分钟）：需要拉起 DolphinDB 引擎并预热行情连接。
+
+### 获取 DolphinDB 引擎（新环境必做）
+
+DolphinDB 是约 1.7GB 的第三方发行版，**不入 Git 仓库**（历史里曾因此让 `.git` 涨到 876MB，
+2026-11-13 已用 `git filter-repo` 清理，现为 7.5MB）。
+
+clone 之后仓库里没有这个目录，需要手工放置：
+
+```
+guipai/
+└── dolphindb-server/        ← 把 DolphinDB 发行版解压到这里
+    ├── dolphindb.exe
+    ├── libDolphinDB.dll
+    ├── dolphindb.cfg
+    ├── dolphindb.lic
+    └── ...
+```
+
+来源：DolphinDB 官网下载 Windows 版，或从任意一台已部署本项目的机器拷贝整个目录。
+校验方式：启动后 `netstat -ano | findstr 8848` 能看 LISTENING 即正常。
+
+**已有环境的机器无需任何操作**——本地目录仍在，`npm run dev` 照常读取 `../dolphindb-server`。
 
 ### 质量门禁
 
@@ -120,4 +144,4 @@ frontend/src/
 
 - 仅 Windows（通达信数据源与 DolphinDB 二进制均为 Windows 版）
 - 无多用户、无鉴权体系：定位是单机单人工具
-- 仓库含 DolphinDB 发行版（约 1.7GB），clone 较慢
+- DolphinDB 引擎需手工放置（约 1.7GB，不入库），新环境初始化见「获取 DolphinDB 引擎」

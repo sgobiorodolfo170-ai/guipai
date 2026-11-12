@@ -46,3 +46,9 @@ AGENTS.md.backup.*
 
 # 构建验收产物（npm run verify:build，按时间戳分目录，不入库）
 .build-check/
+
+# DolphinDB 引擎（约 1.7GB 发行版，不入库）
+# 历史清理：2026-11-13 用 git filter-repo 从全部提交中移除了该目录，
+# .git 由 876MB 降至 7.5MB。本地开发机保留该目录即可直接 npm run dev；
+# 新环境初始化见 README「获取 DolphinDB 引擎」。
+/dolphindb-server/

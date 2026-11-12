@@ -3,5 +3,3 @@
 # (the Windows default) that would otherwise mark the whole tree stale.
 # Binaries are auto-detected and left untouched.
 * text=auto eol=lf
-dolphindb-server/dolphindb.exe filter=lfs diff=lfs merge=lfs -text
-dolphindb-server/libDolphinDB.dll filter=lfs diff=lfs merge=lfs -text
