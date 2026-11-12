@@ -194,8 +194,13 @@ const installAk = async () => {
   } catch { return }
   akInstalling.value = true
   try {
-    // 流式响应：axios 不便逐块读，这里用 fetch 读流
-    const resp = await fetch('/api/settings/akshare/install', { method: 'POST' })
+    // 流式响应：axios 不便逐块读，这里用 fetch 读流。
+    // 注意：绕过 axios 拦截器即不会自动带 X-App-Token，必须显式补上，否则被服务端 401 拦掉。
+    const token = typeof window !== 'undefined' && window.tradeinsight && window.tradeinsight.apiToken
+    const resp = await fetch('/api/settings/akshare/install', {
+      method: 'POST',
+      headers: token ? { 'X-App-Token': token } : {}
+    })
     const reader = resp.body.getReader()
     const dec = new TextDecoder()
     let last = ''

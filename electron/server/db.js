@@ -89,6 +89,148 @@ function scheduleSave() {
   }, 2000)
 }
 
+// ============================================================
+// 备份与完整性校验（P1-5）
+//
+// 不变量：交易流水/持仓/笔记只存在这一个 sql.js 文件里，而它是「全量 export 后
+// 整体覆盖写」——单文件损坏即全丢，没有任何历史副本。备份是这里唯一可行的兜底。
+//   - 每日首次启动做一份快照 data/backups/YYYY-MM-DD.db，保留 7 份；
+//   - 只在「当天还没有快照」时写，避免频繁重启把好备份轮换掉；
+//   - 正常退出再覆盖写一份 backups/last-session.db，把可恢复点前移到最后一次关闭；
+//   - 写快照用「先写 .tmp 再 rename」，防止备份过程中中断留下半个文件；
+//   - 快照本身也做 integrity_check，校验不过就不认它（宁缺勿错）。
+// ============================================================
+const BACKUP_DIRNAME = 'backups'
+const BACKUP_KEEP = 7
+/** 正常退出时写的滚动快照：不参与 7 份轮换，始终代表「最后一次干净关闭时的库」 */
+const LAST_SESSION_FILE = 'last-session.db'
+
+function backupDir() {
+  return path.join(dataDirPath, BACKUP_DIRNAME)
+}
+
+/** 本地日期（备份按用户本地"哪一天"归档，不能用 UTC，否则东八区凌晨会错日） */
+function localDateStr(d = new Date()) {
+  const p = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** 用 sql.js 打开字节流并跑 integrity_check；任何异常都算坏文件 */
+function isDbBytesHealthy(bytes) {
+  let probe = null
+  try {
+    probe = new sqljs.Database(bytes)
+    const r = probe.exec('PRAGMA integrity_check')
+    const verdict = r && r[0] && r[0].values && r[0].values[0] ? String(r[0].values[0][0]) : ''
+    return verdict.toLowerCase() === 'ok'
+  } catch (_) {
+    return false
+  } finally {
+    try { probe && probe.close() } catch (_) { /* 关闭失败不影响判定 */ }
+  }
+}
+
+/** 列出有效备份，最新在前 */
+function listBackups() {
+  const dir = backupDir()
+  if (!fs.existsSync(dir)) return []
+  const daily = fs.readdirSync(dir)
+    .filter(f => /^\d{4}-\d{2}-\d{2}\.db$/.test(f))
+    .sort()
+    .reverse()
+    .map(f => ({ name: f, path: path.join(dir, f), date: f.slice(0, 10) }))
+  // 滚动快照排在最前：它代表最近一次干净关闭的完整状态，比"当天启动时的样子"更新。
+  const last = path.join(dir, LAST_SESSION_FILE)
+  if (fs.existsSync(last)) {
+    daily.unshift({ name: LAST_SESSION_FILE, path: last, date: 'last-session' })
+  }
+  return daily
+}
+
+/**
+ * 正常退出时的滚动快照。
+ * 每日备份是在「启动时」拍的，只覆盖到昨天为止的数据；今天记的账若在退出前损坏，
+ * 当日备份里没有。这里在 closeDb 的 persist 之后再存一份，把可恢复点前移到最后一刻。
+ * 单个文件覆盖写（不是每日多份），不占额外空间、不受 7 份轮换影响。
+ */
+function snapshotOnClose() {
+  if (!db || !dbPath) return
+  try {
+    fs.mkdirSync(backupDir(), { recursive: true })
+    const target = path.join(backupDir(), LAST_SESSION_FILE)
+    const tmp = `${target}.tmp`
+    fs.writeFileSync(tmp, Buffer.from(db.exportData()))
+    fs.renameSync(tmp, target)
+  } catch (e) {
+    console.error('[db] 退出快照失败:', e.message)
+  }
+}
+
+/** 每日快照：当天已有则跳过；成功写盘后裁掉多余历史 */
+function backupDailyIfNeeded() {
+  if (!db || !dbPath || !fs.existsSync(dbPath)) return { skipped: 'no-db' }
+  const today = localDateStr()
+  const target = path.join(backupDir(), `${today}.db`)
+  if (fs.existsSync(target)) return { skipped: 'exists', file: target }
+
+  try {
+    fs.mkdirSync(backupDir(), { recursive: true })
+    const tmp = `${target}.tmp`
+    fs.writeFileSync(tmp, Buffer.from(db.exportData()))
+    fs.renameSync(tmp, target)
+  } catch (e) {
+    console.error('[db] 每日备份失败:', e.message)
+    return { error: e.message }
+  }
+
+  // 只保留最近 BACKUP_KEEP 份（文件名即日期，字典序＝时间序）
+  try {
+    const all = fs.readdirSync(backupDir()).filter(f => /^\d{4}-\d{2}-\d{2}\.db$/.test(f)).sort()
+    for (const f of all.slice(0, Math.max(0, all.length - BACKUP_KEEP))) {
+      fs.unlinkSync(path.join(backupDir(), f))
+    }
+  } catch (e) {
+    console.warn('[db] 清理旧备份失败:', e.message)
+  }
+  return { file: target }
+}
+
+/**
+ * 打开既有库：校验 → 损坏则留档 → 从最新有效备份恢复 → 都不行才建空库。
+ * 返回值一定是可用的 sqljs.Database。
+ */
+async function openExistingDb() {
+  const bytes = new Uint8Array(fs.readFileSync(dbPath))
+  if (isDbBytesHealthy(bytes)) {
+    return new sqljs.Database(bytes)
+  }
+
+  // 坏了：把现场留档，绝不静默丢弃（用户可能还要人工捞数据）
+  const brokenPath = `${dbPath}.broken-${Date.now()}`
+  try {
+    fs.renameSync(dbPath, brokenPath)
+    console.error(`[db] 主库完整性校验失败，已留档至 ${brokenPath}`)
+  } catch (e) {
+    console.error('[db] 主库损坏且留档失败:', e.message)
+  }
+
+  for (const b of listBackups()) {
+    try {
+      const bb = new Uint8Array(fs.readFileSync(b.path))
+      if (isDbBytesHealthy(bb)) {
+        console.warn(`[db] 已从备份恢复：${b.name}`)
+        return new sqljs.Database(bb)
+      }
+      console.warn(`[db] 备份不可用（校验失败）：${b.name}`)
+    } catch (e) {
+      console.warn(`[db] 读取备份失败 ${b.name}: ${e.message}`)
+    }
+  }
+
+  console.error('[db] 无可用备份，已新建空库——请从留档文件人工恢复')
+  return new sqljs.Database()
+}
+
 /**
  * note 表结构迁移：旧版 note 表（无 stock_code 列）已被弃用，
  * 需在 CREATE TABLE IF NOT EXISTS 之前 DROP 掉旧 note + note_category。
@@ -116,7 +258,12 @@ async function initDb(dataDir) {
 
   let rawDb
   if (fs.existsSync(dbPath)) {
-    rawDb = new sqljs.Database(new Uint8Array(fs.readFileSync(dbPath)))
+    // ---- 启动前完整性校验 ----
+    // sql.js 是「全量 export 覆盖写」的单文件持久化：断电/进程被杀可能留下截断文件，
+    // 而 new Database(bytes) 抛错后整个服务起不来、用户看到的是"打不开应用"。
+    // 这里先做 integrity_check，损坏则把坏文件改名留档（不删，便于人工取证/捞数据），
+    // 再尝试从最近一份有效备份恢复；两者都失败才建空库并告警。
+    rawDb = await openExistingDb()
   } else {
     rawDb = new sqljs.Database()
   }
@@ -392,6 +539,10 @@ async function initDb(dataDir) {
 
   persist()
 
+  // 每日快照必须在 schema 迁移与首次 persist 之后——此时磁盘上的主库已是"可用的新结构"，
+  // 快照才有恢复价值；放在 openExistingDb 里会把尚未迁移的旧结构存成当天备份。
+  try { backupDailyIfNeeded() } catch (e) { console.warn('[db] 每日备份异常:', e.message) }
+
   const origPrepare = db.prepare.bind(db)
   db.prepare = (sql) => {
     const stmt = origPrepare(sql)
@@ -416,7 +567,8 @@ function getDataDir() {
 function closeDb() {
   if (saveTimer) { clearTimeout(saveTimer); saveTimer = null }
   persist()
+  snapshotOnClose()
   if (db) { db.close(); db = null }
 }
 
-module.exports = { initDb, getDb, getDataDir, closeDb, scheduleSave }
+module.exports = { initDb, getDb, getDataDir, closeDb, scheduleSave, backupDailyIfNeeded, listBackups, snapshotOnClose }

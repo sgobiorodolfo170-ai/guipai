@@ -401,7 +401,12 @@ app.whenReady().then(async () => {
 
   const dataDir = path.join(app.getPath('userData'), 'data')
   try {
-    await startServer(SERVER_PORT, dataDir)
+    const started = await startServer(SERVER_PORT, dataDir)
+    // 令牌只进内存与 IPC：不落盘、不进日志，进程重启即失效。
+    // preload 用 sendSync 取它，故必须在 createWindow 之前注册 handler。
+    if (started && started.token) {
+      ipcMain.on('app:token', (e) => { e.returnValue = started.token })
+    }
   } catch (e) {
     console.error('[main] 本地服务启动失败:', e.message)
     dialog.showMessageBox({ type: 'error', title: '龟派', message: '本地服务启动失败', detail: e.message })

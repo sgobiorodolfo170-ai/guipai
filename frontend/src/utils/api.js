@@ -15,6 +15,12 @@ api.interceptors.request.use(
     if (!config.headers['Content-Type']) {
       config.headers['Content-Type'] = 'application/json'
     }
+    // 本地服务令牌：Electron 渲染进程由 preload 注入；纯浏览器调试（vite dev 直接开页面）取不到，
+    // 此时服务端会因为带 Origin 而要求 token 并返回 401——这属于预期行为，改用 Electron 窗口访问即可。
+    const token = typeof window !== 'undefined' && window.tradeinsight && window.tradeinsight.apiToken
+    if (token && !config.headers['X-App-Token']) {
+      config.headers['X-App-Token'] = token
+    }
     return config
   },
   error => {
