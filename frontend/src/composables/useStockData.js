@@ -12,13 +12,19 @@ export function useStockData(code = null) {
   const klineData = ref([])
   const realtimeData = ref(null)
 
-  // 详情快照 + 实时行情合并：实时接口只返回行情字段，以它覆盖快照中的同名字段，
-  // 这样详情页卡片能随盘中轮询更新，而名称/市场等基础信息仍来自详情接口。
+  // 详情快照 + 实时行情合并：实时接口只覆盖行情字段，名称/代码/市场等身份字段
+  // 必须保留详情接口的值——库内 stock_spot 无名称列，/realtime 会以代码兜底，
+  // 直接 spread 会把「平安银行」覆盖成「000001」。
   const quote = computed(() => {
     if (!stockData.value) return null
-    return realtimeData.value
-      ? { ...stockData.value, ...realtimeData.value }
-      : stockData.value
+    if (!realtimeData.value) return stockData.value
+    return {
+      ...stockData.value,
+      ...realtimeData.value,
+      code: stockData.value.code || realtimeData.value.code,
+      name: stockData.value.name || realtimeData.value.name,
+      market: stockData.value.market || realtimeData.value.market
+    }
   })
 
   // 计算属性

@@ -112,7 +112,7 @@
 
 <script>
 import { ref, computed, onMounted } from 'vue';
-import * as echarts from 'echarts';
+import echarts from '@/utils/echarts'
 import {
   Search,
   CaretTop,

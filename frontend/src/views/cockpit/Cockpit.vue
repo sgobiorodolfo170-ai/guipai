@@ -10,7 +10,7 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import { useRouter } from 'vue-router'
 import { getStockRealtime } from '@/services/stock.service'
 import * as cockpitService from '@/services/cockpit.service'

@@ -41,7 +41,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import api from '@/utils/api'
 
 const upColor = '#ff4d4f'

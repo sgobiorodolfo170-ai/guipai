@@ -98,7 +98,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import { ElMessage } from 'element-plus'
 import { getReviewStatisticsRange } from '@/services/limitBoardStatistics.service.js'
 

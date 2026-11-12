@@ -2,6 +2,11 @@
 import { computed } from 'vue'
 
 const currentYear = computed(() => new Date().getFullYear())
+
+// 版本号单一来源：frontend/package.json 的 version，经 vite define 注入（见 vite.config.js）。
+// 原先此处硬编码 v1.0.0，而 CHANGELOG 已到 v1.30+、根 package.json 仍是 1.0.0，
+// 三处各说各话（评估报告 P2-3）。改为构建期注入后，发版只改 package.json 一处。
+const appVersion = __APP_VERSION__
 </script>
 
 <template>
@@ -14,7 +19,7 @@ const currentYear = computed(() => new Date().getFullYear())
       </div>
       
       <div class="footer-right">
-        <span class="version">v1.0.0</span>
+        <span class="version">v{{ appVersion }}</span>
         <el-divider direction="vertical" />
         <el-link href="#" type="primary" :underline="false">
           使用教程

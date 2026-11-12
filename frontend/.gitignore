@@ -11,6 +11,8 @@ node_modules
 .DS_Store
 dist
 dist-ssr
+# 构建自检产物（vite build --outDir dist_verify_tmp 等），不入库
+dist_*
 coverage
 *.local
 代码结构树状图.txt

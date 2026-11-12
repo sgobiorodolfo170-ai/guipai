@@ -38,3 +38,8 @@ aoci.txt
 aoci.code.txt
 aoci.meta.txt
 AGENTS.md.backup.*
+
+# AI Agent 运行时目录（会话级临时文件，机器绑定，不入库）
+.box-agent/
+.box-agent-scratch/
+.playwright-mcp/

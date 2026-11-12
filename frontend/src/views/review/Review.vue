@@ -275,7 +275,7 @@
 import {computed, onMounted, ref} from 'vue'
 import {useRouter} from 'vue-router'
 import {useReview} from '@/composables/useReview'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import SliderFilter from "@/components/common/SliderFilter.vue";
 import StockDateUtil from "@/utils/StockDateUtil.js";
 import KLine from "@/components/common/KLineChart.vue";

@@ -11,7 +11,7 @@
  */
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as echarts from 'echarts'
+import echarts from '@/utils/echarts'
 import api from '@/utils/api'
 
 const today = () => {
